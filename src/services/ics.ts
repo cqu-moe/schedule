@@ -12,6 +12,8 @@ const ICS_HEADER = [
 
 const ICS_FOOTER = "END:VCALENDAR";
 
+export const EMPTY_ICS = [ICS_HEADER, ICS_FOOTER].join("\r\n");
+
 function escapeIcsText(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
@@ -68,9 +70,9 @@ function calculateEventTime(
   // Build China local time, then convert to UTC
   const chinaMs =
     Date.UTC(
-      eventDate.getFullYear(),
-      eventDate.getMonth(),
-      eventDate.getDate(),
+      eventDate.getUTCFullYear(),
+      eventDate.getUTCMonth(),
+      eventDate.getUTCDate(),
       h,
       m,
       s,

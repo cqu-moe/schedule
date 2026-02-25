@@ -15,12 +15,14 @@ import {
   generateCoursesIcs,
   generateExamsIcs,
   mergeIcs,
+  EMPTY_ICS,
 } from "../services/ics";
 import {
   semesterShortName,
   generateFormattedEvents,
   generateCsv,
 } from "../services/export";
+import { generateToken } from "../utils/token";
 
 const PERSONAL_SOURCE_TYPES = new Set([
   "personal_all",
@@ -31,19 +33,6 @@ const PERSONAL_SOURCE_TYPES = new Set([
 type AuthEnv = { Bindings: Env; Variables: { user: User } };
 
 const app = new Hono<AuthEnv>();
-
-function generateSubToken(): string {
-  const bytes = new Uint8Array(48);
-  crypto.getRandomValues(bytes);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
 
 // GET /api/v1/subscriptions
 app.get("/", requireAuth, async (c) => {
@@ -176,7 +165,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   );
 
   const now = new Date().toISOString();
-  const subToken = generateSubToken();
+  const subToken = generateToken();
   const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
 
   const [newSub] = await db
@@ -289,7 +278,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
         examsJsonStr = null;
       } else {
         // personal_exams
-        icsContent = examsIcs;
+        icsContent = examsIcs ?? EMPTY_ICS;
         coursesJsonStr = null;
         examsJsonStr = exams.length > 0 ? JSON.stringify(exams) : null;
       }
@@ -353,7 +342,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
 });
 
 // GET /api/v1/subscriptions/:sub_token/calendar.ics (public)
-app.get("/:sub_token/calendar.ics", async (c) => {
+app.get("/:sub_token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const subToken = c.req.param("sub_token");
   const db = drizzle(c.env.DB);
 
@@ -377,7 +366,7 @@ app.get("/:sub_token/calendar.ics", async (c) => {
 });
 
 // GET /api/v1/subscriptions/:sub_token/origin.json (public)
-app.get("/:sub_token/origin.json", async (c) => {
+app.get("/:sub_token/origin.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
@@ -399,7 +388,7 @@ app.get("/:sub_token/origin.json", async (c) => {
 });
 
 // GET /api/v1/subscriptions/:sub_token/data.json (public)
-app.get("/:sub_token/data.json", async (c) => {
+app.get("/:sub_token/data.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
@@ -433,7 +422,7 @@ app.get("/:sub_token/data.json", async (c) => {
 });
 
 // GET /api/v1/subscriptions/:sub_token/data.csv (public)
-app.get("/:sub_token/data.csv", async (c) => {
+app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 

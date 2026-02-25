@@ -12,6 +12,7 @@ import {
   generateCoursesIcs,
   generateExamsIcs,
   mergeIcs,
+  EMPTY_ICS,
 } from "../services/ics";
 
 const PERSONAL_SOURCE_TYPES = new Set([
@@ -68,6 +69,10 @@ async function syncUserSubscriptions(
   const api = new CQUAPIClient(user.accessToken);
   const now = new Date().toISOString();
 
+  // Cache: session info (shared across all subscriptions)
+  let cachedSessionId: string | null = null;
+  let cachedSemesterInfo: { id: string | null; name: string; begin_date: string | null } | null = null;
+
   // Cache: personal schedule data (shared across personal_all/courses/exams)
   let personalData: {
     courses: CourseEntry[];
@@ -84,21 +89,23 @@ async function syncUserSubscriptions(
         // Fetch personal data once
         if (!personalData && !personalFetchFailed) {
           try {
-            const sessionList = await api.getSessionList();
-            const currentSessionId = sessionList.current_session_id;
-            const semesterInfo = await api.getSemesterInfo(currentSessionId);
+            if (!cachedSessionId || !cachedSemesterInfo) {
+              const sessionList = await api.getSessionList();
+              cachedSessionId = sessionList.current_session_id;
+              cachedSemesterInfo = await api.getSemesterInfo(cachedSessionId);
+            }
             const courses = await api.getSchedule(
               user.studentId,
-              currentSessionId,
+              cachedSessionId,
             );
             const exams = await api.getExams();
 
             personalData = {
               courses,
               exams,
-              semesterStart: semesterInfo.begin_date ?? "",
-              sessionId: semesterInfo.id,
-              sessionName: semesterInfo.name,
+              semesterStart: cachedSemesterInfo.begin_date ?? "",
+              sessionId: cachedSemesterInfo.id,
+              sessionName: cachedSemesterInfo.name,
             };
           } catch (e) {
             personalFetchFailed = true;
@@ -140,7 +147,7 @@ async function syncUserSubscriptions(
           examsJsonStr = null;
         } else {
           // personal_exams
-          icsContent = examsIcs;
+          icsContent = examsIcs ?? EMPTY_ICS;
           coursesJsonStr = null;
           examsJsonStr =
             personalData.exams.length > 0
@@ -166,18 +173,20 @@ async function syncUserSubscriptions(
       } else {
         // Explore subscriptions: CF Worker calls CQU API directly
         try {
-          const sessionList = await api.getSessionList();
-          const currentSessionId = sessionList.current_session_id;
-          const semesterInfo = await api.getSemesterInfo(currentSessionId);
+          if (!cachedSessionId || !cachedSemesterInfo) {
+            const sessionList = await api.getSessionList();
+            cachedSessionId = sessionList.current_session_id;
+            cachedSemesterInfo = await api.getSemesterInfo(cachedSessionId);
+          }
           const courses = await api.fetchTargetSchedule(
             sub.sourceType,
             sub.sourceId,
-            currentSessionId,
+            cachedSessionId,
           );
 
           const icsContent = await generateCoursesIcs(
             courses,
-            semesterInfo.begin_date ?? "",
+            cachedSemesterInfo.begin_date ?? "",
             user.studentId,
           );
 
@@ -186,11 +195,11 @@ async function syncUserSubscriptions(
             .set({
               icsContent,
               coursesJson: JSON.stringify(courses),
-              semesterStart: semesterInfo.begin_date ?? "",
-              sessionId: semesterInfo.id
-                ? String(semesterInfo.id)
+              semesterStart: cachedSemesterInfo.begin_date ?? "",
+              sessionId: cachedSemesterInfo.id
+                ? String(cachedSemesterInfo.id)
                 : sub.sessionId,
-              sessionName: semesterInfo.name || sub.sessionName,
+              sessionName: cachedSemesterInfo.name || sub.sessionName,
               lastSyncedAt: now,
               updatedAt: now,
             })

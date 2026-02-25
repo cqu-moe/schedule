@@ -7,25 +7,9 @@ import { encrypt, verifyPassword } from "../services/crypto";
 import { login, WorkerError } from "../services/worker-client";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
-import { requireAuth } from "../middleware/auth";
-import type { User } from "../db/schema";
+import { generateToken } from "../utils/token";
 
-type AuthEnv = { Bindings: Env; Variables: { user: User } };
-
-const app = new Hono<AuthEnv>();
-
-function generateCalendarToken(): string {
-  const bytes = new Uint8Array(48);
-  crypto.getRandomValues(bytes);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
+const app = new Hono<{ Bindings: Env }>();
 
 function errorResponse(code: string, message: string, status: number): Response {
   return Response.json(
@@ -86,7 +70,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
 
   const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
-  const calendarToken = generateCalendarToken();
+  const calendarToken = generateToken();
   const now = new Date().toISOString();
 
   // Create user
@@ -118,7 +102,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
       sourceType,
       sourceId: body.student_id,
       sourceName,
-      calendarToken: generateCalendarToken(),
+      calendarToken: generateToken(),
       isPersonal: true,
       createdAt: now,
       updatedAt: now,
@@ -129,7 +113,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
 });
 
 // GET /api/v1/users/:token (get user info)
-app.get("/:token", async (c) => {
+app.get("/:token", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const token = c.req.param("token");
   const db = drizzle(c.env.DB);
 
@@ -152,7 +136,7 @@ app.get("/:token", async (c) => {
 });
 
 // DELETE /api/v1/users/:token
-app.delete("/:token", async (c) => {
+app.delete("/:token", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const token = c.req.param("token");
   const db = drizzle(c.env.DB);
 

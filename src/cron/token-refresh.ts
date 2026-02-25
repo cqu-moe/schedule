@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { lt, isNotNull, eq } from "drizzle-orm";
+import { lt, isNotNull, eq, and } from "drizzle-orm";
 import { users } from "../db/schema";
 import type { Env } from "../types";
 import { decrypt } from "../services/crypto";
@@ -18,7 +18,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
   const expiring = await db
     .select()
     .from(users)
-    .where(lt(users.tokenExpiresAt, threshold));
+    .where(and(isNotNull(users.tokenExpiresAt), lt(users.tokenExpiresAt, threshold)));
 
   console.log(`cron: ${expiring.length} users need token refresh`);
 
@@ -44,7 +44,10 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
           console.log(`cron: token refreshed for ${user.studentId}`);
           continue;
         } catch (e) {
-          if (e instanceof WorkerError && e.code !== "TOKEN_EXPIRED") throw e;
+          // Only fall back to login for expired/invalid token errors
+          if (!(e instanceof WorkerError) || (e.code !== "TOKEN_EXPIRED" && e.code !== "INVALID_TOKEN")) {
+            throw e;
+          }
           console.warn(
             `cron: refresh token expired for ${user.studentId}, trying login`,
           );
