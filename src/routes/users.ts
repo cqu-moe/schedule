@@ -40,8 +40,8 @@ function handleWorkerError(e: WorkerError): Response {
   );
 }
 
-// POST /api/v1/users/register
-app.post("/register", rateLimit("UNAUTH_LIMITER"), async (c) => {
+// POST /api/v1/users (register)
+app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const captchaToken = c.req.header("X-Captcha-Token") ?? null;
   try {
     await verifyCaptcha(c.env, captchaToken);
@@ -125,16 +125,56 @@ app.post("/register", rateLimit("UNAUTH_LIMITER"), async (c) => {
   return c.json({ calendar_token: calendarToken });
 });
 
-// DELETE /api/v1/users/me
-app.delete("/me", requireAuth, async (c) => {
-  const user = c.get("user");
+// GET /api/v1/users/:token (get user info)
+app.get("/:token", async (c) => {
+  const token = c.req.param("token");
   const db = drizzle(c.env.DB);
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.calendarToken, token))
+    .limit(1);
+
+  if (!user) {
+    return c.json(
+      { code: "TOKEN_NOT_FOUND", message: "Calendar token not found" },
+      404,
+    );
+  }
+
+  return c.json({
+    student_id: user.studentId,
+    calendar_token: user.calendarToken,
+    created_at: user.createdAt,
+    last_sync: user.lastRefreshAt,
+  });
+});
+
+// DELETE /api/v1/users/:token
+app.delete("/:token", async (c) => {
+  const token = c.req.param("token");
+  const db = drizzle(c.env.DB);
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.calendarToken, token))
+    .limit(1);
+
+  if (!user) {
+    return c.json(
+      { code: "TOKEN_NOT_FOUND", message: "Calendar token not found" },
+      404,
+    );
+  }
+
   await db.delete(users).where(eq(users.id, user.id));
   return c.body(null, 204);
 });
 
-// POST /api/v1/users/recover/verify
-app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
+// POST /api/v1/users/recover (recover by stored password)
+app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const captchaToken = c.req.header("X-Captcha-Token") ?? null;
   try {
     await verifyCaptcha(c.env, captchaToken);
@@ -167,8 +207,8 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   return c.json({ calendar_token: user.calendarToken });
 });
 
-// POST /api/v1/users/recover/refresh
-app.post("/recover/refresh", rateLimit("UNAUTH_LIMITER"), async (c) => {
+// POST /api/v1/users/recover/verify (recover via Playwright login)
+app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const captchaToken = c.req.header("X-Captcha-Token") ?? null;
   try {
     await verifyCaptcha(c.env, captchaToken);
