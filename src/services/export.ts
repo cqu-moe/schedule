@@ -1,0 +1,188 @@
+import { TIME_SLOTS } from "./cqu-api";
+
+const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+const SEMESTER_RE = /^(\d{4})-(\d{4})学年第(一|二)学期$/;
+
+const CSV_FIELDS = [
+  "name",
+  "type",
+  "instructor",
+  "location",
+  "day_of_week",
+  "start_time",
+  "end_time",
+  "week",
+] as const;
+
+export interface FormattedEvent {
+  name: string;
+  type: "course" | "exam";
+  instructor: string | null;
+  location: string;
+  day_of_week: number | null;
+  start_time: string;
+  end_time: string;
+  week: number | null;
+}
+
+export function semesterShortName(sessionName: string | null): string {
+  if (!sessionName) return "";
+  const match = SEMESTER_RE.exec(sessionName);
+  if (!match) return sessionName;
+  const [, year1, year2, ordinal] = match;
+  return ordinal === "一" ? `${year1}秋` : `${year2}春`;
+}
+
+export function generateFormattedEvents(
+  coursesJson: any[] | null,
+  semesterStart: string,
+  examsJson?: any[] | null,
+): FormattedEvent[] {
+  const events: FormattedEvent[] = [];
+
+  if (coursesJson && semesterStart) {
+    const termStart = new Date(semesterStart);
+    if (!isNaN(termStart.getTime())) {
+      for (const course of coursesJson) {
+        try {
+          const name: string = course.name ?? "";
+          const instructor: string = course.lecturer ?? "";
+          const room: string = course.room ?? "";
+          const position: string = course.position ?? "";
+          const location = room || position;
+          const dayOfWeek: number = course.day_of_week;
+          const startSession: number = course.start_session;
+          const endSession: number = course.end_session;
+          const weeks: number[] = course.weeks ?? [];
+
+          if (
+            startSession < 1 ||
+            startSession > TIME_SLOTS.length ||
+            endSession < 1 ||
+            endSession > TIME_SLOTS.length
+          ) {
+            continue;
+          }
+
+          const startTimeStr = TIME_SLOTS[startSession - 1][0];
+          const endTimeStr = TIME_SLOTS[endSession - 1][1];
+
+          for (const week of weeks) {
+            const daysSinceStart = (week - 1) * 7 + (dayOfWeek - 1);
+            const eventDateMs =
+              termStart.getTime() + daysSinceStart * 24 * 60 * 60 * 1000;
+            const eventDate = new Date(eventDateMs);
+
+            const [sh, sm, ss] = startTimeStr.split(":").map(Number);
+            const [eh, em, es] = endTimeStr.split(":").map(Number);
+
+            const year = eventDate.getFullYear();
+            const month = eventDate.getMonth();
+            const day = eventDate.getDate();
+
+            const startMs =
+              Date.UTC(year, month, day, sh, sm, ss) - CHINA_TZ_OFFSET_MS;
+            const endMs =
+              Date.UTC(year, month, day, eh, em, es) - CHINA_TZ_OFFSET_MS;
+
+            events.push({
+              name,
+              type: "course",
+              instructor,
+              location,
+              day_of_week: dayOfWeek,
+              start_time: formatChinaIso(new Date(startMs)),
+              end_time: formatChinaIso(new Date(endMs)),
+              week,
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+
+  if (examsJson) {
+    for (const exam of examsJson) {
+      try {
+        const name: string = exam.name;
+        const room: string = exam.room ?? "";
+        const seat: number = exam.seat ?? 0;
+        const location = seat ? `${room} 座位${seat}` : room;
+        const startTime: string = exam.start_time;
+        const endTime: string = exam.end_time;
+
+        // Validate datetime strings
+        if (isNaN(new Date(startTime).getTime())) continue;
+        if (isNaN(new Date(endTime).getTime())) continue;
+
+        events.push({
+          name,
+          type: "exam",
+          instructor: null,
+          location,
+          day_of_week: null,
+          start_time: startTime,
+          end_time: endTime,
+          week: null,
+        });
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return events;
+}
+
+function sanitizeCsvValue(value: string): string {
+  if (
+    value &&
+    (value[0] === "=" ||
+      value[0] === "+" ||
+      value[0] === "-" ||
+      value[0] === "@")
+  ) {
+    return `'${value}`;
+  }
+  return value;
+}
+
+function escapeCsvField(value: string | number | null): string {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  const sanitized = sanitizeCsvValue(str);
+  if (
+    sanitized.includes(",") ||
+    sanitized.includes('"') ||
+    sanitized.includes("\n")
+  ) {
+    return `"${sanitized.replace(/"/g, '""')}"`;
+  }
+  return sanitized;
+}
+
+export function generateCsv(events: FormattedEvent[]): string {
+  const BOM = "\ufeff";
+  const lines: string[] = [CSV_FIELDS.join(",")];
+
+  for (const event of events) {
+    const row = CSV_FIELDS.map((field) => escapeCsvField(event[field]));
+    lines.push(row.join(","));
+  }
+
+  return BOM + lines.join("\n");
+}
+
+function formatChinaIso(utcDate: Date): string {
+  const china = new Date(utcDate.getTime() + CHINA_TZ_OFFSET_MS);
+  const y = china.getUTCFullYear();
+  const mo = String(china.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(china.getUTCDate()).padStart(2, "0");
+  const h = String(china.getUTCHours()).padStart(2, "0");
+  const mi = String(china.getUTCMinutes()).padStart(2, "0");
+  const s = String(china.getUTCSeconds()).padStart(2, "0");
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}+08:00`;
+}

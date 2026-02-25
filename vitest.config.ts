@@ -1,11 +1,14 @@
-import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
+import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 
-export default defineWorkersProject({
+export default defineWorkersConfig({
   test: {
     poolOptions: {
       workers: {
         wrangler: {
           configPath: "./wrangler.jsonc",
+        },
+        miniflare: {
+          compatibilityDate: "2025-01-01",
         },
       },
     },
