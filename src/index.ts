@@ -10,8 +10,25 @@ import { syncAllSubscriptions } from "./cron/schedule-sync";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS (same-origin in production, but useful for local dev)
-app.use("/api/*", cors());
+// CORS: restrict to same-origin; allow local dev origins
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin, c) => {
+      // Allow same-origin (no Origin header) and configured public URL
+      const publicUrl = c.env.PUBLIC_URL ?? "";
+      if (!origin) return publicUrl || "*";
+      if (publicUrl && origin === publicUrl) return origin;
+      // Allow localhost for dev
+      if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+        return origin;
+      }
+      return "";
+    },
+    allowHeaders: ["Authorization", "Content-Type", "X-Captcha-Token"],
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+  }),
+);
 
 // Mount routes
 app.route("/api/v1", configRoutes);

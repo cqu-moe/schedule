@@ -32,9 +32,15 @@ app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async 
       case "laboratory":
         results = await api.searchLaboratory(keyword);
         break;
-      case "course":
-        results = await api.searchCourse(keyword, sessionId);
+      case "course": {
+        let courseSessionId = sessionId;
+        if (!courseSessionId) {
+          const sessionList = await api.getSessionList();
+          courseSessionId = sessionList.current_session_id;
+        }
+        results = await api.searchCourse(keyword, courseSessionId);
         break;
+      }
       case "admin_class":
         results = await api.searchAdminClass(departmentId, grade, keyword);
         break;

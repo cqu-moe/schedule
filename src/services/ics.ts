@@ -12,6 +12,14 @@ const ICS_HEADER = [
 
 const ICS_FOOTER = "END:VCALENDAR";
 
+function escapeIcsText(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+}
+
 function formatIcsTime(date: Date): string {
   const y = date.getUTCFullYear();
   const mo = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -51,6 +59,9 @@ function calculateEventTime(
     termStart.getTime() + daysSinceStart * 24 * 60 * 60 * 1000;
   const eventDate = new Date(eventDateMs);
 
+  if (session < 1 || session > TIME_SLOTS.length) {
+    throw new Error(`Invalid session number: ${session}`);
+  }
   const timeStr = TIME_SLOTS[session - 1][isStart ? 0 : 1];
   const [h, m, s] = timeStr.split(":").map(Number);
 
@@ -74,10 +85,17 @@ export async function generateCoursesIcs(
   username: string,
 ): Promise<string> {
   const termStart = new Date(semesterStart);
+  if (isNaN(termStart.getTime())) {
+    return [ICS_HEADER, ICS_FOOTER].join("\r\n");
+  }
   const lines: string[] = [ICS_HEADER];
 
   for (const course of courses) {
     for (const week of course.weeks) {
+      if (course.start_session < 1 || course.start_session > TIME_SLOTS.length ||
+          course.end_session < 1 || course.end_session > TIME_SLOTS.length) {
+        continue;
+      }
       const startTime = calculateEventTime(
         termStart,
         week,
@@ -103,13 +121,13 @@ export async function generateCoursesIcs(
         `UID:${uid}`,
         `DTSTART:${startStr}`,
         `DTEND:${endStr}`,
-        `SUMMARY:${course.name}`,
-        `LOCATION:${location}`,
-        `DESCRIPTION:${course.lecturer}`,
+        `SUMMARY:${escapeIcsText(course.name)}`,
+        `LOCATION:${escapeIcsText(location)}`,
+        `DESCRIPTION:${escapeIcsText(course.lecturer)}`,
         "BEGIN:VALARM",
         "TRIGGER:-PT15M",
         "ACTION:DISPLAY",
-        `DESCRIPTION:${course.name}`,
+        `DESCRIPTION:${escapeIcsText(course.name)}`,
         "END:VALARM",
         "END:VEVENT",
       );
@@ -140,13 +158,13 @@ export async function generateExamsIcs(
       `UID:${uid}`,
       `DTSTART:${startStr}`,
       `DTEND:${endStr}`,
-      `SUMMARY:${exam.name}`,
-      `LOCATION:${exam.room}`,
-      `DESCRIPTION:${description}`,
+      `SUMMARY:${escapeIcsText(exam.name)}`,
+      `LOCATION:${escapeIcsText(exam.room)}`,
+      `DESCRIPTION:${escapeIcsText(description)}`,
       "BEGIN:VALARM",
       "TRIGGER:-PT1H",
       "ACTION:DISPLAY",
-      `DESCRIPTION:${exam.name}`,
+      `DESCRIPTION:${escapeIcsText(exam.name)}`,
       "END:VALARM",
       "END:VEVENT",
     );

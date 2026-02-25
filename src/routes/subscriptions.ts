@@ -87,11 +87,12 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     throw e;
   }
 
-  const body = await c.req.json<{
-    source_type: string;
-    source_id: string;
-    source_name: string;
-  }>();
+  let body: { source_type: string; source_id: string; source_name: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
 
   const validTypes = [
     "instructor",
@@ -380,8 +381,13 @@ app.get("/:sub_token/origin.json", async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  const courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : [];
-  const exams = sub.examsJson ? JSON.parse(sub.examsJson) : [];
+  let courses, exams;
+  try {
+    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : [];
+    exams = sub.examsJson ? JSON.parse(sub.examsJson) : [];
+  } catch {
+    return c.json({ detail: "Stored data is corrupted" }, 500);
+  }
 
   return new Response(JSON.stringify({ courses, exams }), {
     headers: {
@@ -397,8 +403,13 @@ app.get("/:sub_token/data.json", async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  const courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
-  const exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
+  let courses, exams;
+  try {
+    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
+    exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
+  } catch {
+    return c.json({ detail: "Stored data is corrupted" }, 500);
+  }
   const events = generateFormattedEvents(
     courses,
     sub.semesterStart ?? "",
@@ -426,8 +437,13 @@ app.get("/:sub_token/data.csv", async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  const courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
-  const exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
+  let courses, exams;
+  try {
+    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
+    exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
+  } catch {
+    return c.json({ detail: "Stored data is corrupted" }, 500);
+  }
   const events = generateFormattedEvents(
     courses,
     sub.semesterStart ?? "",

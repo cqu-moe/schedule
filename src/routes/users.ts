@@ -27,17 +27,18 @@ function generateCalendarToken(): string {
     .replace(/=/g, "");
 }
 
+function errorResponse(code: string, message: string, status: number): Response {
+  return Response.json(
+    { detail: { error: { code, message } } },
+    { status },
+  );
+}
+
 function handleWorkerError(e: WorkerError): Response {
   if (e.code === "INVALID_CREDENTIALS") {
-    return Response.json(
-      { code: "INVALID_CREDENTIALS", message: e.message },
-      { status: 401 },
-    );
+    return errorResponse("INVALID_CREDENTIALS", e.message, 401);
   }
-  return Response.json(
-    { code: "UPSTREAM_ERROR", message: e.message },
-    { status: 502 },
-  );
+  return errorResponse("UPSTREAM_ERROR", e.message, 502);
 }
 
 // POST /api/v1/users (register)
@@ -52,7 +53,12 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     throw e;
   }
 
-  const body = await c.req.json<{ student_id: string; password: string }>();
+  let body: { student_id: string; password: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
   if (!body.student_id || !body.password) {
     return c.json({ detail: "student_id and password required" }, 400);
   }
@@ -67,10 +73,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .limit(1);
 
   if (existing) {
-    return c.json(
-      { code: "USER_EXISTS", message: "User already registered" },
-      409,
-    );
+    return errorResponse("USER_EXISTS", "User already registered", 409);
   }
 
   // Verify via Playwright login
@@ -137,10 +140,7 @@ app.get("/:token", async (c) => {
     .limit(1);
 
   if (!user) {
-    return c.json(
-      { code: "TOKEN_NOT_FOUND", message: "Calendar token not found" },
-      404,
-    );
+    return errorResponse("TOKEN_NOT_FOUND", "Calendar token not found", 404);
   }
 
   return c.json({
@@ -163,10 +163,7 @@ app.delete("/:token", async (c) => {
     .limit(1);
 
   if (!user) {
-    return c.json(
-      { code: "TOKEN_NOT_FOUND", message: "Calendar token not found" },
-      404,
-    );
+    return errorResponse("TOKEN_NOT_FOUND", "Calendar token not found", 404);
   }
 
   await db.delete(users).where(eq(users.id, user.id));
@@ -185,7 +182,12 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
     throw e;
   }
 
-  const body = await c.req.json<{ student_id: string; password: string }>();
+  let body: { student_id: string; password: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
   const db = drizzle(c.env.DB);
 
   const [user] = await db
@@ -198,10 +200,7 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
     !user ||
     !(await verifyPassword(body.password, user.encryptedPassword, c.env.ENCRYPTION_KEY))
   ) {
-    return c.json(
-      { code: "PASSWORD_MISMATCH", message: "Password does not match" },
-      422,
-    );
+    return errorResponse("PASSWORD_MISMATCH", "Password does not match", 422);
   }
 
   return c.json({ calendar_token: user.calendarToken });
@@ -219,7 +218,12 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     throw e;
   }
 
-  const body = await c.req.json<{ student_id: string; password: string }>();
+  let body: { student_id: string; password: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
   const db = drizzle(c.env.DB);
 
   const [user] = await db
@@ -229,10 +233,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .limit(1);
 
   if (!user) {
-    return c.json(
-      { code: "INVALID_CREDENTIALS", message: "Invalid credentials" },
-      401,
-    );
+    return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
   }
 
   let tokenResult;

@@ -143,9 +143,13 @@ export class CQUAPIClient {
       finalUrl += (url.includes("?") ? "&" : "?") + searchParams.toString();
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     const init: RequestInit = {
       method,
       headers,
+      signal: controller.signal,
     };
     if (options?.json !== undefined) {
       init.body = JSON.stringify(options.json);
@@ -155,7 +159,12 @@ export class CQUAPIClient {
     try {
       response = await fetch(finalUrl, init);
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        throw new CQUAPIError("Request timed out (30s)", 408);
+      }
       throw new CQUAPIError(`Network error: ${e}`);
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
