@@ -10,7 +10,7 @@
           <form @submit.prevent="handleLogin" class="space-y-4">
             <div class="space-y-2">
               <Label for="token">Token</Label>
-              <Input id="token" v-model="tokenInput" placeholder="请输入你的 Token" />
+              <Input id="token" v-model="tokenInput" type="password" autocomplete="current-password" spellcheck="false" placeholder="请输入你的 Token" />
             </div>
             <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
             <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
