@@ -67,8 +67,8 @@ onMounted(async () => {
   try {
     const data = await api.getHealth()
     if (data.commit && data.commit !== 'dev') {
-      version.value = data.build_date
-        ? `${data.commit} (${data.build_date})`
+      version.value = data.date && data.date !== 'unknown'
+        ? `${data.commit} (${data.date})`
         : data.commit
     }
   } catch {
