@@ -5,6 +5,7 @@ const TOKEN_REFRESH_URL = "https://my.cqu.edu.cn/authserver/oauth/token";
 const OAUTH_CLIENT_ID = "personal-prod";
 const OAUTH_CLIENT_SECRET = "app-a-1234";
 const TOKEN_EXPIRY_HOURS = 4;
+const REFRESH_TIMEOUT_MS = 30_000;
 
 // ── Browser login constants ──────────────────────────────────────
 const LOGIN_URL = "https://sso.cqu.edu.cn/login";
@@ -41,6 +42,9 @@ export interface TokenResult {
 
 // ── refreshToken (direct HTTP) ───────────────────────────────────
 export async function refreshToken(refreshTokenStr: string): Promise<TokenResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(TOKEN_REFRESH_URL, {
@@ -55,14 +59,30 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
         grant_type: "refresh_token",
         refresh_token: refreshTokenStr,
       }),
+      signal: controller.signal,
     });
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new AuthError("UPSTREAM_TIMEOUT", "Token refresh timeout");
+    }
     throw new AuthError("UPSTREAM_UNREACHABLE", `Network error: ${e}`);
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {
-    const code = response.status === 401 ? "TOKEN_EXPIRED" : "UPSTREAM_UNREACHABLE";
-    throw new AuthError(code, `Token refresh failed: HTTP ${response.status}`);
+    let code = "UPSTREAM_UNREACHABLE";
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body: any = await response.json();
+      detail = body.error_description ?? body.error ?? detail;
+      if (response.status === 401 || body.error === "invalid_grant") {
+        code = "TOKEN_EXPIRED";
+      }
+    } catch {
+      // non-JSON error response, keep defaults
+    }
+    throw new AuthError(code, `Token refresh failed: ${detail}`);
   }
 
   const data: any = await response.json();
@@ -105,20 +125,30 @@ export async function login(
     // Click login
     await page.click(LOGIN_BUTTON_SELECTOR);
 
-    // Wait for CAS redirect
-    try {
-      await page.waitForURL(`**/${SUCCESS_URL_PATTERN}**`, {
-        timeout: LOGIN_TIMEOUT_MS,
-      });
-    } catch {
-      // Check for error message on page
-      const errorElem = page.locator(".error-message, .ant-message, .alert").first();
-      if (await errorElem.isVisible().catch(() => false)) {
-        const errorText = await errorElem.textContent();
-        if (errorText) {
-          throw new AuthError("INVALID_CREDENTIALS", `Login failed: ${errorText}`);
-        }
-      }
+    // Race: success URL redirect vs error message appearing
+    const result = await Promise.race([
+      page
+        .waitForURL(`**/${SUCCESS_URL_PATTERN}**`, { timeout: LOGIN_TIMEOUT_MS })
+        .then(() => "success" as const),
+      page
+        .locator(".error-message, .ant-message, .alert")
+        .first()
+        .waitFor({ state: "visible", timeout: LOGIN_TIMEOUT_MS })
+        .then(() => "error" as const),
+    ]).catch(() => "timeout" as const);
+
+    if (result === "error") {
+      const errorText = await page
+        .locator(".error-message, .ant-message, .alert")
+        .first()
+        .textContent()
+        .catch(() => null);
+      throw new AuthError(
+        "INVALID_CREDENTIALS",
+        `Login failed: ${errorText ?? "unknown error"}`,
+      );
+    }
+    if (result === "timeout") {
       throw new AuthError("UPSTREAM_TIMEOUT", `Login timeout, URL: ${page.url()}`);
     }
 
@@ -173,10 +203,14 @@ export async function login(
 
 // ── Helper ───────────────────────────────────────────────────────
 async function getLocalStorageItem(
-  page: { evaluate: (fn: string) => Promise<unknown> },
+  page: { evaluate: <T>(fn: (k: string) => T, arg: string) => Promise<T> },
   key: string,
 ): Promise<string | null> {
-  const value = await page.evaluate(`localStorage.getItem('${key}')`);
+  const value = await page.evaluate(
+    // runs in browser context where localStorage exists
+    (k: string) => (globalThis as any).localStorage.getItem(k),
+    key,
+  );
   if (typeof value === "string") {
     return value.replace(/^"|"$/g, "");
   }
