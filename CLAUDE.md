@@ -9,7 +9,7 @@ CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁�
 - Database: D1 (SQLite) via Drizzle ORM
 - Crypto: Web Crypto API AES-256-GCM (`src/services/crypto.ts`)
 - Frontend: Vue 3 + Tailwind v4 + shadcn-vue (in `frontend/`)
-- VPS: 仅 Playwright 登录服务，通过 CF Tunnel + Access 访问
+- Browser Rendering: @cloudflare/playwright (CQU SSO 登录)
 
 ## 常用命令
 - `npm run dev` — 启动 wrangler dev server (port 8787)
@@ -34,7 +34,7 @@ CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁�
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
 - `src/types.ts` — Env 接口定义
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)
-- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, worker-client, captcha)
+- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha)
 - `src/middleware/` — 中间件 (auth, rate-limit)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 (token-refresh, schedule-sync)
