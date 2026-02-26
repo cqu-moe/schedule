@@ -7,16 +7,16 @@ CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁�
 ## 技术栈
 - Runtime: Cloudflare Workers (Hono framework)
 - Database: D1 (SQLite) via Drizzle ORM
-- Crypto: Web Crypto API AES-256-GCM (`src/services/crypto.ts`)
+- Crypto: Web Crypto API AES-256-GCM (`src/services/crypto.ts`), node:crypto AES-ECB (`src/services/auth.ts`)
+- Auth: 纯 HTTP CAS→OAuth 登录流程 (`src/services/auth.ts`), 无需浏览器
 - Frontend: Vue 3 + Tailwind v4 + shadcn-vue (in `frontend/`)
-- Browser Rendering: @cloudflare/playwright (CQU SSO 登录)
 
 ## 常用命令
 - `npm run dev` — 启动 wrangler dev server (port 8787)
 - `npm run dev:frontend` — 启动前端 vite dev server (port 5173, proxy -> 8787)
 - `npm run build:frontend` — 构建前端到 frontend/dist
 - `npm run deploy` — 先构建前端再 wrangler deploy
-- `npm test` — vitest run (30 tests, workerd runtime)
+- `npm test` — vitest run (workerd runtime)
 - `npm run typecheck` — tsc --noEmit
 - `npm run db:generate` — drizzle-kit generate migrations
 - `npm run db:migrate:local` — apply D1 migrations locally

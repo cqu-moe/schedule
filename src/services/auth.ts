@@ -159,17 +159,34 @@ export async function login(
       { signal: controller.signal },
     );
     const loginPageHtml = await loginPageRes.text();
-    const { execution, croypto } = parseLoginPage(loginPageHtml);
+    const { execution, croypto, captchaId } = parseLoginPage(loginPageHtml);
+
+    if (captchaId) {
+      throw new AuthError(
+        "CAPTCHA_REQUIRED",
+        "SSO login requires CAPTCHA verification",
+      );
+    }
+
+    // Forward cookies from login page (e.g. JSESSIONID)
+    const loginPageCookies = extractAllCookies(loginPageRes);
 
     // Step 2: Encrypt password, POST login form
     const encryptedPassword = encryptAesEcb(password, croypto);
     const captchaPayload = encryptAesEcb("{}", croypto);
 
+    const step2Headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
+    if (loginPageCookies) {
+      step2Headers["Cookie"] = loginPageCookies;
+    }
+
     const loginRes = await fetch(
       `${SSO_LOGIN_URL}?service=${encodeURIComponent(CAS_SERVICE_URL)}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: step2Headers,
         body: new URLSearchParams({
           username,
           password: encryptedPassword,
@@ -207,11 +224,22 @@ export async function login(
     }
     const ticket = ticketMatch[1];
 
+    // Forward CASTGC cookie from login response
+    const castgcCookie = extractCookie(loginRes, "CASTGC");
+    const step3Headers: Record<string, string> = {};
+    if (castgcCookie) {
+      step3Headers["Cookie"] = castgcCookie;
+    }
+
     // Step 3: Validate CAS ticket → get SESSION cookie
-    const casRes = await fetch(`${CAS_SERVICE_URL}?ticket=${ticket}`, {
-      redirect: "manual",
-      signal: controller.signal,
-    });
+    const casRes = await fetch(
+      `${CAS_SERVICE_URL}?ticket=${encodeURIComponent(ticket)}`,
+      {
+        headers: step3Headers,
+        redirect: "manual",
+        signal: controller.signal,
+      },
+    );
     const sessionCookie = extractCookie(casRes, "SESSION");
     if (!sessionCookie) {
       throw new AuthError(
@@ -258,9 +286,16 @@ export async function login(
     });
 
     if (!tokenRes.ok) {
+      let detail = `HTTP ${tokenRes.status}`;
+      try {
+        const errBody: any = await tokenRes.json();
+        detail = errBody.error_description ?? errBody.error ?? detail;
+      } catch {
+        // non-JSON error response, keep defaults
+      }
       throw new AuthError(
         "UPSTREAM_UNREACHABLE",
-        `Token exchange failed: HTTP ${tokenRes.status}`,
+        `Token exchange failed: ${detail}`,
       );
     }
 
@@ -295,6 +330,14 @@ function extractCookie(response: Response, name: string): string | null {
   const setCookie = response.headers.get("set-cookie") ?? "";
   const match = setCookie.match(new RegExp(`${name}=([^;]+)`));
   return match ? `${name}=${match[1]}` : null;
+}
+
+function extractAllCookies(response: Response): string | null {
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const cookies = [...setCookie.matchAll(/([^=;\s,]+)=([^;,]+)/g)]
+    .filter(m => !["Path", "Domain", "Expires", "Max-Age", "SameSite"].includes(m[1]))
+    .map(m => `${m[1]}=${m[2]}`);
+  return cookies.length > 0 ? cookies.join("; ") : null;
 }
 
 function extractLoginError(html: string): string | null {

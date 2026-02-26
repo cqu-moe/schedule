@@ -123,9 +123,11 @@ const SAMPLE_ERROR_HTML = `
 
 function createLoginFetchMock(overrides: {
   loginPageHtml?: string;
+  loginPageCookie?: string;
   loginStatus?: number;
   loginLocation?: string;
   loginBody?: string;
+  loginCookie?: string;
   casStatus?: number;
   casCookie?: string;
   authorizeStatus?: number;
@@ -135,9 +137,11 @@ function createLoginFetchMock(overrides: {
 } = {}) {
   const {
     loginPageHtml = SAMPLE_LOGIN_HTML,
+    loginPageCookie = "JSESSIONID=abc123; Path=/",
     loginStatus = 302,
     loginLocation = "https://my.cqu.edu.cn/authserver/authentication/cas?ticket=ST-test123",
     loginBody = "",
+    loginCookie = "CASTGC=TGC-test456; Path=/; HttpOnly",
     casStatus = 302,
     casCookie = "SESSION=test-session; Path=/",
     authorizeStatus = 302,
@@ -151,16 +155,20 @@ function createLoginFetchMock(overrides: {
     callIndex++;
     switch (callIndex) {
       case 1:
-        return Promise.resolve(new Response(loginPageHtml, { status: 200 }));
-      case 2:
-        return Promise.resolve(
-          new Response(loginBody, {
-            status: loginStatus,
-            headers: loginStatus === 302
-              ? { Location: loginLocation }
-              : { "Content-Type": "text/html" },
-          }),
-        );
+        return Promise.resolve(new Response(loginPageHtml, {
+          status: 200,
+          headers: { "Set-Cookie": loginPageCookie },
+        }));
+      case 2: {
+        const headers: Record<string, string> = {};
+        if (loginStatus === 302) {
+          headers["Location"] = loginLocation;
+          headers["Set-Cookie"] = loginCookie;
+        } else {
+          headers["Content-Type"] = "text/html";
+        }
+        return Promise.resolve(new Response(loginBody, { status: loginStatus, headers }));
+      }
       case 3:
         return Promise.resolve(
           new Response(null, {
@@ -269,6 +277,117 @@ describe("login", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(AuthError);
       expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+    }
+  });
+
+  it("should forward login page cookies to Step 2", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginPageCookie: "JSESSIONID=sess-abc; Path=/",
+    });
+
+    await login("user1", "pass1");
+
+    const step2Call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const step2Init = step2Call[1] as RequestInit;
+    expect((step2Init.headers as Record<string, string>)["Cookie"]).toContain("JSESSIONID=sess-abc");
+  });
+
+  it("should forward CASTGC cookie to Step 3", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginCookie: "CASTGC=TGC-xyz789; Path=/; HttpOnly",
+    });
+
+    await login("user1", "pass1");
+
+    const step3Call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2];
+    const step3Init = step3Call[1] as RequestInit;
+    expect((step3Init.headers as Record<string, string>)["Cookie"]).toContain("CASTGC=TGC-xyz789");
+  });
+
+  it("should URL-encode ticket in Step 3", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginLocation: "https://my.cqu.edu.cn/authserver/authentication/cas?ticket=ST-special%2Bchars",
+    });
+
+    await login("user1", "pass1");
+
+    const step3Call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2];
+    const step3Url = step3Call[0] as string;
+    expect(step3Url).toContain("ticket=ST-special%252Bchars");
+  });
+
+  it("should throw CAPTCHA_REQUIRED when captchaId is present", async () => {
+    const htmlWithCaptcha = `
+      <html>
+        <input type="hidden" id="login-page-flowkey" value="e1s1" />
+        <span id="login-croypto">${Buffer.from("0123456789abcdef").toString("base64")}</span>
+        <input id="captchaId" value="cap-abc" />
+      </html>
+    `;
+    globalThis.fetch = createLoginFetchMock({ loginPageHtml: htmlWithCaptcha });
+
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("CAPTCHA_REQUIRED");
+    }
+  });
+
+  it("should throw UPSTREAM_UNREACHABLE when SESSION cookie is missing", async () => {
+    globalThis.fetch = createLoginFetchMock({ casCookie: "" });
+
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("No SESSION cookie");
+    }
+  });
+
+  it("should throw UPSTREAM_UNREACHABLE when authorization code is missing", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      authorizeLocation: "https://my.cqu.edu.cn/workspace/token-index?state=",
+    });
+
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("No authorization code");
+    }
+  });
+
+  it("should parse error_description on token exchange failure", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      tokenStatus: 400,
+      tokenBody: { error: "invalid_grant", error_description: "Authorization code expired" },
+    });
+
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("Authorization code expired");
+    }
+  });
+
+  it("should throw UPSTREAM_TIMEOUT on AbortError", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(Object.assign(new Error("aborted"), { name: "AbortError" }));
+
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_TIMEOUT");
     }
   });
 });
