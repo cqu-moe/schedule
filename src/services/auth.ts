@@ -134,7 +134,8 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
 }
 
 // ── Login constants ─────────────────────────────────────────────
-const SSO_LOGIN_URL = "https://sso.cqu.edu.cn/login";
+const SSO_BASE_URL = "https://sso.cqu.edu.cn";
+const SSO_LOGIN_URL = `${SSO_BASE_URL}/login`;
 const CAS_SERVICE_URL =
   "https://my.cqu.edu.cn/authserver/authentication/cas";
 const OAUTH_AUTHORIZE_URL =
@@ -161,14 +162,7 @@ export async function login(
       { headers: { "User-Agent": USER_AGENT }, signal: controller.signal },
     );
     const loginPageHtml = await loginPageRes.text();
-    const { execution, croypto, captchaId } = parseLoginPage(loginPageHtml);
-
-    if (captchaId) {
-      throw new AuthError(
-        "CAPTCHA_REQUIRED",
-        "SSO login requires CAPTCHA verification",
-      );
-    }
+    const { execution, croypto } = parseLoginPage(loginPageHtml);
 
     // Forward cookies from login page (e.g. JSESSIONID)
     const loginPageCookies = extractAllCookies(loginPageRes);
@@ -206,6 +200,25 @@ export async function login(
     );
 
     if (loginRes.status === 401) {
+      // Check if CAPTCHA is now required
+      try {
+        const captchaCountRes = await fetch(
+          `${SSO_BASE_URL}/api/protected/user/findCaptchaCount/${username}`,
+          { headers: { "User-Agent": USER_AGENT }, signal: controller.signal },
+        );
+        if (captchaCountRes.ok) {
+          const captchaData: any = await captchaCountRes.json();
+          if (captchaData.data === 0) {
+            throw new AuthError(
+              "CAPTCHA_REQUIRED",
+              "SSO login requires CAPTCHA verification due to too many failed attempts",
+            );
+          }
+        }
+      } catch (e) {
+        if (e instanceof AuthError) throw e;
+        // Ignore captcha check errors, fall through to credentials error
+      }
       const html = await loginRes.text();
       const errorMsg = extractLoginError(html) ?? "Invalid credentials";
       throw new AuthError("INVALID_CREDENTIALS", `Login failed: ${errorMsg}`);

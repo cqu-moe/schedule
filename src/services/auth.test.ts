@@ -316,7 +316,7 @@ describe("login", () => {
     expect(step3Url).toContain("ticket=ST-special%252Bchars");
   });
 
-  it("should throw CAPTCHA_REQUIRED when captchaId is present", async () => {
+  it("should succeed even when captchaId is present in login page", async () => {
     const htmlWithCaptcha = `
       <html>
         <input type="hidden" id="login-page-flowkey" value="e1s1" />
@@ -326,13 +326,8 @@ describe("login", () => {
     `;
     globalThis.fetch = createLoginFetchMock({ loginPageHtml: htmlWithCaptcha });
 
-    try {
-      await login("user1", "pass1");
-      expect.unreachable("Should have thrown");
-    } catch (e: any) {
-      expect(e).toBeInstanceOf(AuthError);
-      expect(e.code).toBe("CAPTCHA_REQUIRED");
-    }
+    const result = await login("user1", "pass1");
+    expect(result.accessToken).toBe("test-access");
   });
 
   it("should throw UPSTREAM_UNREACHABLE when SESSION cookie is missing", async () => {
