@@ -9,7 +9,7 @@
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm install && npm run build",
-    "deploy": "npm run build:frontend && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%Y-%m-%d)",
+    "deploy": "npm run build:frontend && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
