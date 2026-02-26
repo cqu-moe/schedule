@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "schedule",
+  "name": "schedule-beta-cqu-moe",
   "main": "src/index.ts",
   "compatibility_date": "2026-02-25",
   "compatibility_flags": ["nodejs_compat"],
@@ -17,8 +17,9 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "schedule-db",
-      "database_id": "placeholder"
+      "database_name": "schedule-beta-cqu-moe-db",
+      "database_id": "7e0899f3-8acf-4237-a7e5-89000e3841f0",
+      "migrations_dir": "drizzle/migrations"
     }
   ],
 
@@ -45,6 +46,14 @@
       "simple": { "limit": 10, "period": 60 }
     }
   ],
+
+  // Environment Variables
+  "vars": {
+    "PUBLIC_URL": "https://schedule-beta.cqu.moe",
+    "HCAPTCHA_ENABLED": "false",
+    "HCAPTCHA_SITEKEY": "",
+    "MAX_SUBSCRIPTIONS": "5"
+  },
 
   // Cron Triggers
   "triggers": {

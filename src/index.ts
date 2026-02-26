@@ -43,7 +43,15 @@ app.onError((err, c) => {
 });
 
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    // API requests → Hono
+    if (url.pathname.startsWith("/api/")) {
+      return app.fetch(request, env, ctx);
+    }
+    // Everything else → static assets (Vue SPA)
+    return env.ASSETS.fetch(request);
+  },
   async scheduled(
     controller: ScheduledController,
     env: Env,
