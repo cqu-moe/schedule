@@ -8,7 +8,7 @@
     "deploy:secrets": "op read op://Development/schedule-cloudflare/ENCRYPTION_KEY | wrangler secret put ENCRYPTION_KEY && op read op://Development/schedule-cloudflare/HCAPTCHA_SECRET | wrangler secret put HCAPTCHA_SECRET",
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
-    "build:frontend": "cd frontend && npm run build",
+    "build:frontend": "cd frontend && npm install && npm run build",
     "deploy": "npm run build:frontend && wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
