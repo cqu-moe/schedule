@@ -22,6 +22,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npm run typecheck` — tsc --noEmit
 - `npm run db:generate` — drizzle-kit generate migrations
 - `npm run db:migrate:local` — apply D1 migrations locally
+- `npm run setup:secrets` — 从 1Password 生成 .dev.vars (op inject)
+- `npm run deploy:secrets` — 从 1Password 推送 secrets 到 Cloudflare (op read → wrangler secret put)
 
 ## 开发注意事项
 - vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)
@@ -34,6 +36,9 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - workerd 中 `createCipheriv` 不接受 `null` 作为 IV，ECB 模式须传 `""` (空字符串)
 - `node:crypto` 需要 `nodejs_compat` flag 和 `@types/node` devDep + tsconfig types
 - CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
+- CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
+- Workers fetch 默认 UA 会被 SSO 识别为机器人，login 请求须带浏览器 User-Agent
+- Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
