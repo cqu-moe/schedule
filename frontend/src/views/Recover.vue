@@ -148,6 +148,7 @@ async function handleRecover() {
     opSaveValue.value = encodeOPSaveRequest({
       title: 'CQU Schedule',
       fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+      urls: ['https://schedule.cqu.moe'],
     })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'
@@ -183,6 +184,7 @@ async function handleVerify() {
     opSaveValue.value = encodeOPSaveRequest({
       title: 'CQU Schedule',
       fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+      urls: ['https://schedule.cqu.moe'],
     })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'

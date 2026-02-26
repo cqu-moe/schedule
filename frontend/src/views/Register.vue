@@ -185,6 +185,7 @@ async function handleRegister() {
   opSaveValue.value = encodeOPSaveRequest({
     title: 'CQU Schedule',
     fields: [{ autocomplete: 'current-password', value: result.token }],
+    urls: ['https://schedule.cqu.moe'],
   })
   showTokenDialog.value = true
   nextTick(() => activateOPButton())
