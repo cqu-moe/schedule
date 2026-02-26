@@ -80,3 +80,105 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
     expiresAt,
   };
 }
+
+// ── login (CF Browser Rendering) ─────────────────────────────────
+export async function login(
+  browser: BrowserWorker,
+  username: string,
+  password: string,
+): Promise<TokenResult> {
+  const instance = await launch(browser);
+  try {
+    const page = await instance.newPage();
+
+    // Navigate to SSO login page
+    await page.goto(LOGIN_URL);
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(ANGULAR_RENDER_WAIT);
+
+    // Fill credentials
+    await page.fill(USERNAME_SELECTOR, username);
+    await page.fill(PASSWORD_SELECTOR, password);
+    await page.waitForTimeout(BUTTON_CLICK_WAIT);
+
+    // Click login
+    await page.click(LOGIN_BUTTON_SELECTOR);
+
+    // Wait for CAS redirect
+    try {
+      await page.waitForURL(`**/${SUCCESS_URL_PATTERN}**`, {
+        timeout: LOGIN_TIMEOUT_MS,
+      });
+    } catch {
+      // Check for error message on page
+      const errorElem = page.locator(".error-message, .ant-message, .alert").first();
+      if (await errorElem.isVisible().catch(() => false)) {
+        const errorText = await errorElem.textContent();
+        if (errorText) {
+          throw new AuthError("INVALID_CREDENTIALS", `Login failed: ${errorText}`);
+        }
+      }
+      throw new AuthError("UPSTREAM_TIMEOUT", `Login timeout, URL: ${page.url()}`);
+    }
+
+    // Navigate to workspace to get tokens from localStorage
+    await page.goto(WORKSPACE_URL);
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(ANGULAR_RENDER_WAIT);
+
+    // Extract tokens with retry
+    let accessToken = await getLocalStorageItem(page, TOKEN_KEY);
+    let refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
+
+    if (!accessToken) {
+      for (let i = 0; i < MAX_TOKEN_RETRIES; i++) {
+        await page.waitForTimeout(RETRY_WAIT);
+        accessToken = await getLocalStorageItem(page, TOKEN_KEY);
+        if (accessToken) {
+          refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
+          break;
+        }
+      }
+    }
+
+    // Fallback URL
+    if (!accessToken) {
+      await page.goto(FALLBACK_URL);
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(ANGULAR_RENDER_WAIT);
+      accessToken = await getLocalStorageItem(page, TOKEN_KEY);
+      refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
+    }
+
+    if (!accessToken) {
+      throw new AuthError("BROWSER_ERROR", "Unable to retrieve access token");
+    }
+
+    const expiresAt = new Date(
+      Date.now() + TOKEN_EXPIRY_HOURS * 3600 * 1000,
+    ).toISOString();
+
+    return {
+      accessToken,
+      refreshToken: refreshTokenValue ?? "",
+      expiresAt,
+    };
+  } finally {
+    await instance.close();
+  }
+}
+
+// ── Helper ───────────────────────────────────────────────────────
+async function getLocalStorageItem(
+  page: { evaluate: (fn: string) => Promise<unknown> },
+  key: string,
+): Promise<string | null> {
+  const value = await page.evaluate(`localStorage.getItem('${key}')`);
+  if (typeof value === "string") {
+    return value.replace(/^"|"$/g, "");
+  }
+  return null;
+}
