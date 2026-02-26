@@ -13,7 +13,7 @@ vi.mock("@cloudflare/playwright", () => ({
   launch: mockLaunch,
 }));
 
-import { refreshToken, login, AuthError } from "./auth";
+import { refreshToken, login, AuthError, encryptAesEcb, parseLoginPage } from "./auth";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -279,5 +279,72 @@ describe("login", () => {
     expect(gotoArgs).toContain("https://my.cqu.edu.cn/enroll");
 
     expect(mockClose).toHaveBeenCalled();
+  });
+});
+
+// ── encryptAesEcb tests ─────────────────────────────────────────
+
+describe("encryptAesEcb", () => {
+  it("should encrypt plaintext with AES-128-ECB and return base64", () => {
+    const keyBase64 = Buffer.from("0123456789abcdef").toString("base64");
+    const result = encryptAesEcb("hello", keyBase64);
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+    expect(() => Buffer.from(result, "base64")).not.toThrow();
+  });
+
+  it("should produce consistent output for same input", () => {
+    const keyBase64 = Buffer.from("0123456789abcdef").toString("base64");
+    const r1 = encryptAesEcb("test", keyBase64);
+    const r2 = encryptAesEcb("test", keyBase64);
+    expect(r1).toBe(r2);
+  });
+
+  it("should produce different output for different keys", () => {
+    const key1 = Buffer.from("0123456789abcdef").toString("base64");
+    const key2 = Buffer.from("fedcba9876543210").toString("base64");
+    expect(encryptAesEcb("test", key1)).not.toBe(encryptAesEcb("test", key2));
+  });
+});
+
+// ── parseLoginPage tests ────────────────────────────────────────
+
+describe("parseLoginPage", () => {
+  const sampleHtml = `
+    <html>
+      <input type="hidden" id="login-page-flowkey" value="e1s1" />
+      <span id="login-croypto">d9XYfl9siLfxBU+Ze1LxSQ==</span>
+      <input id="captchaId" value="cap-123" />
+    </html>
+  `;
+
+  it("should extract execution, croypto, and captchaId", () => {
+    const result = parseLoginPage(sampleHtml);
+    expect(result.execution).toBe("e1s1");
+    expect(result.croypto).toBe("d9XYfl9siLfxBU+Ze1LxSQ==");
+    expect(result.captchaId).toBe("cap-123");
+  });
+
+  it("should return null captchaId when not present", () => {
+    const html = `
+      <html>
+        <input type="hidden" id="login-page-flowkey" value="e1s1" />
+        <span id="login-croypto">key123==</span>
+      </html>
+    `;
+    const result = parseLoginPage(html);
+    expect(result.execution).toBe("e1s1");
+    expect(result.croypto).toBe("key123==");
+    expect(result.captchaId).toBeNull();
+  });
+
+  it("should throw AuthError when execution is missing", () => {
+    const html = `<html><span id="login-croypto">key==</span></html>`;
+    expect(() => parseLoginPage(html)).toThrow(AuthError);
+  });
+
+  it("should throw AuthError when croypto is missing", () => {
+    const html = `<html><input id="login-page-flowkey" value="e1s1" /></html>`;
+    expect(() => parseLoginPage(html)).toThrow(AuthError);
   });
 });

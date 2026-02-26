@@ -1,4 +1,5 @@
 import { launch, type BrowserWorker, type Page } from "@cloudflare/playwright";
+import { createCipheriv } from "node:crypto";
 
 // ── OAuth constants ──────────────────────────────────────────────
 const TOKEN_REFRESH_URL = "https://my.cqu.edu.cn/authserver/oauth/token";
@@ -38,6 +39,54 @@ export interface TokenResult {
   accessToken: string;
   refreshToken: string;
   expiresAt: string; // ISO 8601
+}
+
+// ── AES-ECB encryption helper ────────────────────────────────────
+export function encryptAesEcb(plaintext: string, keyBase64: string): string {
+  const key = Buffer.from(keyBase64, "base64");
+  const algo =
+    key.length <= 16
+      ? "aes-128-ecb"
+      : key.length <= 24
+        ? "aes-192-ecb"
+        : "aes-256-ecb";
+  const cipher = createCipheriv(algo, key, "");
+  return Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]).toString("base64");
+}
+
+// ── HTML parsing helper ─────────────────────────────────────────
+export function parseLoginPage(html: string): {
+  execution: string;
+  croypto: string;
+  captchaId: string | null;
+} {
+  const execution = extractElementValue(html, "login-page-flowkey");
+  const croypto = extractElementValue(html, "login-croypto");
+  const captchaId = extractElementValue(html, "captchaId");
+
+  if (!execution || !croypto) {
+    throw new AuthError(
+      "UPSTREAM_UNREACHABLE",
+      "Failed to parse SSO login page (missing execution or croypto)",
+    );
+  }
+
+  return { execution, croypto, captchaId };
+}
+
+function extractElementValue(html: string, id: string): string | null {
+  const tagRegex = new RegExp(`<[^>]*\\bid="${id}"[^>]*>([^<]*)`, "s");
+  const match = tagRegex.exec(html);
+  if (!match) return null;
+
+  const valueMatch = match[0].match(/\bvalue="([^"]*)"/);
+  if (valueMatch) return valueMatch[1];
+
+  const innerText = match[1]?.trim();
+  return innerText || null;
 }
 
 // ── refreshToken (direct HTTP) ───────────────────────────────────
