@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { users, subscriptions } from "../db/schema";
 import type { Env } from "../types";
 import { encrypt, verifyPassword } from "../services/crypto";
-import { login, WorkerError } from "../services/worker-client";
+import { login, AuthError } from "../services/auth";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
 import { generateToken } from "../utils/token";
@@ -18,7 +18,7 @@ function errorResponse(code: string, message: string, status: number): Response 
   );
 }
 
-function handleWorkerError(e: WorkerError): Response {
+function handleAuthError(e: AuthError): Response {
   if (e.code === "INVALID_CREDENTIALS") {
     return errorResponse("INVALID_CREDENTIALS", e.message, 401);
   }
@@ -63,9 +63,9 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   // Verify via Playwright login
   let tokenResult;
   try {
-    tokenResult = await login(c.env, body.student_id, body.password);
+    tokenResult = await login(c.env.MYBROWSER, body.student_id, body.password);
   } catch (e) {
-    if (e instanceof WorkerError) return handleWorkerError(e);
+    if (e instanceof AuthError) return handleAuthError(e);
     throw e;
   }
 
@@ -222,9 +222,9 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   let tokenResult;
   try {
-    tokenResult = await login(c.env, body.student_id, body.password);
+    tokenResult = await login(c.env.MYBROWSER, body.student_id, body.password);
   } catch (e) {
-    if (e instanceof WorkerError) return handleWorkerError(e);
+    if (e instanceof AuthError) return handleAuthError(e);
     throw e;
   }
 
