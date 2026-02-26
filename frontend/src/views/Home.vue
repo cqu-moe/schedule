@@ -45,15 +45,7 @@
     <!-- Footer -->
     <footer class="border-t border-border py-8">
       <p class="text-center text-sm text-muted-foreground">
-        CQU Schedule ·
-        <a
-          href="https://github.com/cqu-moe/schedule"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="hover:text-foreground transition-colors cursor-pointer"
-        >
-          GitHub
-        </a>
+        CQU Schedule
         <template v-if="version">
           · {{ version }}
         </template>
