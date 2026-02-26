@@ -143,6 +143,8 @@ const OAUTH_REDIRECT_URI =
   "https://my.cqu.edu.cn/workspace/token-index";
 const OAUTH_BASIC_AUTH = "cGVyc29uYWwtcHJvZDphcHAtYS0xMjM0";
 const LOGIN_TIMEOUT_MS = 30_000;
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // ── login (pure HTTP) ───────────────────────────────────────────
 export async function login(
@@ -156,7 +158,7 @@ export async function login(
     // Step 1: GET login page → extract execution, croypto
     const loginPageRes = await fetch(
       `${SSO_LOGIN_URL}?service=${encodeURIComponent(CAS_SERVICE_URL)}`,
-      { signal: controller.signal },
+      { headers: { "User-Agent": USER_AGENT }, signal: controller.signal },
     );
     const loginPageHtml = await loginPageRes.text();
     const { execution, croypto, captchaId } = parseLoginPage(loginPageHtml);
@@ -177,6 +179,7 @@ export async function login(
 
     const step2Headers: Record<string, string> = {
       "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": USER_AGENT,
     };
     if (loginPageCookies) {
       step2Headers["Cookie"] = loginPageCookies;
@@ -226,7 +229,7 @@ export async function login(
 
     // Forward CASTGC cookie from login response
     const castgcCookie = extractCookie(loginRes, "CASTGC");
-    const step3Headers: Record<string, string> = {};
+    const step3Headers: Record<string, string> = { "User-Agent": USER_AGENT };
     if (castgcCookie) {
       step3Headers["Cookie"] = castgcCookie;
     }
@@ -254,7 +257,7 @@ export async function login(
       `&response_type=code&scope=all&state=` +
       `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}`;
     const authorizeRes = await fetch(authorizeUrl, {
-      headers: { Cookie: sessionCookie },
+      headers: { "User-Agent": USER_AGENT, Cookie: sessionCookie },
       redirect: "manual",
       signal: controller.signal,
     });
@@ -272,6 +275,7 @@ export async function login(
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": USER_AGENT,
         Authorization: `Basic ${OAUTH_BASIC_AUTH}`,
         Accept: "application/json",
       },
