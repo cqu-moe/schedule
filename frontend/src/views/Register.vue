@@ -70,6 +70,13 @@
             <Copy v-else class="h-4 w-4" />
           </Button>
         </div>
+        <onepassword-save-button
+          v-if="opSaveValue"
+          data-onepassword-type="login"
+          :value="opSaveValue"
+          lang="zh-CN"
+          padding="none"
+        />
         <DialogFooter>
           <Button @click="closeTokenDialog" class="cursor-pointer">我已保存</Button>
         </DialogFooter>
@@ -81,10 +88,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Copy, Check, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
+import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 import api from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import Navbar from '@/components/Navbar.vue'
@@ -111,6 +119,7 @@ const showTokenDialog = ref(false)
 const showRiskWarning = ref(false)
 const displayToken = ref('')
 const copied = ref(false)
+const opSaveValue = ref('')
 const captchaEnabled = ref(false)
 const captchaSitekey = ref('')
 const hcaptchaRef = ref(null)
@@ -172,7 +181,12 @@ async function handleRegister() {
   await authStore.fetchUserInfo()
 
   displayToken.value = result.token
+  opSaveValue.value = encodeOPSaveRequest({
+    title: 'CQU Schedule',
+    fields: [{ autocomplete: 'current-password', value: result.token }],
+  })
   showTokenDialog.value = true
+  nextTick(() => activateOPButton())
 }
 
 async function copyToken() {

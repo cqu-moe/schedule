@@ -62,6 +62,13 @@
                 <Copy v-else class="h-4 w-4" />
               </Button>
             </div>
+            <onepassword-save-button
+              v-if="opSaveValue"
+              data-onepassword-type="login"
+              :value="opSaveValue"
+              lang="zh-CN"
+              padding="none"
+            />
             <Button class="w-full cursor-pointer" @click="goToDashboard">
               进入仪表盘
             </Button>
@@ -74,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2, Copy, Check } from 'lucide-vue-next'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
@@ -86,6 +93,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -100,6 +108,7 @@ const showRiskWarning = ref(false)
 const captchaEnabled = ref(false)
 const captchaSitekey = ref('')
 const hcaptchaRef = ref(null)
+const opSaveValue = ref('')
 
 onMounted(async () => {
   if (!localStorage.getItem('risk_warning_acknowledged')) {
@@ -135,8 +144,13 @@ async function handleRecover() {
   try {
     const data = await api.recoverToken(form.studentId, form.password, captchaToken)
     recoveredToken.value = data.calendar_token
+    opSaveValue.value = encodeOPSaveRequest({
+      title: 'CQU Schedule',
+      fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+    })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'
+    nextTick(() => activateOPButton())
   } catch (error) {
     if (error.response?.status === 429) {
       errorMessage.value = error.response.data.detail
@@ -165,8 +179,13 @@ async function handleVerify() {
   try {
     const data = await api.recoverTokenVerify(form.studentId, form.password, captchaToken)
     recoveredToken.value = data.calendar_token
+    opSaveValue.value = encodeOPSaveRequest({
+      title: 'CQU Schedule',
+      fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+    })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'
+    nextTick(() => activateOPButton())
   } catch (error) {
     if (error.response?.status === 429) {
       errorMessage.value = error.response.data.detail
