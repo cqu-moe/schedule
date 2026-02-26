@@ -70,13 +70,14 @@
             <Copy v-else class="h-4 w-4" />
           </Button>
         </div>
-        <onepassword-save-button
-          v-if="opSaveValue"
-          data-onepassword-type="login"
-          :value="opSaveValue"
-          lang="zh-CN"
-          padding="none"
-        />
+        <div v-if="opSaveValue">
+          <onepassword-save-button
+            data-onepassword-type="login"
+            :value="opSaveValue"
+            lang="zh-CN"
+            padding="none"
+          />
+        </div>
         <DialogFooter>
           <Button @click="closeTokenDialog" class="cursor-pointer">我已保存</Button>
         </DialogFooter>
