@@ -3,11 +3,7 @@ import { lt, isNotNull, eq, and } from "drizzle-orm";
 import { users } from "../db/schema";
 import type { Env } from "../types";
 import { decrypt } from "../services/crypto";
-import {
-  refreshToken,
-  login,
-  WorkerError,
-} from "../services/worker-client";
+import { refreshToken, login, AuthError } from "../services/auth";
 
 export async function refreshExpiringTokens(env: Env): Promise<void> {
   console.log("cron: starting token refresh");
@@ -29,7 +25,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
       // Try refresh token first
       if (user.refreshToken) {
         try {
-          const result = await refreshToken(env, user.refreshToken);
+          const result = await refreshToken(user.refreshToken);
           await db
             .update(users)
             .set({
@@ -45,7 +41,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
           continue;
         } catch (e) {
           // Only fall back to login for expired/invalid token errors
-          if (!(e instanceof WorkerError) || (e.code !== "TOKEN_EXPIRED" && e.code !== "INVALID_TOKEN")) {
+          if (!(e instanceof AuthError) || (e.code !== "TOKEN_EXPIRED" && e.code !== "INVALID_TOKEN")) {
             throw e;
           }
           console.warn(
@@ -59,7 +55,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
         user.encryptedPassword,
         env.ENCRYPTION_KEY,
       );
-      const result = await login(env, user.studentId, password);
+      const result = await login(env.MYBROWSER, user.studentId, password);
       await db
         .update(users)
         .set({
