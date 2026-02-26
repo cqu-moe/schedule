@@ -19,6 +19,8 @@ app.use(
       const publicUrl = c.env.PUBLIC_URL ?? "";
       if (!origin) return publicUrl || "*";
       if (publicUrl && origin === publicUrl) return origin;
+      // Allow schedule.cqu.moe alongside beta
+      if (origin === "https://schedule.cqu.moe") return origin;
       // Allow localhost for dev
       if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
         return origin;

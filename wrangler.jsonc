@@ -44,7 +44,7 @@
 
   // Environment Variables
   "vars": {
-    "PUBLIC_URL": "https://schedule-beta.cqu.moe",
+    "PUBLIC_URL": "https://schedule.cqu.moe",
     "HCAPTCHA_ENABLED": "true",
     "HCAPTCHA_SITEKEY": "66748454-bd4e-4ca8-a6f0-42066aca8f22",
     "MAX_SUBSCRIPTIONS": "5"
@@ -54,6 +54,12 @@
   "observability": {
     "enabled": true
   },
+
+  // Custom Domains
+  "routes": [
+    { "pattern": "schedule-beta.cqu.moe", "custom_domain": true },
+    { "pattern": "schedule.cqu.moe", "custom_domain": true }
+  ],
 
   // Cron Triggers
   "triggers": {
