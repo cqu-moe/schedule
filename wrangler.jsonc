@@ -50,6 +50,11 @@
     "MAX_SUBSCRIPTIONS": "5"
   },
 
+  // Observability (Workers Logs)
+  "observability": {
+    "enabled": true
+  },
+
   // Cron Triggers
   "triggers": {
     "crons": [
