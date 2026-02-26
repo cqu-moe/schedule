@@ -1,9 +1,14 @@
+import type { BrowserWorker } from "@cloudflare/playwright";
+
 export interface Env {
   // Static Assets
   ASSETS: Fetcher;
 
   // D1 Database
   DB: D1Database;
+
+  // Browser Rendering
+  MYBROWSER: BrowserWorker;
 
   // Rate Limiting
   UNAUTH_LIMITER: RateLimit;
@@ -12,13 +17,10 @@ export interface Env {
 
   // Secrets
   ENCRYPTION_KEY: string;
-  CF_ACCESS_CLIENT_ID: string;
-  CF_ACCESS_CLIENT_SECRET: string;
   HCAPTCHA_SECRET: string;
 
   // Environment Variables
   PUBLIC_URL: string;
-  PLAYWRIGHT_URL: string;
   HCAPTCHA_ENABLED: string;
   HCAPTCHA_SITEKEY: string;
   MAX_SUBSCRIPTIONS: string;
