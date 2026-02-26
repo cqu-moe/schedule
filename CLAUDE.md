@@ -3,7 +3,7 @@
 ## 项目概述
 CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁移而来。
 GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
-部署: https://schedule-beta.cqu.moe (worker: schedule-beta-cqu-moe)
+部署: https://schedule.cqu.moe (worker: schedule-beta-cqu-moe, 同时绑定 schedule-beta.cqu.moe)
 原项目: `/Users/uu/Documents/Coding/cqu-moe/schedule`
 
 ## 技术栈
@@ -17,7 +17,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npm run dev` — 启动 wrangler dev server (port 8787)
 - `npm run dev:frontend` — 启动前端 vite dev server (port 5173, proxy -> 8787)
 - `npm run build:frontend` — 构建前端到 frontend/dist
-- `npm run deploy` — 先构建前端再 wrangler deploy
+- `npm run deploy` — 构建前端 + wrangler deploy (自动注入 GIT_COMMIT/GIT_DATE)
 - `npm test` — vitest run (workerd runtime)
 - `npm run typecheck` — tsc --noEmit
 - `npm run db:generate` — drizzle-kit generate migrations
@@ -39,6 +39,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
 - Workers fetch 默认 UA 会被 SSO 识别为机器人，login 请求须带浏览器 User-Agent
 - Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
+- Cloudflare Builds deploy command 须设为 `npm run deploy` (非 `npx wrangler deploy`)
+- `git log --format` 中 `%d` 是 ref names 不是日期；获取日期用 `--format=%cd --date=short`
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
