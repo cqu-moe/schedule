@@ -2,6 +2,8 @@
 
 ## 项目概述
 CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁移而来。
+GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
+部署: https://schedule-beta.cqu.moe (worker: schedule-beta-cqu-moe)
 原项目: `/Users/uu/Documents/Coding/cqu-moe/schedule`
 
 ## 技术栈
@@ -29,6 +31,9 @@ CQU 课表订阅服务。Cloudflare Workers + D1，从 FastAPI + PostgreSQL 迁�
 - 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
+- workerd 中 `createCipheriv` 不接受 `null` 作为 IV，ECB 模式须传 `""` (空字符串)
+- `node:crypto` 需要 `nodejs_compat` flag 和 `@types/node` devDep + tsconfig types
+- CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
