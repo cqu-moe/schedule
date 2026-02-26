@@ -46,8 +46,6 @@ app.get("/", requireAuth, async (c) => {
     .where(eq(subscriptions.userId, user.id))
     .orderBy(desc(subscriptions.isPersonal), asc(subscriptions.createdAt));
 
-  const exploreCount = subs.filter((s) => !s.isPersonal).length;
-
   return c.json({
     subscriptions: subs.map((sub) => ({
       calendar_token: sub.calendarToken,
@@ -61,8 +59,8 @@ app.get("/", requireAuth, async (c) => {
       last_synced_at: sub.lastSyncedAt,
       created_at: sub.createdAt,
     })),
-    count: exploreCount,
-    max: Number(c.env.MAX_SUBSCRIPTIONS ?? "5"),
+    count: subs.length,
+    max: Number(c.env.MAX_SUBSCRIPTIONS ?? "10"),
   });
 });
 
@@ -96,18 +94,13 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
 
   const user = c.get("user");
   const db = drizzle(c.env.DB);
-  const maxSubs = Number(c.env.MAX_SUBSCRIPTIONS ?? "5");
+  const maxSubs = Number(c.env.MAX_SUBSCRIPTIONS ?? "10");
 
-  // Count existing explore subs
+  // Count all existing subscriptions
   const existingSubs = await db
     .select()
     .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.userId, user.id),
-        eq(subscriptions.isPersonal, false),
-      ),
-    );
+    .where(eq(subscriptions.userId, user.id));
 
   if (existingSubs.length >= maxSubs) {
     return c.json(

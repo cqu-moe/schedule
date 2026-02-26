@@ -3,54 +3,39 @@
     <Navbar />
 
     <div class="max-w-2xl mx-auto px-4 pt-24 pb-12">
-      <!-- Status bar -->
-      <Card class="mb-6">
-        <CardContent class="py-2">
-          <div class="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p class="font-semibold text-lg">
-                欢迎，{{ authStore.userInfo?.student_id }}
-              </p>
-              <p v-if="authStore.userInfo?.last_sync" class="text-sm text-muted-foreground mt-0.5">
-                上次同步：{{ formatDate(authStore.userInfo.last_sync) }}
-              </p>
-              <p v-else class="text-sm text-muted-foreground mt-0.5">
-                尚未同步
-              </p>
-            </div>
-            <Button
-              class="cursor-pointer"
-              :disabled="syncing"
-              @click="handleSyncAll"
-            >
-              <Loader2 v-if="syncing" class="h-4 w-4 mr-2 animate-spin" />
-              <RefreshCw v-else class="h-4 w-4 mr-2" />
-              同步所有课表
-            </Button>
-          </div>
-          <p
-            v-if="statusMessage"
-            class="text-sm mt-3"
-            :class="statusType === 'success' ? 'text-green-600' : 'text-destructive'"
-          >
-            {{ statusMessage }}
-          </p>
-        </CardContent>
-      </Card>
-
       <!-- Unified subscription list -->
       <section class="mb-6">
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-base font-semibold">
             我的订阅
-            <span v-if="exploreCount > 0" class="text-muted-foreground font-normal text-sm ml-1">
-              ({{ exploreCount }}/{{ subscriptionsMax }})
+            <span v-if="subscriptions.length > 0" class="text-muted-foreground font-normal text-sm ml-1">
+              ({{ subscriptions.length }}/{{ subscriptionsMax }})
             </span>
           </h3>
-          <router-link to="/add">
-            <Button variant="outline" size="sm" class="cursor-pointer">添加订阅</Button>
-          </router-link>
+          <div class="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              class="cursor-pointer"
+              :disabled="syncing"
+              @click="handleSyncAll"
+            >
+              <Loader2 v-if="syncing" class="h-4 w-4 mr-1.5 animate-spin" />
+              <RefreshCw v-else class="h-4 w-4 mr-1.5" />
+              同步所有
+            </Button>
+            <router-link to="/add">
+              <Button variant="outline" size="sm" class="cursor-pointer">添加订阅</Button>
+            </router-link>
+          </div>
         </div>
+        <p
+          v-if="statusMessage"
+          class="text-sm mb-3"
+          :class="statusType === 'success' ? 'text-green-600' : 'text-destructive'"
+        >
+          {{ statusMessage }}
+        </p>
 
         <!-- Loading state -->
         <div v-if="loading" class="flex items-center justify-center py-8">
@@ -229,7 +214,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { RefreshCw, Loader2, Copy, Check, Trash2, QrCode, Download } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -291,10 +276,6 @@ const SOURCE_TYPE_LABELS = {
   course: '课程',
   admin_class: '行政班',
 }
-
-const exploreCount = computed(() =>
-  subscriptions.value.filter(s => !s.is_personal).length
-)
 
 function sourceTypeLabel(type) {
   return SOURCE_TYPE_LABELS[type] || type

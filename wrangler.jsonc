@@ -47,7 +47,7 @@
     "PUBLIC_URL": "https://schedule.cqu.moe",
     "HCAPTCHA_ENABLED": "true",
     "HCAPTCHA_SITEKEY": "66748454-bd4e-4ca8-a6f0-42066aca8f22",
-    "MAX_SUBSCRIPTIONS": "5"
+    "MAX_SUBSCRIPTIONS": "10"
   },
 
   // Observability (Workers Logs)
