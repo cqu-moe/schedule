@@ -1,4 +1,4 @@
-import { launch, type BrowserWorker } from "@cloudflare/playwright";
+import { launch, type BrowserWorker, type Page } from "@cloudflare/playwright";
 
 // ── OAuth constants ──────────────────────────────────────────────
 const TOKEN_REFRESH_URL = "https://my.cqu.edu.cn/authserver/oauth/token";
@@ -203,12 +203,12 @@ export async function login(
 
 // ── Helper ───────────────────────────────────────────────────────
 async function getLocalStorageItem(
-  page: { evaluate: <T>(fn: (k: string) => T, arg: string) => Promise<T> },
+  page: Page,
   key: string,
 ): Promise<string | null> {
   const value = await page.evaluate(
-    // runs in browser context where localStorage exists
-    (k: string) => (globalThis as any).localStorage.getItem(k),
+    // Runs in browser context where localStorage exists
+    (k: string) => (globalThis as any).localStorage.getItem(k) as string | null,
     key,
   );
   if (typeof value === "string") {

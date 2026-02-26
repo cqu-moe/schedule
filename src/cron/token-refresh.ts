@@ -41,7 +41,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
           continue;
         } catch (e) {
           // Only fall back to login for expired/invalid token errors
-          if (!(e instanceof AuthError) || (e.code !== "TOKEN_EXPIRED" && e.code !== "INVALID_TOKEN")) {
+          if (!(e instanceof AuthError) || e.code !== "TOKEN_EXPIRED") {
             throw e;
           }
           console.warn(
