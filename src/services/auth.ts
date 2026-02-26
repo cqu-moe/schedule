@@ -7,7 +7,6 @@ const OAUTH_CLIENT_SECRET = "app-a-1234";
 const TOKEN_EXPIRY_HOURS = 4;
 const REFRESH_TIMEOUT_MS = 30_000;
 
-
 // ── Error class ──────────────────────────────────────────────────
 export class AuthError extends Error {
   code: string;
