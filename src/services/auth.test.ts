@@ -1,18 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// ── Mock @cloudflare/playwright ─────────────────────────────────
-// vi.hoisted returns values that are available inside the hoisted vi.mock factory.
-const { mockLaunch, mockNewPage, mockClose } = vi.hoisted(() => {
-  const mockClose = vi.fn().mockResolvedValue(undefined);
-  const mockNewPage = vi.fn();
-  const mockLaunch = vi.fn();
-  return { mockLaunch, mockNewPage, mockClose };
-});
-
-vi.mock("@cloudflare/playwright", () => ({
-  launch: mockLaunch,
-}));
-
 import { refreshToken, login, AuthError, encryptAesEcb, parseLoginPage } from "./auth";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -30,53 +16,6 @@ function createFetchMock(
       }),
     ),
   );
-}
-
-/** Create a mock Playwright Page with configurable behavior. */
-function createMockPage(overrides: {
-  evaluateResults?: Map<string, string | null>;
-  raceResult?: "success" | "error" | "timeout";
-  errorText?: string | null;
-  url?: string;
-} = {}) {
-  const {
-    evaluateResults = new Map<string, string | null>(),
-    raceResult = "success",
-    errorText = null,
-    url = "https://self.cqu.edu.cn/cas-success",
-  } = overrides;
-
-  const mockLocatorObj = {
-    first: vi.fn().mockReturnThis(),
-    waitFor: vi.fn<any>().mockImplementation(() => {
-      if (raceResult === "error") return Promise.resolve();
-      // For "success" and "timeout" the error locator should never resolve
-      return new Promise(() => {});
-    }),
-    isVisible: vi.fn().mockResolvedValue(raceResult === "error"),
-    textContent: vi.fn().mockResolvedValue(errorText),
-  };
-
-  const page = {
-    goto: vi.fn().mockResolvedValue(undefined),
-    waitForLoadState: vi.fn().mockResolvedValue(undefined),
-    waitForTimeout: vi.fn().mockResolvedValue(undefined),
-    fill: vi.fn().mockResolvedValue(undefined),
-    click: vi.fn().mockResolvedValue(undefined),
-    waitForURL: vi.fn<any>().mockImplementation(() => {
-      if (raceResult === "success") return Promise.resolve();
-      // "error" and "timeout" — URL wait should never resolve
-      return new Promise(() => {});
-    }),
-    locator: vi.fn().mockReturnValue(mockLocatorObj),
-    evaluate: vi.fn<any>().mockImplementation((...args: any[]) => {
-      const key = args[1] as string;
-      return Promise.resolve(evaluateResults.get(key) ?? null);
-    }),
-    url: vi.fn().mockReturnValue(url),
-  };
-
-  return page;
 }
 
 // ── refreshToken tests ──────────────────────────────────────────
@@ -169,116 +108,168 @@ describe("refreshToken", () => {
   });
 });
 
+// ── Login flow mock helpers ─────────────────────────────────────
+
+const SAMPLE_LOGIN_HTML = `
+<html>
+  <input type="hidden" id="login-page-flowkey" value="e1s1" />
+  <span id="login-croypto">${Buffer.from("0123456789abcdef").toString("base64")}</span>
+</html>
+`;
+
+const SAMPLE_ERROR_HTML = `
+<html><span id="login-error-msg">用户名或密码错误</span></html>
+`;
+
+function createLoginFetchMock(overrides: {
+  loginPageHtml?: string;
+  loginStatus?: number;
+  loginLocation?: string;
+  loginBody?: string;
+  casStatus?: number;
+  casCookie?: string;
+  authorizeStatus?: number;
+  authorizeLocation?: string;
+  tokenStatus?: number;
+  tokenBody?: object;
+} = {}) {
+  const {
+    loginPageHtml = SAMPLE_LOGIN_HTML,
+    loginStatus = 302,
+    loginLocation = "https://my.cqu.edu.cn/authserver/authentication/cas?ticket=ST-test123",
+    loginBody = "",
+    casStatus = 302,
+    casCookie = "SESSION=test-session; Path=/",
+    authorizeStatus = 302,
+    authorizeLocation = "https://my.cqu.edu.cn/workspace/token-index?code=test-code&state=",
+    tokenStatus = 200,
+    tokenBody = { access_token: "test-access", refresh_token: "test-refresh", expires_in: 14400 },
+  } = overrides;
+
+  let callIndex = 0;
+  return vi.fn().mockImplementation(() => {
+    callIndex++;
+    switch (callIndex) {
+      case 1:
+        return Promise.resolve(new Response(loginPageHtml, { status: 200 }));
+      case 2:
+        return Promise.resolve(
+          new Response(loginBody, {
+            status: loginStatus,
+            headers: loginStatus === 302
+              ? { Location: loginLocation }
+              : { "Content-Type": "text/html" },
+          }),
+        );
+      case 3:
+        return Promise.resolve(
+          new Response(null, {
+            status: casStatus,
+            headers: { "Set-Cookie": casCookie, Location: "/workspace/cas" },
+          }),
+        );
+      case 4:
+        return Promise.resolve(
+          new Response(null, {
+            status: authorizeStatus,
+            headers: { Location: authorizeLocation },
+          }),
+        );
+      case 5:
+        return Promise.resolve(
+          new Response(JSON.stringify(tokenBody), {
+            status: tokenStatus,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      default:
+        return Promise.reject(new Error(`Unexpected fetch call #${callIndex}`));
+    }
+  });
+}
+
 // ── login tests ─────────────────────────────────────────────────
 
 describe("login", () => {
-  const fakeBrowser = {} as any;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    // Reset mocks but re-establish the launch return structure
-    mockClose.mockReset().mockResolvedValue(undefined);
-    mockNewPage.mockReset();
-    mockLaunch.mockReset().mockResolvedValue({
-      newPage: mockNewPage,
-      close: mockClose,
-    });
+    originalFetch = globalThis.fetch;
   });
 
-  it("should return correct TokenResult on successful login", async () => {
-    const tokenMap = new Map<string, string | null>([
-      ["cqu_edu_ACCESS_TOKEN", '"my-access-token"'],
-      ["cqu_edu_REFRESH_TOKEN", '"my-refresh-token"'],
-    ]);
-
-    const page = createMockPage({
-      raceResult: "success",
-      evaluateResults: tokenMap,
-    });
-    mockNewPage.mockResolvedValue(page);
-
-    const result = await login(fakeBrowser, "user1", "pass1");
-
-    expect(result.accessToken).toBe("my-access-token");
-    expect(result.refreshToken).toBe("my-refresh-token");
-    expect(result.expiresAt).toBeTruthy();
-    // Verify ISO format
-    expect(new Date(result.expiresAt).toISOString()).toBe(result.expiresAt);
-
-    // Verify login flow was executed
-    expect(page.goto).toHaveBeenCalled();
-    expect(page.fill).toHaveBeenCalledTimes(2);
-    expect(page.click).toHaveBeenCalled();
-    expect(mockClose).toHaveBeenCalled();
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
-  it("should throw AuthError INVALID_CREDENTIALS when error element is visible", async () => {
-    const page = createMockPage({
-      raceResult: "error",
-      errorText: "Invalid username or password",
+  it("should return TokenResult on successful 5-step login", async () => {
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    globalThis.fetch = createLoginFetchMock();
+
+    const result = await login("user1", "pass1");
+
+    expect(result.accessToken).toBe("test-access");
+    expect(result.refreshToken).toBe("test-refresh");
+    expect(result.expiresAt).toBe(new Date(now + 14400 * 1000).toISOString());
+    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("should throw INVALID_CREDENTIALS on 401", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginStatus: 401,
+      loginBody: SAMPLE_ERROR_HTML,
     });
-    mockNewPage.mockResolvedValue(page);
 
     try {
-      await login(fakeBrowser, "bad-user", "bad-pass");
+      await login("bad-user", "bad-pass");
       expect.unreachable("Should have thrown");
     } catch (e: any) {
       expect(e).toBeInstanceOf(AuthError);
       expect(e.code).toBe("INVALID_CREDENTIALS");
-      expect(e.message).toContain("Invalid username or password");
+      expect(e.message).toContain("用户名或密码错误");
     }
-
-    // Browser should still be closed
-    expect(mockClose).toHaveBeenCalled();
   });
 
-  it("should throw AuthError UPSTREAM_TIMEOUT when neither success nor error resolves", async () => {
-    const page = createMockPage({
-      raceResult: "success",
-      url: "https://sso.cqu.edu.cn/login",
+  it("should throw UPSTREAM_UNREACHABLE when login page is unparseable", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginPageHtml: "<html>broken page</html>",
     });
-    // Override: both waitForURL and locator.waitFor reject (simulating timeout)
-    page.waitForURL.mockRejectedValue(new Error("Timeout exceeded"));
-    const locatorObj = {
-      first: vi.fn().mockReturnThis(),
-      waitFor: vi.fn().mockRejectedValue(new Error("Timeout exceeded")),
-      isVisible: vi.fn().mockResolvedValue(false),
-      textContent: vi.fn().mockResolvedValue(null),
-    };
-    page.locator.mockReturnValue(locatorObj);
-    mockNewPage.mockResolvedValue(page);
 
     try {
-      await login(fakeBrowser, "user1", "pass1");
+      await login("user1", "pass1");
       expect.unreachable("Should have thrown");
     } catch (e: any) {
       expect(e).toBeInstanceOf(AuthError);
-      expect(e.code).toBe("UPSTREAM_TIMEOUT");
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
     }
-
-    expect(mockClose).toHaveBeenCalled();
   });
 
-  it("should throw AuthError BROWSER_ERROR when token is not found after retries", async () => {
-    const page = createMockPage({
-      raceResult: "success",
-      evaluateResults: new Map(), // empty = all null
+  it("should throw UPSTREAM_UNREACHABLE when no ticket in redirect", async () => {
+    globalThis.fetch = createLoginFetchMock({
+      loginLocation: "https://my.cqu.edu.cn/authserver/authentication/cas",
     });
-    mockNewPage.mockResolvedValue(page);
 
     try {
-      await login(fakeBrowser, "user1", "pass1");
+      await login("user1", "pass1");
       expect.unreachable("Should have thrown");
     } catch (e: any) {
       expect(e).toBeInstanceOf(AuthError);
-      expect(e.code).toBe("BROWSER_ERROR");
-      expect(e.message).toContain("Unable to retrieve access token");
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("No ticket");
     }
+  });
 
-    // Should have tried the fallback URL as well
-    const gotoArgs = page.goto.mock.calls.map((c: any[]) => c[0]);
-    expect(gotoArgs).toContain("https://my.cqu.edu.cn/enroll");
+  it("should throw UPSTREAM_UNREACHABLE on network error", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
 
-    expect(mockClose).toHaveBeenCalled();
+    try {
+      await login("user1", "pass1");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+    }
   });
 });
 

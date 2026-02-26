@@ -1,4 +1,3 @@
-import { launch, type BrowserWorker, type Page } from "@cloudflare/playwright";
 import { createCipheriv } from "node:crypto";
 
 // ── OAuth constants ──────────────────────────────────────────────
@@ -8,21 +7,6 @@ const OAUTH_CLIENT_SECRET = "app-a-1234";
 const TOKEN_EXPIRY_HOURS = 4;
 const REFRESH_TIMEOUT_MS = 30_000;
 
-// ── Browser login constants ──────────────────────────────────────
-const LOGIN_URL = "https://sso.cqu.edu.cn/login";
-const SUCCESS_URL_PATTERN = "self.cqu.edu.cn/cas-success";
-const WORKSPACE_URL = "https://my.cqu.edu.cn/workspace/home";
-const FALLBACK_URL = "https://my.cqu.edu.cn/enroll";
-const TOKEN_KEY = "cqu_edu_ACCESS_TOKEN";
-const REFRESH_TOKEN_KEY = "cqu_edu_REFRESH_TOKEN";
-const USERNAME_SELECTOR = "input[placeholder*='统一身份认证号']";
-const PASSWORD_SELECTOR = "input[type='password']:visible";
-const LOGIN_BUTTON_SELECTOR = ".login-button";
-const LOGIN_TIMEOUT_MS = 55_000;
-const ANGULAR_RENDER_WAIT = 2_000;
-const BUTTON_CLICK_WAIT = 500;
-const RETRY_WAIT = 1_000;
-const MAX_TOKEN_RETRIES = 5;
 
 // ── Error class ──────────────────────────────────────────────────
 export class AuthError extends Error {
@@ -150,118 +134,171 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
   };
 }
 
-// ── login (CF Browser Rendering) ─────────────────────────────────
+// ── Login constants ─────────────────────────────────────────────
+const SSO_LOGIN_URL = "https://sso.cqu.edu.cn/login";
+const CAS_SERVICE_URL =
+  "https://my.cqu.edu.cn/authserver/authentication/cas";
+const OAUTH_AUTHORIZE_URL =
+  "https://my.cqu.edu.cn/authserver/oauth/authorize";
+const OAUTH_REDIRECT_URI =
+  "https://my.cqu.edu.cn/workspace/token-index";
+const OAUTH_BASIC_AUTH = "cGVyc29uYWwtcHJvZDphcHAtYS0xMjM0";
+const LOGIN_TIMEOUT_MS = 30_000;
+
+// ── login (pure HTTP) ───────────────────────────────────────────
 export async function login(
-  browser: BrowserWorker,
   username: string,
   password: string,
 ): Promise<TokenResult> {
-  const instance = await launch(browser);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS);
+
   try {
-    const page = await instance.newPage();
+    // Step 1: GET login page → extract execution, croypto
+    const loginPageRes = await fetch(
+      `${SSO_LOGIN_URL}?service=${encodeURIComponent(CAS_SERVICE_URL)}`,
+      { signal: controller.signal },
+    );
+    const loginPageHtml = await loginPageRes.text();
+    const { execution, croypto } = parseLoginPage(loginPageHtml);
 
-    // Navigate to SSO login page
-    await page.goto(LOGIN_URL);
-    await page.waitForLoadState("domcontentloaded");
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(ANGULAR_RENDER_WAIT);
+    // Step 2: Encrypt password, POST login form
+    const encryptedPassword = encryptAesEcb(password, croypto);
+    const captchaPayload = encryptAesEcb("{}", croypto);
 
-    // Fill credentials
-    await page.fill(USERNAME_SELECTOR, username);
-    await page.fill(PASSWORD_SELECTOR, password);
-    await page.waitForTimeout(BUTTON_CLICK_WAIT);
+    const loginRes = await fetch(
+      `${SSO_LOGIN_URL}?service=${encodeURIComponent(CAS_SERVICE_URL)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          username,
+          password: encryptedPassword,
+          type: "UsernamePassword",
+          execution,
+          _eventId: "submit",
+          geolocation: "",
+          croypto,
+          captcha_payload: captchaPayload,
+        }),
+        redirect: "manual",
+        signal: controller.signal,
+      },
+    );
 
-    // Click login
-    await page.click(LOGIN_BUTTON_SELECTOR);
-
-    // Race: success URL redirect vs error message appearing
-    const result = await Promise.race([
-      page
-        .waitForURL(`**/${SUCCESS_URL_PATTERN}**`, { timeout: LOGIN_TIMEOUT_MS })
-        .then(() => "success" as const),
-      page
-        .locator(".error-message, .ant-message, .alert")
-        .first()
-        .waitFor({ state: "visible", timeout: LOGIN_TIMEOUT_MS })
-        .then(() => "error" as const),
-    ]).catch(() => "timeout" as const);
-
-    if (result === "error") {
-      const errorText = await page
-        .locator(".error-message, .ant-message, .alert")
-        .first()
-        .textContent()
-        .catch(() => null);
+    if (loginRes.status === 401) {
+      const html = await loginRes.text();
+      const errorMsg = extractLoginError(html) ?? "Invalid credentials";
+      throw new AuthError("INVALID_CREDENTIALS", `Login failed: ${errorMsg}`);
+    }
+    if (loginRes.status !== 302) {
       throw new AuthError(
-        "INVALID_CREDENTIALS",
-        `Login failed: ${errorText ?? "unknown error"}`,
+        "UPSTREAM_UNREACHABLE",
+        `Unexpected login response: HTTP ${loginRes.status}`,
       );
     }
-    if (result === "timeout") {
-      throw new AuthError("UPSTREAM_TIMEOUT", `Login timeout, URL: ${page.url()}`);
+
+    const location = loginRes.headers.get("location") ?? "";
+    const ticketMatch = location.match(/ticket=([^&]+)/);
+    if (!ticketMatch) {
+      throw new AuthError(
+        "UPSTREAM_UNREACHABLE",
+        "No ticket in login redirect",
+      );
+    }
+    const ticket = ticketMatch[1];
+
+    // Step 3: Validate CAS ticket → get SESSION cookie
+    const casRes = await fetch(`${CAS_SERVICE_URL}?ticket=${ticket}`, {
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    const sessionCookie = extractCookie(casRes, "SESSION");
+    if (!sessionCookie) {
+      throw new AuthError(
+        "UPSTREAM_UNREACHABLE",
+        "No SESSION cookie from CAS validation",
+      );
     }
 
-    // Navigate to workspace to get tokens from localStorage
-    await page.goto(WORKSPACE_URL);
-    await page.waitForLoadState("domcontentloaded");
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(ANGULAR_RENDER_WAIT);
-
-    // Extract tokens with retry
-    let accessToken = await getLocalStorageItem(page, TOKEN_KEY);
-    let refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
-
-    if (!accessToken) {
-      for (let i = 0; i < MAX_TOKEN_RETRIES; i++) {
-        await page.waitForTimeout(RETRY_WAIT);
-        accessToken = await getLocalStorageItem(page, TOKEN_KEY);
-        if (accessToken) {
-          refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
-          break;
-        }
-      }
+    // Step 4: OAuth authorize → get authorization code
+    const authorizeUrl =
+      `${OAUTH_AUTHORIZE_URL}?client_id=${OAUTH_CLIENT_ID}` +
+      `&response_type=code&scope=all&state=` +
+      `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}`;
+    const authorizeRes = await fetch(authorizeUrl, {
+      headers: { Cookie: sessionCookie },
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    const authLocation = authorizeRes.headers.get("location") ?? "";
+    const codeMatch = authLocation.match(/code=([^&]+)/);
+    if (!codeMatch) {
+      throw new AuthError(
+        "UPSTREAM_UNREACHABLE",
+        "No authorization code in OAuth redirect",
+      );
     }
 
-    // Fallback URL
-    if (!accessToken) {
-      await page.goto(FALLBACK_URL);
-      await page.waitForLoadState("domcontentloaded");
-      await page.waitForLoadState("networkidle");
-      await page.waitForTimeout(ANGULAR_RENDER_WAIT);
-      accessToken = await getLocalStorageItem(page, TOKEN_KEY);
-      refreshTokenValue = await getLocalStorageItem(page, REFRESH_TOKEN_KEY);
+    // Step 5: Exchange code for tokens
+    const tokenRes = await fetch(TOKEN_REFRESH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${OAUTH_BASIC_AUTH}`,
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
+        client_id: OAUTH_CLIENT_ID,
+        client_secret: OAUTH_CLIENT_SECRET,
+        code: codeMatch[1],
+        redirect_uri: OAUTH_REDIRECT_URI,
+        grant_type: "authorization_code",
+      }),
+      signal: controller.signal,
+    });
+
+    if (!tokenRes.ok) {
+      throw new AuthError(
+        "UPSTREAM_UNREACHABLE",
+        `Token exchange failed: HTTP ${tokenRes.status}`,
+      );
     }
 
-    if (!accessToken) {
-      throw new AuthError("BROWSER_ERROR", "Unable to retrieve access token");
+    const data: any = await tokenRes.json();
+    if (!data.access_token) {
+      throw new AuthError(
+        "UPSTREAM_UNREACHABLE",
+        "No access_token in token response",
+      );
     }
 
-    const expiresAt = new Date(
-      Date.now() + TOKEN_EXPIRY_HOURS * 3600 * 1000,
-    ).toISOString();
-
+    const expiresIn = data.expires_in ?? TOKEN_EXPIRY_HOURS * 3600;
     return {
-      accessToken,
-      refreshToken: refreshTokenValue ?? "",
-      expiresAt,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? "",
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     };
+  } catch (e: any) {
+    if (e instanceof AuthError) throw e;
+    if (e?.name === "AbortError") {
+      throw new AuthError("UPSTREAM_TIMEOUT", "Login timeout");
+    }
+    throw new AuthError("UPSTREAM_UNREACHABLE", `Login failed: ${e}`);
   } finally {
-    await instance.close();
+    clearTimeout(timer);
   }
 }
 
-// ── Helper ───────────────────────────────────────────────────────
-async function getLocalStorageItem(
-  page: Page,
-  key: string,
-): Promise<string | null> {
-  const value = await page.evaluate(
-    // Runs in browser context where localStorage exists
-    (k: string) => (globalThis as any).localStorage.getItem(k) as string | null,
-    key,
-  );
-  if (typeof value === "string") {
-    return value.replace(/^"|"$/g, "");
-  }
-  return null;
+// ── Helpers ─────────────────────────────────────────────────────
+
+function extractCookie(response: Response, name: string): string | null {
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const match = setCookie.match(new RegExp(`${name}=([^;]+)`));
+  return match ? `${name}=${match[1]}` : null;
+}
+
+function extractLoginError(html: string): string | null {
+  const match = html.match(/id="login-error-msg"[^>]*>([^<]*)</);
+  return match?.[1]?.trim() || null;
 }
