@@ -1,14 +1,9 @@
-import type { BrowserWorker } from "@cloudflare/playwright";
-
 export interface Env {
   // Static Assets
   ASSETS: Fetcher;
 
   // D1 Database
   DB: D1Database;
-
-  // Browser Rendering
-  MYBROWSER: BrowserWorker;
 
   // Rate Limiting
   UNAUTH_LIMITER: RateLimit;

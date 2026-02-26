@@ -60,10 +60,10 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     return errorResponse("USER_EXISTS", "User already registered", 409);
   }
 
-  // Verify via Playwright login
+  // Verify via SSO login
   let tokenResult;
   try {
-    tokenResult = await login(c.env.MYBROWSER, body.student_id, body.password);
+    tokenResult = await login(body.student_id, body.password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;
@@ -190,7 +190,7 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
   return c.json({ calendar_token: user.calendarToken });
 });
 
-// POST /api/v1/users/recover/verify (recover via Playwright login)
+// POST /api/v1/users/recover/verify (recover via SSO login)
 app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const captchaToken = c.req.header("X-Captcha-Token") ?? null;
   try {
@@ -222,7 +222,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   let tokenResult;
   try {
-    tokenResult = await login(c.env.MYBROWSER, body.student_id, body.password);
+    tokenResult = await login(body.student_id, body.password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;

@@ -23,11 +23,6 @@
     }
   ],
 
-  // Browser Rendering
-  "browser": {
-    "binding": "MYBROWSER"
-  },
-
   // Rate Limiting
   "ratelimits": [
     {

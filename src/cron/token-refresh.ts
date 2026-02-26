@@ -55,7 +55,7 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
         user.encryptedPassword,
         env.ENCRYPTION_KEY,
       );
-      const result = await login(env.MYBROWSER, user.studentId, password);
+      const result = await login(user.studentId, password);
       await db
         .update(users)
         .set({
