@@ -56,6 +56,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Cron handler 只做入队 (`sendBatch`)，实际处理在 Queue consumer 中
 - `sendBatch` 最多 100 条/次，>100 用户需分批调用
 - Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
+- `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
+- Queue handler 的 `MessageBatch` 默认泛型为 `unknown`，须用 `batch as MessageBatch<T>` 类型断言
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler)
