@@ -24,7 +24,7 @@
               <Label for="password">密码</Label>
               <Input id="password" v-model="form.password" type="password" placeholder="请输入密码" />
             </div>
-            <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
+            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="loading">
               <Loader2 v-if="loading" class="h-4 w-4 animate-spin mr-2" />
               找回
@@ -40,7 +40,7 @@
             <p class="text-sm text-muted-foreground">
               密码可能已更改，需要通过教务系统重新验证。
             </p>
-            <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
+            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
             <div class="flex gap-2">
               <Button variant="outline" class="flex-1 cursor-pointer" @click="step = 'form'">
                 返回
@@ -86,6 +86,7 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2, Copy, Check } from 'lucide-vue-next'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
+import { toast } from 'vue-sonner'
 import api from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import Navbar from '@/components/Navbar.vue'
@@ -94,6 +95,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { parseApiError } from '@/utils/error'
 import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 
 const router = useRouter()
@@ -119,7 +122,7 @@ onMounted(async () => {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
-  } catch {}
+  } catch { toast.error('验证码配置加载失败') }
 })
 
 async function getCaptchaToken() {
@@ -152,18 +155,15 @@ async function handleRecover() {
     })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'
+    toast.success('找回成功')
     nextTick(() => activateOPButton())
   } catch (error) {
-    if (error.response?.status === 429) {
-      errorMessage.value = error.response.data.detail
+    const detail = error.response?.data?.detail
+    const code = detail?.error?.code
+    if (code === 'PASSWORD_MISMATCH') {
+      step.value = 'mismatch'
     } else {
-      const detail = error.response?.data?.detail
-      const code = detail?.error?.code
-      if (code === 'PASSWORD_MISMATCH') {
-        step.value = 'mismatch'
-      } else {
-        errorMessage.value = detail?.error?.message || '找回失败'
-      }
+      errorMessage.value = parseApiError(error, '找回失败')
     }
     hcaptchaRef.value?.reset()
   } finally {
@@ -188,14 +188,10 @@ async function handleVerify() {
     })
     await authStore.loginWithToken(data.calendar_token)
     step.value = 'success'
+    toast.success('找回成功')
     nextTick(() => activateOPButton())
   } catch (error) {
-    if (error.response?.status === 429) {
-      errorMessage.value = error.response.data.detail
-    } else {
-      const detail = error.response?.data?.detail
-      errorMessage.value = detail?.error?.message || '验证失败'
-    }
+    errorMessage.value = parseApiError(error, '验证失败')
     hcaptchaRef.value?.reset()
   } finally {
     loading.value = false
