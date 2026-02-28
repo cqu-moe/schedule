@@ -118,16 +118,20 @@
 
       <!-- Error message -->
       <div v-if="errorMessage" class="mt-4">
-        <p class="text-sm text-destructive">{{ errorMessage }}</p>
-        <Button
-          v-if="isTokenExpired"
-          variant="link"
-          size="sm"
-          class="px-0 text-destructive cursor-pointer"
-          @click="$router.push('/login')"
-        >
-          重新登录
-        </Button>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {{ errorMessage }}
+            <Button
+              v-if="isTokenExpired"
+              variant="link"
+              size="sm"
+              class="px-0 text-destructive cursor-pointer"
+              @click="$router.push('/login')"
+            >
+              重新登录
+            </Button>
+          </AlertDescription>
+        </Alert>
       </div>
     </div>
   </div>
@@ -136,6 +140,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Plus, Check, Loader2 } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api'
@@ -148,6 +153,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { parseApiError } from '@/utils/error'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 
 const authStore = useAuthStore()
@@ -189,14 +196,13 @@ function isSubscribed(sourceId) {
 }
 
 function handleApiError(err, fallbackMessage) {
-  const detail = err.response?.data?.detail || fallbackMessage
-  if (detail === 'CAPTCHA_REQUIRED' || detail === 'CAPTCHA_FAILED') {
-    errorMessage.value = '验证码验证失败，请刷新页面重试'
-    return
-  }
-  errorMessage.value = detail
-  if (err.response?.status === 401 || /token expired/i.test(detail)) {
+  const msg = parseApiError(err, fallbackMessage)
+  const resp = err?.response
+  if (resp?.status === 401 || /token expired/i.test(msg)) {
+    errorMessage.value = msg
     isTokenExpired.value = true
+  } else {
+    toast.error(msg)
   }
 }
 
@@ -296,6 +302,7 @@ async function handleSubscribe(item) {
       authStore.token, sourceType.value, item.id, item.name, captchaToken
     )
     await loadSubscriptions()
+    toast.success('订阅成功')
   } catch (err) {
     handleApiError(err, '订阅失败')
   } finally {
@@ -310,7 +317,7 @@ async function loadSubscriptions() {
     subscriptions.value = data.subscriptions
     subscriptionsMax.value = data.max
   } catch {
-    // Silent fail on load
+    toast.error('加载订阅列表失败')
   }
 }
 
@@ -321,7 +328,7 @@ onMounted(async () => {
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
   } catch {
-    // Proceed without captcha
+    toast.error('验证码配置加载失败')
   }
 })
 
