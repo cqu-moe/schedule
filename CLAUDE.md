@@ -13,6 +13,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Auth: 纯 HTTP CAS→OAuth 登录流程 (`src/services/auth.ts`), 无需浏览器
 - Frontend: Vue 3 + Tailwind v4 + shadcn-vue (in `frontend/`)
 - Cache: KV namespace `CACHE` 缓存 SessionContext (24h TTL)，减少 CQU API 调用
+- Queues: `schedule-token-refresh` (token 刷新) + `schedule-sync` (课表同步), cron 入队 + consumer 处理
 - Placement: `hostname: "my.cqu.edu.cn"` 将 Worker 放在离 CQU API 最近的数据中心
 
 ## 常用命令
@@ -52,15 +53,18 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
 - Workers placement 只影响 fetch handler，不影响 cron scheduled handler
+- Cron handler 只做入队 (`sendBatch`)，实际处理在 Queue consumer 中
+- `sendBatch` 最多 100 条/次，>100 用户需分批调用
+- Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
 
 ## 项目结构
-- `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
+- `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler)
 - `src/types.ts` — Env 接口定义
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
-- `src/cron/` — 定时任务 (token-refresh, schedule-sync)
+- `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
 - `frontend/` — Vue 前端 (独立 npm 项目)
 - `docs/plans/` — 设计文档和实现计划
