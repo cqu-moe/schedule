@@ -13,6 +13,10 @@ export interface Env {
   AUTH_LIMITER: RateLimit;
   EXPLORE_LIMITER: RateLimit;
 
+  // Queues
+  TOKEN_REFRESH_QUEUE: Queue;
+  SCHEDULE_SYNC_QUEUE: Queue;
+
   // Secrets
   ENCRYPTION_KEY: string;
   HCAPTCHA_SECRET: string;
