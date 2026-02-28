@@ -29,14 +29,6 @@
             </router-link>
           </div>
         </div>
-        <p
-          v-if="statusMessage"
-          class="text-sm mb-3"
-          :class="statusType === 'success' ? 'text-green-600' : 'text-destructive'"
-        >
-          {{ statusMessage }}
-        </p>
-
         <!-- Loading state -->
         <div v-if="loading" class="flex items-center justify-center py-8">
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
@@ -222,7 +214,9 @@ import { useRouter } from 'vue-router'
 import { RefreshCw, Loader2, Copy, Check, Trash2, QrCode, Download } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config.js'
+import { toast } from 'vue-sonner'
 import api from '@/api'
+import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
@@ -260,8 +254,6 @@ const showRiskWarning = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
-const statusMessage = ref('')
-const statusType = ref('success')
 const subscriptions = ref([])
 const subscriptionsMax = ref(5)
 const copiedToken = ref(null)
@@ -316,7 +308,7 @@ async function loadSubscriptions() {
     subscriptions.value = data.subscriptions
     subscriptionsMax.value = data.max
   } catch {
-    // Silent fail on load
+    toast.error('加载订阅列表失败')
   } finally {
     loading.value = false
   }
@@ -353,8 +345,9 @@ async function copyUrl(url, token) {
     copiedToken.value = token
     clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => { copiedToken.value = null }, 1500)
+    toast.success('链接已复制')
   } catch {
-    // Silent fail
+    toast.error('复制失败')
   }
 }
 
@@ -364,9 +357,9 @@ async function handleRefreshSub(subToken) {
     await api.refreshSubscription(authStore.token, subToken)
     await loadSubscriptions()
     await authStore.fetchUserInfo()
+    toast.success('订阅已刷新')
   } catch (error) {
-    statusMessage.value = error.response?.data?.detail || '刷新失败'
-    statusType.value = 'error'
+    toast.error(parseApiError(error, '刷新失败'))
   } finally {
     refreshingToken.value = null
   }
@@ -376,14 +369,14 @@ async function handleDeleteSub(subToken) {
   try {
     await api.deleteSubscription(authStore.token, subToken)
     await loadSubscriptions()
-  } catch {
-    // Silent fail
+    toast.success('订阅已删除')
+  } catch (error) {
+    toast.error(parseApiError(error, '删除订阅失败'))
   }
 }
 
 async function handleSyncAll() {
   syncing.value = true
-  statusMessage.value = ''
   try {
     const personalSubs = subscriptions.value.filter(s => s.is_personal)
     for (const sub of personalSubs) {
@@ -391,11 +384,9 @@ async function handleSyncAll() {
     }
     await loadSubscriptions()
     await authStore.fetchUserInfo()
-    statusMessage.value = '同步成功'
-    statusType.value = 'success'
+    toast.success('同步成功')
   } catch (error) {
-    statusMessage.value = error.response?.data?.detail || '同步失败'
-    statusType.value = 'error'
+    toast.error(parseApiError(error, '同步失败'))
   } finally {
     syncing.value = false
   }
@@ -408,8 +399,7 @@ async function handleDelete() {
     authStore.logout()
     router.push('/')
   } catch {
-    statusMessage.value = '删除失败'
-    statusType.value = 'error'
+    toast.error('删除账号失败')
   } finally {
     deleting.value = false
   }
