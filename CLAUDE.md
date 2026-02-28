@@ -26,6 +26,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npm run deploy:secrets` — 从 1Password 推送 secrets 到 Cloudflare (op read → wrangler secret put)
 - `npx wrangler d1 execute schedule-beta-cqu-moe-db --remote --command "SQL"` — 查询生产 D1
 - `npx wrangler tail schedule-beta-cqu-moe --format pretty` — 实时查看生产 Worker 日志
+- `npx wrangler dev --remote --test-scheduled` — 用生产 D1 手动触发 cron (访问 `http://localhost:8787/__scheduled?cron=<url-encoded-cron>`)
 
 ## 开发注意事项
 - vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)
@@ -45,12 +46,15 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `git log --format` 中 `%d` 是 ref names 不是日期；获取日期用 `--format=%cd --date=short`
 - `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
 - `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
+- D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
+- 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
+- CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
 - `src/types.ts` — Env 接口定义
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)
-- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha)
+- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 (token-refresh, schedule-sync)
