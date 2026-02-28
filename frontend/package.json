@@ -26,7 +26,8 @@
     "tailwind-merge": "^3.4.1",
     "tailwindcss": "^4.1.18",
     "vue": "^3.4.0",
-    "vue-router": "^4.2.0"
+    "vue-router": "^4.2.0",
+    "vue-sonner": "^2.0.9"
   },
   "devDependencies": {
     "@pinia/testing": "^0.1.7",
