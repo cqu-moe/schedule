@@ -54,6 +54,6 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/middleware/` — 中间件 (auth, rate-limit)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 (token-refresh, schedule-sync)
-- `src/utils/token.ts` — 共享 token 生成函数
+- `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
 - `frontend/` — Vue 前端 (独立 npm 项目)
 - `docs/plans/` — 设计文档和实现计划
