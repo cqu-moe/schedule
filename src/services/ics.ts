@@ -178,19 +178,9 @@ export async function generateExamsIcs(
 
 export function mergeIcs(coursesIcs: string, examsIcs: string): string {
   const eventRegex = /BEGIN:VEVENT[\s\S]*?END:VEVENT/g;
-
-  const lines: string[] = [ICS_HEADER];
-
   const courseEvents = coursesIcs.match(eventRegex) ?? [];
-  for (const event of courseEvents) {
-    lines.push(event);
-  }
-
   const examEvents = examsIcs.match(eventRegex) ?? [];
-  for (const event of examEvents) {
-    lines.push(event);
-  }
 
-  lines.push(ICS_FOOTER);
+  const lines: string[] = [ICS_HEADER, ...courseEvents, ...examEvents, ICS_FOOTER];
   return lines.join("\r\n");
 }

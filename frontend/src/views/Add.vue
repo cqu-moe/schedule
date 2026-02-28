@@ -314,13 +314,12 @@ async function loadSubscriptions() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadSubscriptions()
   try {
-    api.getCaptchaConfig().then(config => {
-      captchaEnabled.value = config.enabled
-      captchaSitekey.value = config.sitekey
-    })
+    const config = await api.getCaptchaConfig()
+    captchaEnabled.value = config.enabled
+    captchaSitekey.value = config.sitekey
   } catch {
     // Proceed without captcha
   }

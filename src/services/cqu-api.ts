@@ -1,3 +1,5 @@
+import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
+
 // CQU API endpoints
 const SCHEDULE_URL_TEMPLATE =
   "https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail?sessionId={}";
@@ -53,9 +55,6 @@ export const TIME_SLOTS: [string, string][] = [
   ["21:45:00", "22:30:00"],
   ["22:40:00", "23:25:00"],
 ];
-
-// China timezone offset in ms
-const CHINA_TZ_OFFSET = 8 * 60 * 60 * 1000;
 
 export interface CourseEntry {
   name: string;
@@ -302,18 +301,13 @@ export class CQUAPIClient {
         const day = examDate.getDate();
 
         const startDt = new Date(
-          Date.UTC(year, month, day, startH, startM) - CHINA_TZ_OFFSET,
+          Date.UTC(year, month, day, startH, startM) - CHINA_TZ_OFFSET_MS,
         );
         const endDt = new Date(
-          Date.UTC(year, month, day, endH, endM) - CHINA_TZ_OFFSET,
+          Date.UTC(year, month, day, endH, endM) - CHINA_TZ_OFFSET_MS,
         );
 
-        let seatNum = 0;
-        try {
-          seatNum = Number(item.seatNum ?? 0) || 0;
-        } catch {
-          // ignore
-        }
+        const seatNum = Number(item.seatNum ?? 0) || 0;
 
         exams.push({
           name: `${item.courseName ?? ""}考试`,
@@ -448,18 +442,6 @@ export class CQUAPIClient {
     const data = await this.request("POST", url, { json: [sourceId] });
     return this.parseCourses(data);
   }
-}
-
-function formatChinaIso(utcDate: Date): string {
-  // Format as ISO with +08:00 offset
-  const china = new Date(utcDate.getTime() + CHINA_TZ_OFFSET);
-  const y = china.getUTCFullYear();
-  const mo = String(china.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(china.getUTCDate()).padStart(2, "0");
-  const h = String(china.getUTCHours()).padStart(2, "0");
-  const mi = String(china.getUTCMinutes()).padStart(2, "0");
-  const s = String(china.getUTCSeconds()).padStart(2, "0");
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}+08:00`;
 }
 
 function formatDepartment(item: any): DepartmentNode {

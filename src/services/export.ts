@@ -1,6 +1,5 @@
 import { TIME_SLOTS } from "./cqu-api";
-
-const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
 
 const SEMESTER_RE = /^(\d{4})-(\d{4})学年第(一|二)学期$/;
 
@@ -176,13 +175,3 @@ export function generateCsv(events: FormattedEvent[]): string {
   return BOM + lines.join("\n");
 }
 
-function formatChinaIso(utcDate: Date): string {
-  const china = new Date(utcDate.getTime() + CHINA_TZ_OFFSET_MS);
-  const y = china.getUTCFullYear();
-  const mo = String(china.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(china.getUTCDate()).padStart(2, "0");
-  const h = String(china.getUTCHours()).padStart(2, "0");
-  const mi = String(china.getUTCMinutes()).padStart(2, "0");
-  const s = String(china.getUTCSeconds()).padStart(2, "0");
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}+08:00`;
-}

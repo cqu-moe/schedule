@@ -363,15 +363,13 @@ app.get("/:sub_token/origin.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  let courses, exams;
-  try {
-    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : [];
-    exams = sub.examsJson ? JSON.parse(sub.examsJson) : [];
-  } catch {
-    return c.json({ detail: "Stored data is corrupted" }, 500);
-  }
+  const parsed = parseSubJson(sub);
+  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
 
-  return new Response(JSON.stringify({ courses, exams }), {
+  return new Response(JSON.stringify({
+    courses: parsed.courses ?? [],
+    exams: parsed.exams ?? [],
+  }), {
     headers: {
       "Content-Type": "application/json",
       "Content-Disposition": 'attachment; filename="origin.json"',
@@ -385,27 +383,21 @@ app.get("/:sub_token/data.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  let courses, exams;
-  try {
-    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
-    exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
-  } catch {
-    return c.json({ detail: "Stored data is corrupted" }, 500);
-  }
+  const parsed = parseSubJson(sub);
+  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
+
   const events = generateFormattedEvents(
-    courses,
+    parsed.courses,
     sub.semesterStart ?? "",
-    exams,
+    parsed.exams,
   );
 
-  const payload = {
+  return new Response(JSON.stringify({
     semester: semesterShortName(sub.sessionName),
     semester_start: sub.semesterStart ?? "",
     generated_at: new Date().toISOString(),
     events,
-  };
-
-  return new Response(JSON.stringify(payload), {
+  }), {
     headers: {
       "Content-Type": "application/json",
       "Content-Disposition": 'attachment; filename="data.json"',
@@ -419,21 +411,16 @@ app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const sub = await getSubForExport(c);
   if (sub instanceof Response) return sub;
 
-  let courses, exams;
-  try {
-    courses = sub.coursesJson ? JSON.parse(sub.coursesJson) : null;
-    exams = sub.examsJson ? JSON.parse(sub.examsJson) : null;
-  } catch {
-    return c.json({ detail: "Stored data is corrupted" }, 500);
-  }
-  const events = generateFormattedEvents(
-    courses,
-    sub.semesterStart ?? "",
-    exams,
-  );
-  const csvContent = generateCsv(events);
+  const parsed = parseSubJson(sub);
+  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
 
-  return new Response(csvContent, {
+  const events = generateFormattedEvents(
+    parsed.courses,
+    sub.semesterStart ?? "",
+    parsed.exams,
+  );
+
+  return new Response(generateCsv(events), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="schedule.csv"',
@@ -441,6 +428,17 @@ app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
     },
   });
 });
+
+function parseSubJson(sub: Subscription): { courses: any[] | null; exams: any[] | null } | null {
+  try {
+    return {
+      courses: sub.coursesJson ? JSON.parse(sub.coursesJson) : null,
+      exams: sub.examsJson ? JSON.parse(sub.examsJson) : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 async function getSubForExport(c: any): Promise<Subscription | Response> {
   const subToken = c.req.param("sub_token");

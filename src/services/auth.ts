@@ -27,12 +27,14 @@ export interface TokenResult {
 // ── AES-ECB encryption helper ────────────────────────────────────
 export function encryptAesEcb(plaintext: string, keyBase64: string): string {
   const key = Buffer.from(keyBase64, "base64");
-  const algo =
-    key.length <= 16
-      ? "aes-128-ecb"
-      : key.length <= 24
-        ? "aes-192-ecb"
-        : "aes-256-ecb";
+  let algo: string;
+  if (key.length <= 16) {
+    algo = "aes-128-ecb";
+  } else if (key.length <= 24) {
+    algo = "aes-192-ecb";
+  } else {
+    algo = "aes-256-ecb";
+  }
   const cipher = createCipheriv(algo, key, "");
   return Buffer.concat([
     cipher.update(plaintext, "utf8"),
