@@ -126,7 +126,9 @@ onMounted(async () => {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
-  } catch { toast.error('验证码配置加载失败') }
+  } catch {
+    // Proceed without captcha — graceful degradation
+  }
 })
 
 async function getCaptchaToken() {

@@ -301,8 +301,8 @@ async function handleSubscribe(item) {
     await api.createSubscription(
       authStore.token, sourceType.value, item.id, item.name, captchaToken
     )
-    await loadSubscriptions()
     toast.success('订阅成功')
+    await loadSubscriptions().catch(() => {})
   } catch (err) {
     handleApiError(err, '订阅失败')
   } finally {
@@ -328,7 +328,7 @@ onMounted(async () => {
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
   } catch {
-    toast.error('验证码配置加载失败')
+    // Proceed without captcha — graceful degradation
   }
 })
 

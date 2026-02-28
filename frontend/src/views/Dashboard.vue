@@ -349,9 +349,9 @@ async function handleRefreshSub(subToken) {
   refreshingToken.value = subToken
   try {
     await api.refreshSubscription(authStore.token, subToken)
-    await loadSubscriptions()
-    await authStore.fetchUserInfo()
     toast.success('订阅已刷新')
+    await loadSubscriptions().catch(() => {})
+    await authStore.fetchUserInfo()
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
   } finally {
@@ -362,8 +362,8 @@ async function handleRefreshSub(subToken) {
 async function handleDeleteSub(subToken) {
   try {
     await api.deleteSubscription(authStore.token, subToken)
-    await loadSubscriptions()
     toast.success('订阅已删除')
+    await loadSubscriptions().catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
   }
@@ -376,9 +376,9 @@ async function handleSyncAll() {
     for (const sub of personalSubs) {
       await api.refreshSubscription(authStore.token, sub.calendar_token)
     }
-    await loadSubscriptions()
-    await authStore.fetchUserInfo()
     toast.success('同步成功')
+    await loadSubscriptions().catch(() => {})
+    await authStore.fetchUserInfo()
   } catch (error) {
     toast.error(parseApiError(error, '同步失败'))
   } finally {
