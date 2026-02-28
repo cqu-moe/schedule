@@ -303,15 +303,9 @@ function formatDate(isoString) {
 }
 
 async function loadSubscriptions() {
-  try {
-    const data = await api.getSubscriptions(authStore.token)
-    subscriptions.value = data.subscriptions
-    subscriptionsMax.value = data.max
-  } catch {
-    toast.error('加载订阅列表失败')
-  } finally {
-    loading.value = false
-  }
+  const data = await api.getSubscriptions(authStore.token)
+  subscriptions.value = data.subscriptions
+  subscriptionsMax.value = data.max
 }
 
 function stopPolling() {
@@ -410,14 +404,19 @@ onMounted(async () => {
   if (!acknowledged) {
     showRiskWarning.value = true
   }
-  await loadSubscriptions()
-  if (hasPendingSubs.value) {
-    startSyncPolling()
+  try {
+    await loadSubscriptions()
+    if (hasPendingSubs.value) {
+      startSyncPolling()
+    }
+  } catch {
+    toast.error('加载订阅列表失败')
+  } finally {
+    loading.value = false
   }
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(copiedTimer)
   if (pollTimer) {
     stopPolling()
   }

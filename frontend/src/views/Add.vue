@@ -312,17 +312,17 @@ async function handleSubscribe(item) {
 }
 
 async function loadSubscriptions() {
-  try {
-    const data = await api.getSubscriptions(authStore.token)
-    subscriptions.value = data.subscriptions
-    subscriptionsMax.value = data.max
-  } catch {
-    toast.error('加载订阅列表失败')
-  }
+  const data = await api.getSubscriptions(authStore.token)
+  subscriptions.value = data.subscriptions
+  subscriptionsMax.value = data.max
 }
 
 onMounted(async () => {
-  loadSubscriptions()
+  try {
+    await loadSubscriptions()
+  } catch {
+    toast.error('加载订阅列表失败')
+  }
   try {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
