@@ -9,8 +9,8 @@ export async function refreshExpiringTokens(env: Env): Promise<void> {
   console.log("cron: starting token refresh");
   const db = drizzle(env.DB);
 
-  // Find users with tokens expiring within 1 hour
-  const threshold = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  // Find users with tokens expiring within 2 hours (covers the 1-hour cron interval)
+  const threshold = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
   const expiring = await db
     .select()
     .from(users)

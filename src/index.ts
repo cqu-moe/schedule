@@ -60,7 +60,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     switch (controller.cron) {
-      case "0 */3 * * *":
+      case "0 * * * *":
         ctx.waitUntil(refreshExpiringTokens(env));
         break;
       case "0 19 * * *":

@@ -76,7 +76,7 @@
   // Cron Triggers
   "triggers": {
     "crons": [
-      "0 */3 * * *",
+      "0 * * * *",
       "0 19 * * *"
     ]
   }
