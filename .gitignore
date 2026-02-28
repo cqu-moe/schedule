@@ -3,5 +3,6 @@ node_modules/
 .dev.vars
 .DS_Store
 *.log
+.idea/
 frontend/dist/
 frontend/node_modules/
