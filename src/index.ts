@@ -6,7 +6,7 @@ import userRoutes from "./routes/users";
 import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
 import { enqueueTokenRefresh } from "./cron/token-refresh";
-import { syncAllSubscriptions } from "./cron/schedule-sync";
+import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -64,7 +64,7 @@ export default {
         ctx.waitUntil(enqueueTokenRefresh(env));
         break;
       case "0 19 * * *":
-        ctx.waitUntil(syncAllSubscriptions(env));
+        await enqueueScheduleSync(env);
         break;
       default:
         console.log(`cron: unknown schedule ${controller.cron}`);
