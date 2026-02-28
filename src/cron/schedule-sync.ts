@@ -83,7 +83,10 @@ async function syncUserSubscriptions(
   } | null = null;
   let personalFetchFailed = false;
 
+  console.log(`cron: user ${user.studentId} has ${userSubs.length} subs: ${userSubs.map(s => `${s.sourceType}(${s.sourceName})`).join(', ')}`);
+
   for (const sub of userSubs) {
+    console.log(`cron: processing sub ${sub.sourceType}(${sub.sourceName}) isPersonal=${sub.isPersonal}`);
     try {
       if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
         // Fetch personal data once
@@ -173,22 +176,27 @@ async function syncUserSubscriptions(
       } else {
         // Explore subscriptions: CF Worker calls CQU API directly
         try {
+          console.log(`cron: explore sub ${sub.sourceName}: cachedSessionId=${cachedSessionId}, cachedSemesterInfo=${!!cachedSemesterInfo}`);
           if (!cachedSessionId || !cachedSemesterInfo) {
             const sessionList = await api.getSessionList();
             cachedSessionId = sessionList.current_session_id;
             cachedSemesterInfo = await api.getSemesterInfo(cachedSessionId);
+            console.log(`cron: explore sub fetched session: ${cachedSessionId}`);
           }
+          console.log(`cron: explore sub calling fetchTargetSchedule(${sub.sourceType}, ${sub.sourceId}, ${cachedSessionId})`);
           const courses = await api.fetchTargetSchedule(
             sub.sourceType,
             sub.sourceId,
             cachedSessionId,
           );
+          console.log(`cron: explore sub got ${courses.length} courses`);
 
           const icsContent = await generateCoursesIcs(
             courses,
             cachedSemesterInfo.begin_date ?? "",
             user.studentId,
           );
+          console.log(`cron: explore sub generated ICS (${icsContent.length} chars)`);
 
           await db
             .update(subscriptions)
@@ -204,10 +212,12 @@ async function syncUserSubscriptions(
               updatedAt: now,
             })
             .where(eq(subscriptions.id, sub.id));
+          console.log(`cron: explore sub DB update complete`);
         } catch (e) {
           console.error(
             `cron: failed to refresh subscription ${sub.sourceName}: ${e}`,
           );
+          if (e instanceof Error) console.error(`cron: stack: ${e.stack}`);
           continue;
         }
       }
