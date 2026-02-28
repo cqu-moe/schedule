@@ -12,6 +12,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Crypto: Web Crypto API AES-256-GCM (`src/services/crypto.ts`), node:crypto AES-ECB (`src/services/auth.ts`)
 - Auth: 纯 HTTP CAS→OAuth 登录流程 (`src/services/auth.ts`), 无需浏览器
 - Frontend: Vue 3 + Tailwind v4 + shadcn-vue (in `frontend/`)
+- Cache: KV namespace `CACHE` 缓存 SessionContext (24h TTL)，减少 CQU API 调用
+- Placement: `hostname: "my.cqu.edu.cn"` 将 Worker 放在离 CQU API 最近的数据中心
 
 ## 常用命令
 - `npm run dev` — 启动 wrangler dev server (port 8787)
@@ -49,6 +51,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
 - 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
+- Workers placement 只影响 fetch handler，不影响 cron scheduled handler
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
