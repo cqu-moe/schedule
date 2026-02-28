@@ -1,0 +1,151 @@
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
+import { subscriptions } from "../db/schema";
+import {
+  CQUAPIClient,
+  type CourseEntry,
+  type ExamEntry,
+  type SemesterInfo,
+} from "./cqu-api";
+import {
+  generateCoursesIcs,
+  generateExamsIcs,
+  mergeIcs,
+  EMPTY_ICS,
+} from "./ics";
+
+export const PERSONAL_SOURCE_TYPES = new Set([
+  "personal_all",
+  "personal_courses",
+  "personal_exams",
+]);
+
+export interface SessionContext {
+  sessionId: string;
+  semesterInfo: SemesterInfo;
+}
+
+export interface PersonalScheduleData {
+  courses: CourseEntry[];
+  exams: ExamEntry[];
+  semesterStart: string;
+}
+
+export interface SyncResult {
+  icsContent: string | null;
+  coursesJson: string | null;
+  examsJson: string | null;
+  semesterStart: string;
+}
+
+/** Fetch current session + semester info from CQU API */
+export async function fetchSessionContext(
+  api: CQUAPIClient,
+): Promise<SessionContext> {
+  const sessionList = await api.getSessionList();
+  const sessionId = sessionList.current_session_id;
+  const semesterInfo = await api.getSemesterInfo(sessionId);
+  return { sessionId, semesterInfo };
+}
+
+/** Fetch personal schedule (courses + exams) */
+export async function fetchPersonalSchedule(
+  api: CQUAPIClient,
+  studentId: string,
+  ctx: SessionContext,
+): Promise<PersonalScheduleData> {
+  const courses = await api.getSchedule(studentId, ctx.sessionId);
+  const exams = await api.getExams();
+  return {
+    courses,
+    exams,
+    semesterStart: ctx.semesterInfo.begin_date ?? "",
+  };
+}
+
+/** Generate ICS + JSON for a personal subscription based on sourceType */
+export async function buildPersonalSyncResult(
+  sourceType: string,
+  data: PersonalScheduleData,
+  studentId: string,
+): Promise<SyncResult> {
+  const coursesIcs = await generateCoursesIcs(
+    data.courses,
+    data.semesterStart,
+    studentId,
+  );
+  const examsIcs =
+    data.exams.length > 0
+      ? await generateExamsIcs(data.exams, studentId)
+      : null;
+
+  let icsContent: string | null;
+  let coursesJson: string | null;
+  let examsJson: string | null;
+
+  if (sourceType === "personal_all") {
+    icsContent = examsIcs ? mergeIcs(coursesIcs, examsIcs) : coursesIcs;
+    coursesJson = JSON.stringify(data.courses);
+    examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
+  } else if (sourceType === "personal_courses") {
+    icsContent = coursesIcs;
+    coursesJson = JSON.stringify(data.courses);
+    examsJson = null;
+  } else {
+    icsContent = examsIcs ?? EMPTY_ICS;
+    coursesJson = null;
+    examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
+  }
+
+  return { icsContent, coursesJson, examsJson, semesterStart: data.semesterStart };
+}
+
+/** Fetch target schedule and generate ICS for an explore subscription */
+export async function buildExploreSyncResult(
+  api: CQUAPIClient,
+  sourceType: string,
+  sourceId: string,
+  studentId: string,
+  ctx: SessionContext,
+): Promise<SyncResult> {
+  const courses = await api.fetchTargetSchedule(
+    sourceType,
+    sourceId,
+    ctx.sessionId,
+  );
+  const semesterStart = ctx.semesterInfo.begin_date ?? "";
+  const icsContent = await generateCoursesIcs(courses, semesterStart, studentId);
+
+  return {
+    icsContent,
+    coursesJson: JSON.stringify(courses),
+    examsJson: null,
+    semesterStart,
+  };
+}
+
+/** Apply sync result to a subscription row */
+export async function applySyncResult(
+  db: ReturnType<typeof drizzle>,
+  subId: string,
+  result: SyncResult,
+  ctx: SessionContext,
+  fallback: { sessionId: string | null; sessionName: string | null },
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db
+    .update(subscriptions)
+    .set({
+      icsContent: result.icsContent,
+      coursesJson: result.coursesJson,
+      examsJson: result.examsJson,
+      semesterStart: result.semesterStart,
+      sessionId: ctx.semesterInfo.id
+        ? String(ctx.semesterInfo.id)
+        : fallback.sessionId,
+      sessionName: ctx.semesterInfo.name || fallback.sessionName,
+      lastSyncedAt: now,
+      updatedAt: now,
+    })
+    .where(eq(subscriptions.id, subId));
+}

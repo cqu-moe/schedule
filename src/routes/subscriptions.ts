@@ -6,29 +6,21 @@ import type { Env } from "../types";
 import { requireAuth, requireAuthWithCquToken } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
-import {
-  CQUAPIClient,
-  type CourseEntry,
-  type ExamEntry,
-} from "../services/cqu-api";
-import {
-  generateCoursesIcs,
-  generateExamsIcs,
-  mergeIcs,
-  EMPTY_ICS,
-} from "../services/ics";
+import { CQUAPIClient } from "../services/cqu-api";
 import {
   semesterShortName,
   generateFormattedEvents,
   generateCsv,
 } from "../services/export";
 import { generateToken } from "../utils/token";
-
-const PERSONAL_SOURCE_TYPES = new Set([
-  "personal_all",
-  "personal_courses",
-  "personal_exams",
-]);
+import {
+  PERSONAL_SOURCE_TYPES,
+  fetchSessionContext,
+  fetchPersonalSchedule,
+  buildPersonalSyncResult,
+  buildExploreSyncResult,
+  applySyncResult,
+} from "../services/sync";
 
 type AuthEnv = { Bindings: Env; Variables: { user: User } };
 
@@ -109,20 +101,68 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     );
   }
 
-  // Fetch target schedule via CQU API directly
+  // Fetch target schedule and generate ICS
   const api = new CQUAPIClient(user.accessToken!);
-  let courses: CourseEntry[];
-  let semesterInfo;
 
   try {
-    const sessionList = await api.getSessionList();
-    const currentSessionId = sessionList.current_session_id;
-    semesterInfo = await api.getSemesterInfo(currentSessionId);
-    courses = await api.fetchTargetSchedule(
+    const ctx = await fetchSessionContext(api);
+    const sessionId = ctx.semesterInfo.id ? String(ctx.semesterInfo.id) : "";
+    const sessionName = ctx.semesterInfo.name;
+
+    // Check for duplicate
+    for (const s of existingSubs) {
+      if (
+        s.sourceType === body.source_type &&
+        s.sourceId === body.source_id &&
+        s.sessionId === sessionId
+      ) {
+        return c.json(
+          { detail: "Subscription already exists for this session" },
+          409,
+        );
+      }
+    }
+
+    const result = await buildExploreSyncResult(
+      api,
       body.source_type,
       body.source_id,
-      currentSessionId,
+      user.studentId,
+      ctx,
     );
+
+    const now = new Date().toISOString();
+    const subToken = generateToken();
+    const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
+
+    const [newSub] = await db
+      .insert(subscriptions)
+      .values({
+        userId: user.id,
+        sourceType: body.source_type,
+        sourceId: body.source_id,
+        sourceName: body.source_name,
+        calendarToken: subToken,
+        sessionId,
+        sessionName,
+        semesterStart: result.semesterStart,
+        isPersonal: false,
+        icsContent: result.icsContent,
+        coursesJson: result.coursesJson,
+        lastSyncedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    return c.json({
+      calendar_token: newSub.calendarToken,
+      subscription_url: `${baseUrl}/api/v1/subscriptions/${newSub.calendarToken}/calendar.ics`,
+      source_type: newSub.sourceType,
+      source_name: newSub.sourceName,
+      session_name: newSub.sessionName,
+      created_at: newSub.createdAt,
+    });
   } catch (e: any) {
     if (e?.statusCode === 401) {
       return c.json(
@@ -132,63 +172,6 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     }
     return c.json({ detail: e?.message ?? "Failed to fetch schedule" }, 502);
   }
-
-  const sessionId = semesterInfo.id ? String(semesterInfo.id) : "";
-  const sessionName = semesterInfo.name;
-
-  // Check for duplicate
-  for (const s of existingSubs) {
-    if (
-      s.sourceType === body.source_type &&
-      s.sourceId === body.source_id &&
-      s.sessionId === sessionId
-    ) {
-      return c.json(
-        { detail: "Subscription already exists for this session" },
-        409,
-      );
-    }
-  }
-
-  // Generate ICS
-  const icsContent = await generateCoursesIcs(
-    courses,
-    semesterInfo.begin_date ?? "",
-    user.studentId,
-  );
-
-  const now = new Date().toISOString();
-  const subToken = generateToken();
-  const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
-
-  const [newSub] = await db
-    .insert(subscriptions)
-    .values({
-      userId: user.id,
-      sourceType: body.source_type,
-      sourceId: body.source_id,
-      sourceName: body.source_name,
-      calendarToken: subToken,
-      sessionId,
-      sessionName,
-      semesterStart: semesterInfo.begin_date ?? "",
-      isPersonal: false,
-      icsContent,
-      coursesJson: JSON.stringify(courses),
-      lastSyncedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
-
-  return c.json({
-    calendar_token: newSub.calendarToken,
-    subscription_url: `${baseUrl}/api/v1/subscriptions/${newSub.calendarToken}/calendar.ics`,
-    source_type: newSub.sourceType,
-    source_name: newSub.sourceName,
-    session_name: newSub.sessionName,
-    created_at: newSub.createdAt,
-  });
 });
 
 // DELETE /api/v1/subscriptions/:sub_token
@@ -236,91 +219,28 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
   if (!sub) return c.json({ detail: "Subscription not found" }, 404);
 
   const api = new CQUAPIClient(user.accessToken!);
-  const now = new Date().toISOString();
 
   try {
+    const ctx = await fetchSessionContext(api);
+    let result;
+
     if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-      const sessionList = await api.getSessionList();
-      const currentSessionId = sessionList.current_session_id;
-      const semesterInfo = await api.getSemesterInfo(currentSessionId);
-      const semesterStart = semesterInfo.begin_date ?? "";
-      const courses = await api.getSchedule(user.studentId, currentSessionId);
-      const exams = await api.getExams();
-
-      const coursesIcs = await generateCoursesIcs(
-        courses,
-        semesterStart,
-        user.studentId,
-      );
-      const examsIcs =
-        exams.length > 0
-          ? await generateExamsIcs(exams, user.studentId)
-          : null;
-
-      let icsContent: string | null;
-      let coursesJsonStr: string | null;
-      let examsJsonStr: string | null;
-
-      if (sub.sourceType === "personal_all") {
-        icsContent = examsIcs ? mergeIcs(coursesIcs, examsIcs) : coursesIcs;
-        coursesJsonStr = JSON.stringify(courses);
-        examsJsonStr = exams.length > 0 ? JSON.stringify(exams) : null;
-      } else if (sub.sourceType === "personal_courses") {
-        icsContent = coursesIcs;
-        coursesJsonStr = JSON.stringify(courses);
-        examsJsonStr = null;
-      } else {
-        // personal_exams
-        icsContent = examsIcs ?? EMPTY_ICS;
-        coursesJsonStr = null;
-        examsJsonStr = exams.length > 0 ? JSON.stringify(exams) : null;
-      }
-
-      await db
-        .update(subscriptions)
-        .set({
-          icsContent,
-          coursesJson: coursesJsonStr,
-          examsJson: examsJsonStr,
-          semesterStart,
-          sessionId: semesterInfo.id ? String(semesterInfo.id) : sub.sessionId,
-          sessionName: semesterInfo.name || sub.sessionName,
-          lastSyncedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(subscriptions.id, sub.id));
+      const data = await fetchPersonalSchedule(api, user.studentId, ctx);
+      result = await buildPersonalSyncResult(sub.sourceType, data, user.studentId);
     } else {
-      // Explore subscriptions
-      const sessionList = await api.getSessionList();
-      const currentSessionId = sessionList.current_session_id;
-      const semesterInfo = await api.getSemesterInfo(currentSessionId);
-      const courses = await api.fetchTargetSchedule(
+      result = await buildExploreSyncResult(
+        api,
         sub.sourceType,
         sub.sourceId,
-        currentSessionId,
-      );
-
-      const icsContent = await generateCoursesIcs(
-        courses,
-        semesterInfo.begin_date ?? "",
         user.studentId,
+        ctx,
       );
-
-      await db
-        .update(subscriptions)
-        .set({
-          icsContent,
-          coursesJson: JSON.stringify(courses),
-          semesterStart: semesterInfo.begin_date ?? "",
-          sessionId: semesterInfo.id
-            ? String(semesterInfo.id)
-            : sub.sessionId,
-          sessionName: semesterInfo.name || sub.sessionName,
-          lastSyncedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(subscriptions.id, sub.id));
     }
+
+    await applySyncResult(db, sub.id, result, ctx, {
+      sessionId: sub.sessionId,
+      sessionName: sub.sessionName,
+    });
   } catch (e: any) {
     if (e?.statusCode === 401) {
       return c.json(

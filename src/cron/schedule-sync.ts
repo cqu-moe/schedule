@@ -2,23 +2,17 @@ import { drizzle } from "drizzle-orm/d1";
 import { isNotNull, eq } from "drizzle-orm";
 import { users, subscriptions } from "../db/schema";
 import type { Env } from "../types";
+import { CQUAPIClient } from "../services/cqu-api";
 import {
-  CQUAPIClient,
-  type CourseEntry,
-  type ExamEntry,
-} from "../services/cqu-api";
-import {
-  generateCoursesIcs,
-  generateExamsIcs,
-  mergeIcs,
-  EMPTY_ICS,
-} from "../services/ics";
-
-const PERSONAL_SOURCE_TYPES = new Set([
-  "personal_all",
-  "personal_courses",
-  "personal_exams",
-]);
+  PERSONAL_SOURCE_TYPES,
+  fetchSessionContext,
+  fetchPersonalSchedule,
+  buildPersonalSyncResult,
+  buildExploreSyncResult,
+  applySyncResult,
+  type SessionContext,
+  type PersonalScheduleData,
+} from "../services/sync";
 
 export async function syncAllSubscriptions(env: Env): Promise<void> {
   console.log("cron: starting schedule sync");
@@ -68,46 +62,22 @@ async function syncUserSubscriptions(
   const api = new CQUAPIClient(user.accessToken);
   const now = new Date().toISOString();
 
-  // Cache: session info (shared across all subscriptions)
-  let cachedSessionId: string | null = null;
-  let cachedSemesterInfo: { id: string | null; name: string; begin_date: string | null } | null = null;
-
-  // Cache: personal schedule data (shared across personal_all/courses/exams)
-  let personalData: {
-    courses: CourseEntry[];
-    exams: ExamEntry[];
-    semesterStart: string;
-    sessionId: string | null;
-    sessionName: string;
-  } | null = null;
+  let ctx: SessionContext | null = null;
+  let personalData: PersonalScheduleData | null = null;
   let personalFetchFailed = false;
 
   console.log(`cron: user ${user.studentId} has ${userSubs.length} subscriptions`);
 
   for (const sub of userSubs) {
     try {
+      if (!ctx) {
+        ctx = await fetchSessionContext(api);
+      }
+
       if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-        // Fetch personal data once
         if (!personalData && !personalFetchFailed) {
           try {
-            if (!cachedSessionId || !cachedSemesterInfo) {
-              const sessionList = await api.getSessionList();
-              cachedSessionId = sessionList.current_session_id;
-              cachedSemesterInfo = await api.getSemesterInfo(cachedSessionId);
-            }
-            const courses = await api.getSchedule(
-              user.studentId,
-              cachedSessionId,
-            );
-            const exams = await api.getExams();
-
-            personalData = {
-              courses,
-              exams,
-              semesterStart: cachedSemesterInfo.begin_date ?? "",
-              sessionId: cachedSemesterInfo.id,
-              sessionName: cachedSemesterInfo.name,
-            };
+            personalData = await fetchPersonalSchedule(api, user.studentId, ctx);
           } catch (e) {
             personalFetchFailed = true;
             console.error(
@@ -119,92 +89,28 @@ async function syncUserSubscriptions(
 
         if (!personalData) continue;
 
-        const coursesIcs = await generateCoursesIcs(
-          personalData.courses,
-          personalData.semesterStart,
+        const result = await buildPersonalSyncResult(
+          sub.sourceType,
+          personalData,
           user.studentId,
         );
-        const examsIcs =
-          personalData.exams.length > 0
-            ? await generateExamsIcs(personalData.exams, user.studentId)
-            : null;
-
-        let icsContent: string | null;
-        let coursesJsonStr: string | null;
-        let examsJsonStr: string | null;
-
-        if (sub.sourceType === "personal_all") {
-          icsContent = examsIcs
-            ? mergeIcs(coursesIcs, examsIcs)
-            : coursesIcs;
-          coursesJsonStr = JSON.stringify(personalData.courses);
-          examsJsonStr =
-            personalData.exams.length > 0
-              ? JSON.stringify(personalData.exams)
-              : null;
-        } else if (sub.sourceType === "personal_courses") {
-          icsContent = coursesIcs;
-          coursesJsonStr = JSON.stringify(personalData.courses);
-          examsJsonStr = null;
-        } else {
-          // personal_exams
-          icsContent = examsIcs ?? EMPTY_ICS;
-          coursesJsonStr = null;
-          examsJsonStr =
-            personalData.exams.length > 0
-              ? JSON.stringify(personalData.exams)
-              : null;
-        }
-
-        await db
-          .update(subscriptions)
-          .set({
-            icsContent,
-            coursesJson: coursesJsonStr,
-            examsJson: examsJsonStr,
-            semesterStart: personalData.semesterStart,
-            sessionId: personalData.sessionId
-              ? String(personalData.sessionId)
-              : sub.sessionId,
-            sessionName: personalData.sessionName || sub.sessionName,
-            lastSyncedAt: now,
-            updatedAt: now,
-          })
-          .where(eq(subscriptions.id, sub.id));
+        await applySyncResult(db, sub.id, result, ctx, {
+          sessionId: sub.sessionId,
+          sessionName: sub.sessionName,
+        });
       } else {
-        // Explore subscriptions
         try {
-          if (!cachedSessionId || !cachedSemesterInfo) {
-            const sessionList = await api.getSessionList();
-            cachedSessionId = sessionList.current_session_id;
-            cachedSemesterInfo = await api.getSemesterInfo(cachedSessionId);
-          }
-          const courses = await api.fetchTargetSchedule(
+          const result = await buildExploreSyncResult(
+            api,
             sub.sourceType,
             sub.sourceId,
-            cachedSessionId,
-          );
-
-          const icsContent = await generateCoursesIcs(
-            courses,
-            cachedSemesterInfo.begin_date ?? "",
             user.studentId,
+            ctx,
           );
-
-          await db
-            .update(subscriptions)
-            .set({
-              icsContent,
-              coursesJson: JSON.stringify(courses),
-              semesterStart: cachedSemesterInfo.begin_date ?? "",
-              sessionId: cachedSemesterInfo.id
-                ? String(cachedSemesterInfo.id)
-                : sub.sessionId,
-              sessionName: cachedSemesterInfo.name || sub.sessionName,
-              lastSyncedAt: now,
-              updatedAt: now,
-            })
-            .where(eq(subscriptions.id, sub.id));
+          await applySyncResult(db, sub.id, result, ctx, {
+            sessionId: sub.sessionId,
+            sessionName: sub.sessionName,
+          });
         } catch (e) {
           console.error(
             `cron: failed to refresh subscription ${sub.sourceName}: ${e}`,
