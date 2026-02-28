@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '../api'
+import { parseApiError } from '@/utils/error'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('calendar_token') || '')
@@ -17,18 +18,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('calendar_token', token.value)
       return { success: true, token: response.calendar_token }
     } catch (error) {
-      if (error.response?.status === 429) {
-        return { success: false, error: error.response.data.detail }
-      }
-      const detail = error.response?.data?.detail
-      if (detail === 'CAPTCHA_REQUIRED' || detail === 'CAPTCHA_FAILED') {
-        return { success: false, error: '验证码验证失败，请刷新页面重试' }
-      }
-      const errorObj = detail?.error || detail
-      if (errorObj?.code === 'USER_EXISTS') {
-        return { success: false, error: '该账号已注册，请使用 Token 登录' }
-      }
-      return { success: false, error: errorObj?.message || '注册失败' }
+      return { success: false, error: parseApiError(error, '注册失败') }
     } finally {
       loading.value = false
     }

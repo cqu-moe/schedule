@@ -26,7 +26,7 @@
               <Label for="password">密码</Label>
               <Input id="password" v-model="form.password" type="password" placeholder="请输入密码" />
             </div>
-            <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
+            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
               注册
             </Button>
@@ -94,6 +94,7 @@ import { useRouter } from 'vue-router'
 import { Copy, Check, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
+import { toast } from 'vue-sonner'
 import api from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import Navbar from '@/components/Navbar.vue'
@@ -106,6 +107,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -135,7 +137,7 @@ onMounted(async () => {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
-  } catch {}
+  } catch { toast.error('验证码配置加载失败') }
 })
 
 onBeforeUnmount(() => {
@@ -187,6 +189,7 @@ async function handleRegister() {
     fields: [{ autocomplete: 'current-password', value: result.token }],
     urls: ['https://schedule.cqu.moe'],
   })
+  toast.success('注册成功')
   showTokenDialog.value = true
   nextTick(() => activateOPButton())
 }
