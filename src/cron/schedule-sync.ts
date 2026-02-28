@@ -83,6 +83,7 @@ export async function processScheduleSyncBatch(
 
       let personalData: PersonalScheduleData | null = null;
       let personalFetchFailed = false;
+      let syncedAny = false;
 
       for (const sub of userSubs) {
         if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
@@ -116,7 +117,15 @@ export async function processScheduleSyncBatch(
             continue;
           }
         }
+        syncedAny = true;
         console.log(`queue: synced ${sub.sourceName} for ${studentId}`);
+      }
+
+      // If personal schedule fetch failed and nothing was synced, retry
+      if (personalFetchFailed && !syncedAny) {
+        console.warn(`queue: all syncs failed for ${studentId}, retrying`);
+        message.retry();
+        continue;
       }
 
       await db
