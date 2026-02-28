@@ -5,8 +5,8 @@ import configRoutes from "./routes/config";
 import userRoutes from "./routes/users";
 import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
-import { refreshExpiringTokens } from "./cron/token-refresh";
-import { syncAllSubscriptions } from "./cron/schedule-sync";
+import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
+import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -61,13 +61,28 @@ export default {
   ): Promise<void> {
     switch (controller.cron) {
       case "0 * * * *":
-        ctx.waitUntil(refreshExpiringTokens(env));
+        await enqueueTokenRefresh(env);
         break;
       case "0 19 * * *":
-        ctx.waitUntil(syncAllSubscriptions(env));
+        await enqueueScheduleSync(env);
         break;
       default:
         console.log(`cron: unknown schedule ${controller.cron}`);
+    }
+  },
+  async queue(
+    batch: MessageBatch,
+    env: Env,
+  ): Promise<void> {
+    switch (batch.queue) {
+      case "schedule-token-refresh":
+        await processTokenRefreshBatch(batch as MessageBatch<TokenRefreshMessage>, env);
+        break;
+      case "schedule-sync":
+        await processScheduleSyncBatch(batch as MessageBatch<ScheduleSyncMessage>, env);
+        break;
+      default:
+        console.log(`queue: unknown queue ${batch.queue}`);
     }
   },
 };

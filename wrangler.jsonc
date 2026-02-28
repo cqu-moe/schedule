@@ -55,6 +55,30 @@
     }
   ],
 
+  // Queues
+  "queues": {
+    "producers": [
+      { "binding": "TOKEN_REFRESH_QUEUE", "queue": "schedule-token-refresh" },
+      { "binding": "SCHEDULE_SYNC_QUEUE", "queue": "schedule-sync" }
+    ],
+    "consumers": [
+      {
+        "queue": "schedule-token-refresh",
+        "max_batch_size": 20,
+        "max_retries": 3,
+        "max_concurrency": 5,
+        "max_batch_timeout": 30
+      },
+      {
+        "queue": "schedule-sync",
+        "max_batch_size": 10,
+        "max_retries": 3,
+        "max_concurrency": 3,
+        "max_batch_timeout": 30
+      }
+    ]
+  },
+
   // Environment Variables
   "vars": {
     "PUBLIC_URL": "https://schedule.cqu.moe",
