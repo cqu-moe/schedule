@@ -24,6 +24,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npm run db:migrate:local` — apply D1 migrations locally
 - `npm run setup:secrets` — 从 1Password 生成 .dev.vars (op inject)
 - `npm run deploy:secrets` — 从 1Password 推送 secrets 到 Cloudflare (op read → wrangler secret put)
+- `npx wrangler d1 execute schedule-beta-cqu-moe-db --remote --command "SQL"` — 查询生产 D1
+- `npx wrangler tail schedule-beta-cqu-moe --format pretty` — 实时查看生产 Worker 日志
 
 ## 开发注意事项
 - vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)
@@ -41,6 +43,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
 - Cloudflare Builds deploy command 须设为 `npm run deploy` (非 `npx wrangler deploy`)
 - `git log --format` 中 `%d` 是 ref names 不是日期；获取日期用 `--format=%cd --date=short`
+- `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
+- `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron)
