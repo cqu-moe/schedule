@@ -5,7 +5,7 @@ import configRoutes from "./routes/config";
 import userRoutes from "./routes/users";
 import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
-import { refreshExpiringTokens } from "./cron/token-refresh";
+import { enqueueTokenRefresh } from "./cron/token-refresh";
 import { syncAllSubscriptions } from "./cron/schedule-sync";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -61,7 +61,7 @@ export default {
   ): Promise<void> {
     switch (controller.cron) {
       case "0 * * * *":
-        ctx.waitUntil(refreshExpiringTokens(env));
+        ctx.waitUntil(enqueueTokenRefresh(env));
         break;
       case "0 19 * * *":
         ctx.waitUntil(syncAllSubscriptions(env));
