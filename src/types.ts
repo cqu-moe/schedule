@@ -5,6 +5,9 @@ export interface Env {
   // D1 Database
   DB: D1Database;
 
+  // KV Cache
+  CACHE: KVNamespace;
+
   // Rate Limiting
   UNAUTH_LIMITER: RateLimit;
   AUTH_LIMITER: RateLimit;

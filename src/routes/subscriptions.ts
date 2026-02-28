@@ -15,7 +15,7 @@ import {
 import { generateToken } from "../utils/token";
 import {
   PERSONAL_SOURCE_TYPES,
-  fetchSessionContext,
+  fetchSessionContextCached,
   fetchPersonalSchedule,
   buildPersonalSyncResult,
   buildExploreSyncResult,
@@ -105,7 +105,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   const api = new CQUAPIClient(user.accessToken!);
 
   try {
-    const ctx = await fetchSessionContext(api);
+    const ctx = await fetchSessionContextCached(api, c.env.CACHE);
     const sessionId = ctx.semesterInfo.id ? String(ctx.semesterInfo.id) : "";
     const sessionName = ctx.semesterInfo.name;
 
@@ -221,7 +221,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
   const api = new CQUAPIClient(user.accessToken!);
 
   try {
-    const ctx = await fetchSessionContext(api);
+    const ctx = await fetchSessionContextCached(api, c.env.CACHE);
     let result;
 
     if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {

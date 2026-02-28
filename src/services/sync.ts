@@ -48,6 +48,24 @@ export async function fetchSessionContext(
   return { sessionId, semesterInfo };
 }
 
+const SESSION_CACHE_KEY = "session:current";
+const SESSION_CACHE_TTL = 86400; // 24 hours
+
+/** Fetch SessionContext with KV cache (24h TTL) */
+export async function fetchSessionContextCached(
+  api: CQUAPIClient,
+  kv: KVNamespace,
+): Promise<SessionContext> {
+  const cached = await kv.get(SESSION_CACHE_KEY, "json");
+  if (cached) return cached as SessionContext;
+
+  const ctx = await fetchSessionContext(api);
+  await kv.put(SESSION_CACHE_KEY, JSON.stringify(ctx), {
+    expirationTtl: SESSION_CACHE_TTL,
+  });
+  return ctx;
+}
+
 /** Fetch personal schedule (courses + exams) */
 export async function fetchPersonalSchedule(
   api: CQUAPIClient,

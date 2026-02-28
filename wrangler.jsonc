@@ -23,6 +23,14 @@
     }
   ],
 
+  // KV Cache
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "d50f0c7192594234ae41c3be939a108a"
+    }
+  ],
+
   // Rate Limiting
   "ratelimits": [
     {
