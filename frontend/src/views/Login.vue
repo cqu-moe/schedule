@@ -12,7 +12,7 @@
               <Label for="token">Token</Label>
               <Input id="token" v-model="tokenInput" type="password" autocomplete="current-password" spellcheck="false" placeholder="请输入你的 Token" />
             </div>
-            <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
+            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
               <Loader2 v-if="authStore.loading" class="h-4 w-4 animate-spin mr-2" />
               登录
@@ -46,6 +46,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const router = useRouter()
 const route = useRoute()
