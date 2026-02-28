@@ -24,7 +24,9 @@
               <Label for="password">密码</Label>
               <Input id="password" v-model="form.password" type="password" placeholder="请输入密码" />
             </div>
-            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
+            <Alert v-if="errorMessage" variant="destructive">
+              <AlertDescription>{{ errorMessage }}</AlertDescription>
+            </Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="loading">
               <Loader2 v-if="loading" class="h-4 w-4 animate-spin mr-2" />
               找回
@@ -40,7 +42,9 @@
             <p class="text-sm text-muted-foreground">
               密码可能已更改，需要通过教务系统重新验证。
             </p>
-            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
+            <Alert v-if="errorMessage" variant="destructive">
+              <AlertDescription>{{ errorMessage }}</AlertDescription>
+            </Alert>
             <div class="flex gap-2">
               <Button variant="outline" class="flex-1 cursor-pointer" @click="step = 'form'">
                 返回
@@ -203,7 +207,7 @@ async function copyToken() {
     await navigator.clipboard.writeText(recoveredToken.value)
     copied.value = true
     setTimeout(() => { copied.value = false }, 1500)
-  } catch {}
+  } catch { toast.error('复制失败') }
 }
 
 function goToDashboard() {

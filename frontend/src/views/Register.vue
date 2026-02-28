@@ -26,7 +26,9 @@
               <Label for="password">密码</Label>
               <Input id="password" v-model="form.password" type="password" placeholder="请输入密码" />
             </div>
-            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
+            <Alert v-if="errorMessage" variant="destructive">
+              <AlertDescription>{{ errorMessage }}</AlertDescription>
+            </Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
               注册
             </Button>
@@ -199,7 +201,7 @@ async function copyToken() {
     await navigator.clipboard.writeText(displayToken.value)
     copied.value = true
     setTimeout(() => { copied.value = false }, 1500)
-  } catch {}
+  } catch { toast.error('复制失败') }
 }
 
 function closeTokenDialog() {

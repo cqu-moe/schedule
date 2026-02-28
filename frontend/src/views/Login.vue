@@ -12,7 +12,9 @@
               <Label for="token">Token</Label>
               <Input id="token" v-model="tokenInput" type="password" autocomplete="current-password" spellcheck="false" placeholder="请输入你的 Token" />
             </div>
-            <Alert v-if="errorMessage" variant="destructive"><AlertDescription>{{ errorMessage }}</AlertDescription></Alert>
+            <Alert v-if="errorMessage" variant="destructive">
+              <AlertDescription>{{ errorMessage }}</AlertDescription>
+            </Alert>
             <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
               <Loader2 v-if="authStore.loading" class="h-4 w-4 animate-spin mr-2" />
               登录

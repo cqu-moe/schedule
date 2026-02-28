@@ -33,7 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('calendar_token', token.value)
       return { success: true }
     } catch (error) {
-      return { success: false, error: 'Token 无效或已过期' }
+      return { success: false, error: parseApiError(error, 'Token 无效或已过期') }
     } finally {
       loading.value = false
     }
