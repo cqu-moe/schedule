@@ -27,9 +27,16 @@
             <Alert v-if="errorMessage" variant="destructive">
               <AlertDescription>{{ errorMessage }}</AlertDescription>
             </Alert>
-            <Button type="submit" class="w-full cursor-pointer" :disabled="loading">
-              <Loader2 v-if="loading" class="h-4 w-4 animate-spin mr-2" />
-              找回
+            <Button type="submit" class="w-full cursor-pointer"
+              :disabled="recoverFeedback.stateOf('recover') === 'loading'"
+              :class="{
+                'bg-green-600 hover:bg-green-600 text-white': recoverFeedback.stateOf('recover') === 'success',
+                'bg-destructive hover:bg-destructive text-white': recoverFeedback.stateOf('recover') === 'error'
+              }">
+              <Loader2 v-if="recoverFeedback.stateOf('recover') === 'loading'" class="h-4 w-4 animate-spin mr-2" />
+              <Check v-else-if="recoverFeedback.stateOf('recover') === 'success'" class="h-4 w-4 mr-2" />
+              <X v-else-if="recoverFeedback.stateOf('recover') === 'error'" class="h-4 w-4 mr-2" />
+              {{ { loading: '找回中', success: '找回成功', error: '失败' }[recoverFeedback.stateOf('recover')] || '找回' }}
             </Button>
             <p class="text-center text-xs text-muted-foreground">
               想起来了？
@@ -49,9 +56,17 @@
               <Button variant="outline" class="flex-1 cursor-pointer" @click="step = 'form'">
                 返回
               </Button>
-              <Button class="flex-1 cursor-pointer" :disabled="loading" @click="handleVerify">
-                <Loader2 v-if="loading" class="h-4 w-4 animate-spin mr-2" />
-                验证
+              <Button class="flex-1 cursor-pointer"
+                :disabled="recoverFeedback.stateOf('verify') === 'loading'"
+                :class="{
+                  'bg-green-600 hover:bg-green-600 text-white': recoverFeedback.stateOf('verify') === 'success',
+                  'bg-destructive hover:bg-destructive text-white': recoverFeedback.stateOf('verify') === 'error'
+                }"
+                @click="handleVerify">
+                <Loader2 v-if="recoverFeedback.stateOf('verify') === 'loading'" class="h-4 w-4 animate-spin mr-2" />
+                <Check v-else-if="recoverFeedback.stateOf('verify') === 'success'" class="h-4 w-4 mr-2" />
+                <X v-else-if="recoverFeedback.stateOf('verify') === 'error'" class="h-4 w-4 mr-2" />
+                {{ { loading: '验证中', success: '找回成功', error: '失败' }[recoverFeedback.stateOf('verify')] || '验证' }}
               </Button>
             </div>
           </div>
@@ -88,7 +103,8 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Loader2, Copy, Check } from 'lucide-vue-next'
+import { Loader2, Copy, Check, X } from 'lucide-vue-next'
+import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { toast } from 'vue-sonner'
 import api from '@/api'
@@ -106,9 +122,9 @@ import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 const router = useRouter()
 const authStore = useAuthStore()
 
+const recoverFeedback = useButtonFeedback()
 const step = ref('form')
 const form = reactive({ studentId: '', password: '' })
-const loading = ref(false)
 const errorMessage = ref('')
 const recoveredToken = ref('')
 const copied = ref(false)
@@ -150,19 +166,19 @@ async function handleRecover() {
   const captchaToken = await getCaptchaToken()
   if (captchaToken === false) return
 
-  loading.value = true
   try {
-    const data = await api.recoverToken(form.studentId, form.password, captchaToken)
-    recoveredToken.value = data.calendar_token
-    opSaveValue.value = encodeOPSaveRequest({
-      title: 'CQU Schedule',
-      fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
-      urls: ['https://schedule.cqu.moe'],
-    })
-    await authStore.loginWithToken(data.calendar_token)
-    step.value = 'success'
-    toast.success('找回成功')
-    nextTick(() => activateOPButton())
+    await recoverFeedback.run(async () => {
+      const data = await api.recoverToken(form.studentId, form.password, captchaToken)
+      recoveredToken.value = data.calendar_token
+      opSaveValue.value = encodeOPSaveRequest({
+        title: 'CQU Schedule',
+        fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+        urls: ['https://schedule.cqu.moe'],
+      })
+      await authStore.loginWithToken(data.calendar_token)
+      step.value = 'success'
+      nextTick(() => activateOPButton())
+    }, 'recover')
   } catch (error) {
     const detail = error.response?.data?.detail
     const code = detail?.error?.code
@@ -172,8 +188,6 @@ async function handleRecover() {
       errorMessage.value = parseApiError(error, '找回失败')
     }
     hcaptchaRef.value?.reset()
-  } finally {
-    loading.value = false
   }
 }
 
@@ -183,24 +197,22 @@ async function handleVerify() {
   const captchaToken = await getCaptchaToken()
   if (captchaToken === false) return
 
-  loading.value = true
   try {
-    const data = await api.recoverTokenVerify(form.studentId, form.password, captchaToken)
-    recoveredToken.value = data.calendar_token
-    opSaveValue.value = encodeOPSaveRequest({
-      title: 'CQU Schedule',
-      fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
-      urls: ['https://schedule.cqu.moe'],
-    })
-    await authStore.loginWithToken(data.calendar_token)
-    step.value = 'success'
-    toast.success('找回成功')
-    nextTick(() => activateOPButton())
+    await recoverFeedback.run(async () => {
+      const data = await api.recoverTokenVerify(form.studentId, form.password, captchaToken)
+      recoveredToken.value = data.calendar_token
+      opSaveValue.value = encodeOPSaveRequest({
+        title: 'CQU Schedule',
+        fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
+        urls: ['https://schedule.cqu.moe'],
+      })
+      await authStore.loginWithToken(data.calendar_token)
+      step.value = 'success'
+      nextTick(() => activateOPButton())
+    }, 'verify')
   } catch (error) {
     errorMessage.value = parseApiError(error, '验证失败')
     hcaptchaRef.value?.reset()
-  } finally {
-    loading.value = false
   }
 }
 
