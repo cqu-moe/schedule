@@ -12,7 +12,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
-import { Toaster } from 'vue-sonner'
+import { Sonner as Toaster } from '@/components/ui/sonner'
 import { useConfigStore } from '@/stores/config.js'
 
 // Initialize color mode (auto/light/dark), persists to localStorage
