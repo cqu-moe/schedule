@@ -83,6 +83,7 @@ export async function processScheduleSyncBatch(
 
       let personalData: PersonalScheduleData | null = null;
       let personalFetchFailed = false;
+      let exploreFetchFailed = false;
       let syncedAny = false;
 
       for (const sub of userSubs) {
@@ -113,6 +114,7 @@ export async function processScheduleSyncBatch(
               sessionName: sub.sessionName,
             });
           } catch (e) {
+            exploreFetchFailed = true;
             console.error(`queue: failed to refresh subscription ${sub.sourceName}: ${e}`);
             continue;
           }
@@ -121,8 +123,8 @@ export async function processScheduleSyncBatch(
         console.log(`queue: synced ${sub.sourceName} for ${studentId}`);
       }
 
-      // If personal schedule fetch failed and nothing was synced, retry
-      if (personalFetchFailed && !syncedAny) {
+      // If any fetch failed and nothing was synced, retry
+      if ((personalFetchFailed || exploreFetchFailed) && !syncedAny) {
         console.warn(`queue: all syncs failed for ${studentId}, retrying`);
         message.retry();
         continue;

@@ -125,7 +125,7 @@ export class CQUAPIClient {
   private async request(
     method: string,
     url: string,
-    options?: { json?: unknown; params?: Record<string, string | number> },
+    options?: { json?: unknown; params?: Record<string, string | number>; timeout?: number },
   ): Promise<any> {
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -142,28 +142,40 @@ export class CQUAPIClient {
       finalUrl += (url.includes("?") ? "&" : "?") + searchParams.toString();
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutMs = options?.timeout ?? 30000;
 
-    const init: RequestInit = {
-      method,
-      headers,
-      signal: controller.signal,
+    const doFetch = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const init: RequestInit = {
+        method,
+        headers,
+        signal: controller.signal,
+      };
+      if (options?.json !== undefined) {
+        init.body = JSON.stringify(options.json);
+      }
+      try {
+        return await fetch(finalUrl, init);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          throw new CQUAPIError(`Request timed out (${timeoutMs / 1000}s)`, 408);
+        }
+        throw new CQUAPIError(`Network error: ${e}`);
+      } finally {
+        clearTimeout(timeoutId);
+      }
     };
-    if (options?.json !== undefined) {
-      init.body = JSON.stringify(options.json);
-    }
 
     let response: Response;
     try {
-      response = await fetch(finalUrl, init);
+      response = await doFetch();
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") {
-        throw new CQUAPIError("Request timed out (30s)", 408);
+      if (e instanceof CQUAPIError && e.statusCode === 408) {
+        response = await doFetch();
+      } else {
+        throw e;
       }
-      throw new CQUAPIError(`Network error: ${e}`);
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
@@ -439,7 +451,7 @@ export class CQUAPIClient {
       throw new CQUAPIError(`Unknown source_type: ${sourceType}`, 400);
     }
     const url = formatUrl(urlTemplate, sessionId);
-    const data = await this.request("POST", url, { json: [sourceId] });
+    const data = await this.request("POST", url, { json: [sourceId], timeout: 60000 });
     return this.parseCourses(data);
   }
 }
