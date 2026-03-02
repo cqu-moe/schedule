@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountWithContext, mockSubscription } from '@/test-utils'
 
-const { mockApi } = vi.hoisted(() => {
+const { mockApi, mockToast } = vi.hoisted(() => {
+  const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     register: vi.fn(),
     recoverToken: vi.fn(),
@@ -19,11 +20,12 @@ const { mockApi } = vi.hoisted(() => {
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
   }
-  return { mockApi }
+  return { mockApi, mockToast }
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
 vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Add } = await import('@/views/Add.vue')
 
@@ -268,7 +270,7 @@ describe('Add view', () => {
     expect(wrapper.text()).toContain('未找到结果')
   })
 
-  // 10. Shows error message on API failure
+  // 10. Shows error toast on API failure
   it('shows error message on API failure', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
@@ -284,7 +286,7 @@ describe('Add view', () => {
     vi.advanceTimersByTime(300)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('搜索失败')
+    expect(mockToast.error).toHaveBeenCalledWith('搜索失败')
   })
 
   // 11. Shows "重新登录" link on 401/token expiration

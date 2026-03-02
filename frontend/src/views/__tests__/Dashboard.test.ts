@@ -183,15 +183,15 @@ describe('Dashboard view', () => {
     expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('test-token', 'explore-1')
   })
 
-  // 9. Shows success message after sync all
-  it('shows "同步成功" after sync all', async () => {
+  // 9. Shows success state on sync all button
+  it('shows "已同步" after sync all', async () => {
     const { wrapper } = await mountDashboard()
 
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('同步成功')
+    expect(wrapper.text()).toContain('已同步')
   })
 
   // 10. Delete subscription calls api.deleteSubscription for non-personal
