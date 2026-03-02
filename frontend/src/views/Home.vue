@@ -12,7 +12,7 @@
           自动同步课表到你的日历应用，随时随地查看课程安排
         </p>
         <div class="mt-8">
-          <router-link to="/dashboard">
+          <router-link :to="ctaLink">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
         </div>
@@ -55,11 +55,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth'
 import api from '@/api'
+
+const authStore = useAuthStore()
+const ctaLink = computed(() => authStore.isAuthenticated ? '/dashboard' : '/register')
 
 const version = ref('')
 
