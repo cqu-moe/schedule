@@ -56,7 +56,10 @@
               <span v-if="sub.last_synced_at" class="text-xs text-muted-foreground">
                 同步于 {{ formatDate(sub.last_synced_at) }}
               </span>
-              <span v-else class="text-xs text-muted-foreground">尚未同步</span>
+              <span v-else class="text-xs text-muted-foreground inline-flex items-center gap-1">
+                <Loader2 v-if="hasPendingSubs" class="h-3 w-3 animate-spin" />
+                {{ hasPendingSubs ? '同步中...' : '尚未同步' }}
+              </span>
             </div>
           </CardHeader>
           <CardContent class="space-y-3">
@@ -214,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { RefreshCw, Loader2, Copy, Check, Trash2, QrCode, Download } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -263,8 +266,12 @@ const subscriptions = ref([])
 const subscriptionsMax = ref(5)
 const copiedToken = ref(null)
 const refreshingToken = ref(null)
+const hasPendingSubs = computed(() =>
+  subscriptions.value.some(s => !s.last_synced_at)
+)
 
 let copiedTimer = null
+let pollTimer = null
 
 const SOURCE_TYPE_LABELS = {
   personal_all: '全部',
@@ -312,6 +319,26 @@ async function loadSubscriptions() {
   } finally {
     loading.value = false
   }
+}
+
+function startSyncPolling() {
+  if (pollTimer) return
+  const startTime = Date.now()
+  const POLL_INTERVAL = 2000
+  const POLL_TIMEOUT = 30000
+
+  pollTimer = setInterval(async () => {
+    if (Date.now() - startTime > POLL_TIMEOUT) {
+      clearInterval(pollTimer)
+      pollTimer = null
+      return
+    }
+    await loadSubscriptions()
+    if (!hasPendingSubs.value) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  }, POLL_INTERVAL)
 }
 
 async function copyUrl(url, token) {
@@ -382,15 +409,22 @@ async function handleDelete() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   const acknowledged = localStorage.getItem('risk_warning_acknowledged')
   if (!acknowledged) {
     showRiskWarning.value = true
   }
-  loadSubscriptions()
+  await loadSubscriptions()
+  if (hasPendingSubs.value) {
+    startSyncPolling()
+  }
 })
 
 onBeforeUnmount(() => {
   clearTimeout(copiedTimer)
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
