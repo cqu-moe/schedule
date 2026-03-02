@@ -14,7 +14,7 @@
     "test:frontend": "cd frontend && npm test",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply schedule-db --local"
+    "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
