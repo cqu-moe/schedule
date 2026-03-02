@@ -108,17 +108,19 @@ export async function mountWithContext(
     ...piniaOpts,
   })
 
+  const { stubs: customStubs, ...restGlobal } = mountOpts.global || {}
+
   const wrapper = mount(component, {
     ...mountOpts,
     global: {
       plugins: [pinia, router],
+      ...restGlobal,
       stubs: {
         Navbar: { template: '<nav data-testid="navbar" />' },
         RiskWarning: { template: '<div data-testid="risk-warning" />' },
         QrcodeModal: { template: '<div data-testid="qrcode-modal" />' },
-        ...(mountOpts.global?.stubs as Record<string, any> || {}),
+        ...(customStubs as Record<string, any> || {}),
       },
-      ...mountOpts.global,
     },
   })
 
