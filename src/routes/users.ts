@@ -8,6 +8,13 @@ import { login, AuthError } from "../services/auth";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
 import { generateToken } from "../utils/token";
+import { CQUAPIClient } from "../services/cqu-api";
+import {
+  fetchSessionContextCached,
+  fetchPersonalSchedule,
+  buildPersonalSyncResult,
+  applySyncResult,
+} from "../services/sync";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -90,24 +97,36 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .returning();
 
   // Create 3 personal subscriptions
-  const personalTypes = [
+  const personalSubValues = [
     { sourceType: "personal_all", sourceName: "全部课表" },
     { sourceType: "personal_courses", sourceName: "仅课程" },
     { sourceType: "personal_exams", sourceName: "仅考试" },
-  ];
+  ].map(({ sourceType, sourceName }) => ({
+    userId: newUser.id,
+    sourceType,
+    sourceId: body.student_id,
+    sourceName,
+    calendarToken: generateToken(),
+    isPersonal: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
 
-  for (const { sourceType, sourceName } of personalTypes) {
-    await db.insert(subscriptions).values({
-      userId: newUser.id,
-      sourceType,
-      sourceId: body.student_id,
-      sourceName,
-      calendarToken: generateToken(),
-      isPersonal: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
+  const newSubs = await db
+    .insert(subscriptions)
+    .values(personalSubValues)
+    .returning({ id: subscriptions.id, sourceType: subscriptions.sourceType });
+
+  // Return response immediately, sync in background
+  c.executionCtx.waitUntil(
+    syncNewUserSubscriptions(
+      c.env,
+      newUser.id,
+      body.student_id,
+      tokenResult.accessToken,
+      newSubs,
+    ),
+  );
 
   return c.json({ calendar_token: calendarToken });
 });
@@ -246,5 +265,39 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   return c.json({ calendar_token: user.calendarToken });
 });
+
+/** Background sync: populate ICS content for newly created personal subscriptions */
+export async function syncNewUserSubscriptions(
+  env: Env,
+  userId: string,
+  studentId: string,
+  accessToken: string,
+  subIds: { id: string; sourceType: string }[],
+): Promise<void> {
+  try {
+    const db = drizzle(env.DB);
+    const api = new CQUAPIClient(accessToken);
+    const ctx = await fetchSessionContextCached(api, env.CACHE);
+    const personalData = await fetchPersonalSchedule(api, studentId, ctx);
+
+    for (const sub of subIds) {
+      const result = await buildPersonalSyncResult(sub.sourceType, personalData, studentId);
+      await applySyncResult(db, sub.id, result, ctx, {
+        sessionId: null,
+        sessionName: null,
+      });
+    }
+
+    const now = new Date().toISOString();
+    await db
+      .update(users)
+      .set({ lastRefreshAt: now, updatedAt: now })
+      .where(eq(users.id, userId));
+
+    console.log(`registration: synced ${subIds.length} subscriptions for ${studentId}`);
+  } catch (e) {
+    console.error(`registration: background sync failed for ${studentId}:`, e);
+  }
+}
 
 export default app;

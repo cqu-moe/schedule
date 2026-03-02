@@ -1,0 +1,317 @@
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { env } from "cloudflare:test";
+import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
+import { users, subscriptions } from "../db/schema";
+import { encrypt } from "../services/crypto";
+import { syncNewUserSubscriptions } from "./users";
+import type { Env } from "../types";
+
+const TEST_KEY = btoa(
+  String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))),
+);
+
+// ── Mock CQU API responses ──────────────────────────────────────────
+
+const MOCK_SESSION_LIST = {
+  curSessionId: "1029",
+  sessionFinder: [
+    { id: "1029", name: "2025-2026学年春季学期" },
+  ],
+};
+
+const MOCK_SEMESTER_INFO = {
+  data: {
+    id: "1029",
+    year: "2025-2026学年",
+    term: "春季学期",
+    beginDate: "2026-02-23 00:00:00",
+    endDate: "2026-07-05 00:00:00",
+  },
+};
+
+const MOCK_SCHEDULE = {
+  classTimetableVOList: [
+    {
+      courseName: "高等数学",
+      instructorName: "张三-01",
+      roomName: "D1234",
+      position: "虎溪校区",
+      weekDay: 1,
+      period: "11000000000000",
+      teachingWeek: "1111111111111111",
+    },
+  ],
+};
+
+const MOCK_EXAMS = {
+  status: "success",
+  data: {
+    content: [],
+  },
+};
+
+/** Create a fetch mock that returns different responses based on URL */
+function createCquApiFetchMock() {
+  return vi.fn().mockImplementation((url: string) => {
+    let body: unknown;
+
+    if (typeof url === "string" && url.includes("session/info-detail")) {
+      body = MOCK_SESSION_LIST;
+    } else if (typeof url === "string" && url.includes("session/info/")) {
+      body = MOCK_SEMESTER_INFO;
+    } else if (typeof url === "string" && url.includes("my-table-detail")) {
+      body = MOCK_SCHEDULE;
+    } else if (typeof url === "string" && url.includes("exam")) {
+      body = MOCK_EXAMS;
+    } else {
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    }
+
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  });
+}
+
+// ── Test setup ──────────────────────────────────────────────────────
+
+describe("syncNewUserSubscriptions", () => {
+  const db = drizzle(env.DB);
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeAll(async () => {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS users (
+        id text PRIMARY KEY NOT NULL,
+        student_id text NOT NULL,
+        encrypted_password text NOT NULL,
+        access_token text,
+        refresh_token text,
+        token_expires_at text,
+        calendar_token text NOT NULL,
+        last_login_at text,
+        last_refresh_at text,
+        login_error text,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_student_id_unique ON users (student_id)`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,
+    ).run();
+
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS subscriptions (
+        id text PRIMARY KEY NOT NULL,
+        user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_type text NOT NULL,
+        source_id text NOT NULL,
+        source_name text NOT NULL,
+        calendar_token text NOT NULL,
+        session_id text,
+        session_name text,
+        semester_start text,
+        is_personal integer NOT NULL DEFAULT 0,
+        ics_content text,
+        courses_json text,
+        exams_json text,
+        last_synced_at text,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_calendar_token_unique ON subscriptions (calendar_token)`,
+    ).run();
+  });
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    await env.DB.prepare("DELETE FROM subscriptions").run();
+    await env.DB.prepare("DELETE FROM users").run();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  async function insertUserWithSubs() {
+    const userId = crypto.randomUUID();
+    const encryptedPw = await encrypt("test-pw", TEST_KEY);
+    const now = new Date().toISOString();
+
+    await db.insert(users).values({
+      id: userId,
+      studentId: "20210001",
+      encryptedPassword: encryptedPw,
+      accessToken: "test-access-token",
+      refreshToken: "test-refresh-token",
+      tokenExpiresAt: new Date(Date.now() + 4 * 3600000).toISOString(),
+      calendarToken: crypto.randomUUID() + crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const subIds: { id: string; sourceType: string }[] = [];
+    for (const sourceType of ["personal_all", "personal_courses", "personal_exams"]) {
+      const subId = crypto.randomUUID();
+      await db.insert(subscriptions).values({
+        id: subId,
+        userId,
+        sourceType,
+        sourceId: "20210001",
+        sourceName: sourceType,
+        calendarToken: crypto.randomUUID() + crypto.randomUUID(),
+        isPersonal: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      subIds.push({ id: subId, sourceType });
+    }
+
+    return { userId, subIds };
+  }
+
+  it("should populate icsContent for all 3 personal subscriptions", async () => {
+    globalThis.fetch = createCquApiFetchMock();
+    const { userId, subIds } = await insertUserWithSubs();
+
+    const mockKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const testEnv = {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+      CACHE: mockKv,
+    } as unknown as Env;
+
+    await syncNewUserSubscriptions(testEnv, userId, "20210001", "test-access-token", subIds);
+
+    // Verify all subscriptions have icsContent
+    for (const sub of subIds) {
+      const [updated] = await db
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.id, sub.id));
+
+      expect(updated.icsContent).not.toBeNull();
+      expect(updated.icsContent).toContain("BEGIN:VCALENDAR");
+      expect(updated.lastSyncedAt).not.toBeNull();
+      expect(updated.sessionId).toBe("1029");
+      expect(updated.sessionName).toBe("2025-2026学年春季学期");
+    }
+  });
+
+  it("should update user.lastRefreshAt", async () => {
+    globalThis.fetch = createCquApiFetchMock();
+    const { userId, subIds } = await insertUserWithSubs();
+
+    const mockKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const testEnv = {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+      CACHE: mockKv,
+    } as unknown as Env;
+
+    await syncNewUserSubscriptions(testEnv, userId, "20210001", "test-access-token", subIds);
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    expect(user.lastRefreshAt).not.toBeNull();
+  });
+
+  it("should use KV cache for session context", async () => {
+    globalThis.fetch = createCquApiFetchMock();
+    const { userId, subIds } = await insertUserWithSubs();
+
+    const mockKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const testEnv = {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+      CACHE: mockKv,
+    } as unknown as Env;
+
+    await syncNewUserSubscriptions(testEnv, userId, "20210001", "test-access-token", subIds);
+
+    // Should have attempted to read cache, then written to it
+    expect(mockKv.get).toHaveBeenCalledWith("session:current", "json");
+    expect(mockKv.put).toHaveBeenCalledOnce();
+  });
+
+  it("should not throw on API failure (error is caught and logged)", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+    const { userId, subIds } = await insertUserWithSubs();
+
+    const mockKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const testEnv = {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+      CACHE: mockKv,
+    } as unknown as Env;
+
+    // Should not throw
+    await syncNewUserSubscriptions(testEnv, userId, "20210001", "test-access-token", subIds);
+
+    // Subscriptions should remain without icsContent
+    for (const sub of subIds) {
+      const [unchanged] = await db
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.id, sub.id));
+      expect(unchanged.icsContent).toBeNull();
+    }
+  });
+
+  it("should populate coursesJson for personal_courses subscription", async () => {
+    globalThis.fetch = createCquApiFetchMock();
+    const { userId, subIds } = await insertUserWithSubs();
+
+    const mockKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const testEnv = {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+      CACHE: mockKv,
+    } as unknown as Env;
+
+    await syncNewUserSubscriptions(testEnv, userId, "20210001", "test-access-token", subIds);
+
+    const coursesSub = subIds.find(s => s.sourceType === "personal_courses")!;
+    const [updated] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, coursesSub.id));
+
+    expect(updated.coursesJson).not.toBeNull();
+    const courses = JSON.parse(updated.coursesJson!);
+    expect(courses).toHaveLength(1);
+    expect(courses[0].name).toBe("高等数学");
+
+    // personal_courses should not have examsJson
+    expect(updated.examsJson).toBeNull();
+  });
+});
