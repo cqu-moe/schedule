@@ -71,10 +71,12 @@ vi.mock('@1password/save-button', () => ({
   activateOPButton: vi.fn(),
 }))
 
-// Mock @vueuse/core useColorMode for Navbar tests
-vi.mock('@vueuse/core', () => {
+// Mock @vueuse/core useColorMode for Navbar tests, keep real utilities
+vi.mock('@vueuse/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vueuse/core')>()
   const store = { value: 'auto' }
   return {
+    ...actual,
     useColorMode: vi.fn(() => ({ store })),
   }
 })
