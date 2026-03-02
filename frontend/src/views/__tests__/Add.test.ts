@@ -326,4 +326,68 @@ describe('Add view', () => {
 
     expect(wrapper.text()).toContain('重新登录')
   })
+
+  // Error feedback: load subscriptions failure on mount
+  it('shows toast error when initial subscription load fails', async () => {
+    mockApi.getSubscriptions.mockRejectedValue(new Error('network'))
+
+    // Mount directly (not via mountAdd, which overrides getSubscriptions to resolve)
+    await mountWithContext(Add, {
+      pinia: {
+        initialState: {
+          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
+        },
+      },
+      global: {
+        stubs: componentStubs,
+      },
+    })
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('加载订阅列表失败')
+  })
+
+  // Error feedback: load departments failure
+  it('shows toast error when department load fails', async () => {
+    mockApi.getDepartments.mockRejectedValue({
+      response: { data: { detail: '加载院系列表失败' } },
+    })
+
+    const { wrapper } = await mountAdd()
+
+    // Find the Tabs stub component and emit update:modelValue to trigger handleTypeChange
+    const tabsStub = wrapper.findComponent(componentStubs.Tabs as any)
+    await tabsStub.vm.$emit('update:modelValue', 'admin_class')
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalled()
+  })
+
+  // Subscribe button calls createSubscription successfully
+  it('shows success state on subscribe button after successful subscription', async () => {
+    vi.useFakeTimers()
+    mockApi.searchSchedule.mockResolvedValue({
+      results: [{ id: 'teacher-1', name: '王老师', extra: '数学学院' }],
+    })
+    mockApi.createSubscription.mockResolvedValue({})
+    mockApi.getSubscriptions.mockResolvedValue({
+      subscriptions: [],
+      max: 5,
+    })
+
+    const { wrapper } = await mountAdd()
+    const input = wrapper.find('input')
+    await input.setValue('王老师')
+    await input.trigger('input')
+
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+
+    // Click subscribe button
+    const subBtn = wrapper.findAll('button').find(b => b.text().includes('订阅') && !b.text().includes('已订阅'))
+    await subBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApi.createSubscription).toHaveBeenCalled()
+  })
 })
