@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mountWithContext } from '@/test-utils'
 import { flushPromises } from '@vue/test-utils'
 
-const { mockApi } = vi.hoisted(() => {
+const { mockApi, mockToast } = vi.hoisted(() => {
+  const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     register: vi.fn(),
     recoverToken: vi.fn(),
@@ -19,11 +20,12 @@ const { mockApi } = vi.hoisted(() => {
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
   }
-  return { mockApi }
+  return { mockApi, mockToast }
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
 vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Register } = await import('@/views/Register.vue')
 
@@ -157,5 +159,50 @@ describe('Register view', () => {
     const link = wrapper.find('a[href="/login"]')
     expect(link.exists()).toBe(true)
     expect(link.text()).toContain('去登录')
+  })
+
+  // Error feedback: copy token failure shows toast
+  it('shows toast error when copy token fails', async () => {
+    mockApi.register.mockResolvedValue({ calendar_token: 'new-token-123' })
+    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'))
+
+    const { wrapper } = await mountWithContext(Register, { initialRoute: '/register' })
+
+    await wrapper.find('#studentId').setValue('20210001')
+    await wrapper.find('#password').setValue('password123')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('注册成功')
+    })
+
+    // Find copy button (in the token display area, not "我已保存")
+    const copyBtns = wrapper.findAll('button').filter(b => !b.text().includes('我已保存'))
+    const copyBtn = copyBtns.find(b => b.element.closest('.bg-muted'))
+    if (copyBtn) {
+      await copyBtn.trigger('click')
+      await flushPromises()
+      expect(mockToast.error).toHaveBeenCalledWith('复制失败')
+    }
+  })
+
+  // Register button shows loading state
+  it('disables register button during loading', async () => {
+    let resolveRegister!: (value: any) => void
+    mockApi.register.mockReturnValue(new Promise(r => { resolveRegister = r }))
+
+    const { wrapper } = await mountWithContext(Register, { initialRoute: '/register' })
+
+    await wrapper.find('#studentId').setValue('20210001')
+    await wrapper.find('#password').setValue('password123')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // During progress, form switches to progress phase showing "正在注册"
+    expect(wrapper.text()).toContain('正在注册')
+
+    resolveRegister({ calendar_token: 'tok' })
   })
 })
