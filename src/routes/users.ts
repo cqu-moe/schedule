@@ -267,7 +267,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
 });
 
 /** Background sync: populate ICS content for newly created personal subscriptions */
-async function syncNewUserSubscriptions(
+export async function syncNewUserSubscriptions(
   env: Env,
   userId: string,
   studentId: string,
