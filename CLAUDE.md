@@ -65,7 +65,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
 
 ## 前端开发注意事项
-- 前端没有测试文件，验证用 `cd frontend && npm run build`
+- 前端测试运行: `npm run test:frontend`（cd frontend && npm test），构建验证: `cd frontend && npm run build`
 - `vue-tsc --noEmit` 有预存的 tsconfig.node.json 错误，不影响构建
 - Toast 通知用 vue-sonner（`<Toaster />` 在 App.vue），错误解析用 `frontend/src/utils/error.ts` 的 `parseApiError()`
 - 表单错误用 shadcn-vue Alert 内联组件，后台操作用 Toast
