@@ -22,6 +22,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npm run build:frontend` — 构建前端到 frontend/dist
 - `npm run deploy` — 构建前端 + wrangler deploy (自动注入 GIT_COMMIT/GIT_DATE)
 - `npm test` — vitest run (workerd runtime)
+- `npm run test:frontend` — 前端 vitest run (jsdom, cd frontend && npm test)
 - `npm run typecheck` — tsc --noEmit
 - `npm run db:generate` — drizzle-kit generate migrations
 - `npm run db:migrate:local` — apply D1 migrations locally
@@ -32,7 +33,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npx wrangler dev --remote --test-scheduled` — 用生产 D1 手动触发 cron (访问 `http://localhost:8787/__scheduled?cron=<url-encoded-cron>`)
 
 ## 开发注意事项
-- vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)
+- 后端 vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)；前端独立 npm 项目用 vitest v4 + jsdom
 - vitest.config.ts 中 miniflare.compatibilityDate 设为 "2025-01-01" (规避 future date 错误)
 - wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
 - frontend/dist 和 frontend/node_modules 已 gitignore
@@ -58,6 +59,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
 - `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - Queue handler 的 `MessageBatch` 默认泛型为 `unknown`，须用 `batch as MessageBatch<T>` 类型断言
+- 前端测试: `frontend/src/test-utils.ts` 提供 `mountWithContext()` helper (Pinia + Router + 默认 stubs)
+- 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
+- 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
+- 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler)
@@ -69,4 +74,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
 - `frontend/` — Vue 前端 (独立 npm 项目)
+- `frontend/vitest.config.ts` — 前端测试配置 (jsdom, @/ alias)
+- `frontend/src/test-setup.ts` — 全局 mock (clipboard, hCaptcha, shadcn stubs)
+- `frontend/src/test-utils.ts` — 测试工具 (mock factories, mountWithContext)
 - `docs/plans/` — 设计文档和实现计划
