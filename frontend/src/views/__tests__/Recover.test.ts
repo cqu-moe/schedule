@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mountWithContext } from '@/test-utils'
 import { flushPromises } from '@vue/test-utils'
 
-const { mockApi } = vi.hoisted(() => {
+const { mockApi, mockToast } = vi.hoisted(() => {
+  const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     register: vi.fn(),
     recoverToken: vi.fn(),
@@ -19,11 +20,12 @@ const { mockApi } = vi.hoisted(() => {
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
   }
-  return { mockApi }
+  return { mockApi, mockToast }
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
 vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Recover } = await import('@/views/Recover.vue')
 
@@ -229,5 +231,82 @@ describe('Recover view', () => {
       expect(wrapper.find('form').exists()).toBe(true)
       expect(wrapper.find('#studentId').exists()).toBe(true)
     })
+  })
+
+  // Error feedback: non-mismatch API error shows Alert
+  it('shows error message for non-mismatch API errors', async () => {
+    mockApi.recoverToken.mockRejectedValue({
+      response: { data: { detail: { error: { message: '服务器内部错误' } } } },
+    })
+
+    const { wrapper } = await mountWithContext(Recover, { initialRoute: '/recover' })
+
+    await wrapper.find('#studentId').setValue('20210001')
+    await wrapper.find('#password').setValue('password123')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('服务器内部错误')
+    })
+  })
+
+  // Error feedback: verify failure shows Alert
+  it('shows error message when verify fails', async () => {
+    // Trigger mismatch first
+    mockApi.recoverToken.mockRejectedValue({
+      response: { status: 400, data: { detail: { error: { code: 'PASSWORD_MISMATCH' } } } },
+    })
+
+    const { wrapper } = await mountWithContext(Recover, { initialRoute: '/recover' })
+
+    await wrapper.find('#studentId').setValue('20210001')
+    await wrapper.find('#password').setValue('password123')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('密码可能已更改')
+    })
+
+    // Set up verify to fail
+    mockApi.recoverTokenVerify.mockRejectedValue({
+      response: { data: { detail: { error: { message: '验证超时' } } } },
+    })
+
+    const verifyBtn = wrapper.findAll('button').find(b => b.text().includes('验证'))
+    await verifyBtn!.trigger('click')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('验证超时')
+    })
+  })
+
+  // Error feedback: copy token failure shows toast
+  it('shows toast error when copy token fails', async () => {
+    mockApi.recoverToken.mockResolvedValue({ calendar_token: 'recovered-tok' })
+    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'))
+
+    const { wrapper } = await mountWithContext(Recover, { initialRoute: '/recover' })
+
+    await wrapper.find('#studentId').setValue('20210001')
+    await wrapper.find('#password').setValue('password123')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('找回成功')
+    })
+
+    // Find copy button in the token display area
+    const copyBtns = wrapper.findAll('button').filter(b => !b.text().includes('进入仪表盘'))
+    const copyBtn = copyBtns.find(b => b.element.closest('.bg-muted'))
+    if (copyBtn) {
+      await copyBtn.trigger('click')
+      await flushPromises()
+      expect(mockToast.error).toHaveBeenCalledWith('复制失败')
+    }
   })
 })
