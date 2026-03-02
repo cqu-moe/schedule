@@ -87,12 +87,18 @@
                 v-else
                 size="sm"
                 class="ml-3 shrink-0 cursor-pointer"
-                :disabled="subscribing === item.id || subscriptions.length >= subscriptionsMax"
+                :disabled="subscribeFeedback.stateOf(item.id) === 'loading' || subscriptions.length >= subscriptionsMax"
+                :class="{
+                  'bg-green-600 hover:bg-green-600 text-white': subscribeFeedback.stateOf(item.id) === 'success',
+                  'bg-destructive hover:bg-destructive text-white': subscribeFeedback.stateOf(item.id) === 'error'
+                }"
                 @click="handleSubscribe(item)"
               >
-                <Loader2 v-if="subscribing === item.id" class="h-4 w-4 animate-spin mr-1" />
+                <Loader2 v-if="subscribeFeedback.stateOf(item.id) === 'loading'" class="h-4 w-4 animate-spin mr-1" />
+                <Check v-else-if="subscribeFeedback.stateOf(item.id) === 'success'" class="h-4 w-4 mr-1" />
+                <X v-else-if="subscribeFeedback.stateOf(item.id) === 'error'" class="h-4 w-4 mr-1" />
                 <Plus v-else class="h-4 w-4 mr-1" />
-                订阅
+                {{ { loading: '订阅中', success: '已订阅', error: '失败' }[subscribeFeedback.stateOf(item.id)] || '订阅' }}
               </Button>
             </div>
           </div>
@@ -118,16 +124,20 @@
 
       <!-- Error message -->
       <div v-if="errorMessage" class="mt-4">
-        <p class="text-sm text-destructive">{{ errorMessage }}</p>
-        <Button
-          v-if="isTokenExpired"
-          variant="link"
-          size="sm"
-          class="px-0 text-destructive cursor-pointer"
-          @click="$router.push('/login')"
-        >
-          重新登录
-        </Button>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {{ errorMessage }}
+            <Button
+              v-if="isTokenExpired"
+              variant="link"
+              size="sm"
+              class="px-0 text-destructive cursor-pointer"
+              @click="$router.push('/login')"
+            >
+              重新登录
+            </Button>
+          </AlertDescription>
+        </Alert>
       </div>
     </div>
   </div>
@@ -135,7 +145,9 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Search, Plus, Check, Loader2 } from 'lucide-vue-next'
+import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
+import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { toast } from 'vue-sonner'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api'
@@ -148,6 +160,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { parseApiError } from '@/utils/error'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 
 const authStore = useAuthStore()
@@ -160,7 +174,7 @@ const departments = ref([])
 const searchResults = ref([])
 const searching = ref(false)
 const searched = ref(false)
-const subscribing = ref(null)
+const subscribeFeedback = useButtonFeedback()
 const subscriptions = ref([])
 const subscriptionsMax = ref(5)
 const errorMessage = ref('')
@@ -189,14 +203,13 @@ function isSubscribed(sourceId) {
 }
 
 function handleApiError(err, fallbackMessage) {
-  const detail = err.response?.data?.detail || fallbackMessage
-  if (detail === 'CAPTCHA_REQUIRED' || detail === 'CAPTCHA_FAILED') {
-    errorMessage.value = '验证码验证失败，请刷新页面重试'
-    return
-  }
-  errorMessage.value = detail
-  if (err.response?.status === 401 || /token expired/i.test(detail)) {
+  const msg = parseApiError(err, fallbackMessage)
+  const resp = err?.response
+  if (resp?.status === 401 || /token expired/i.test(msg)) {
+    errorMessage.value = msg
     isTokenExpired.value = true
+  } else {
+    toast.error(msg)
   }
 }
 
@@ -276,7 +289,6 @@ async function doSearch() {
 }
 
 async function handleSubscribe(item) {
-  subscribing.value = item.id
   clearError()
 
   let captchaToken = null
@@ -286,42 +298,42 @@ async function handleSubscribe(item) {
       captchaToken = response
     } catch {
       errorMessage.value = '验证码加载失败，请刷新页面重试'
-      subscribing.value = null
       return
     }
   }
 
   try {
-    await api.createSubscription(
-      authStore.token, sourceType.value, item.id, item.name, captchaToken
-    )
-    await loadSubscriptions()
+    await subscribeFeedback.run(async () => {
+      await api.createSubscription(
+        authStore.token, sourceType.value, item.id, item.name, captchaToken
+      )
+      await loadSubscriptions().catch(() => {})
+    }, item.id)
   } catch (err) {
     handleApiError(err, '订阅失败')
   } finally {
     hcaptchaRef.value?.reset()
-    subscribing.value = null
   }
 }
 
 async function loadSubscriptions() {
-  try {
-    const data = await api.getSubscriptions(authStore.token)
-    subscriptions.value = data.subscriptions
-    subscriptionsMax.value = data.max
-  } catch {
-    // Silent fail on load
-  }
+  const data = await api.getSubscriptions(authStore.token)
+  subscriptions.value = data.subscriptions
+  subscriptionsMax.value = data.max
 }
 
 onMounted(async () => {
-  loadSubscriptions()
+  try {
+    await loadSubscriptions()
+  } catch {
+    toast.error('加载订阅列表失败')
+  }
   try {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
   } catch {
-    // Proceed without captcha
+    // Proceed without captcha — graceful degradation
   }
 })
 

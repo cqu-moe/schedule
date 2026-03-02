@@ -5,12 +5,14 @@
         <component :is="Component" />
       </transition>
     </router-view>
+    <Toaster position="bottom-right" rich-colors :duration="3000" />
   </div>
 </template>
 
 <script setup>
 import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
+import { Sonner as Toaster } from '@/components/ui/sonner'
 import { useConfigStore } from '@/stores/config.js'
 
 // Initialize color mode (auto/light/dark), persists to localStorage

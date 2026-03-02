@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountWithContext, mockSubscription, mockSubscriptionList } from '@/test-utils'
 
-const { mockApi } = vi.hoisted(() => {
+const { mockApi, mockToast } = vi.hoisted(() => {
+  const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     register: vi.fn(),
     recoverToken: vi.fn(),
@@ -19,11 +20,12 @@ const { mockApi } = vi.hoisted(() => {
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
   }
-  return { mockApi }
+  return { mockApi, mockToast }
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
 vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Dashboard } = await import('@/views/Dashboard.vue')
 
@@ -183,15 +185,15 @@ describe('Dashboard view', () => {
     expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('test-token', 'explore-1')
   })
 
-  // 9. Shows success message after sync all
-  it('shows "同步成功" after sync all', async () => {
+  // 9. Shows success state on sync all button
+  it('shows "已同步" after sync all', async () => {
     const { wrapper } = await mountDashboard()
 
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('同步成功')
+    expect(wrapper.text()).toContain('已同步')
   })
 
   // 10. Delete subscription calls api.deleteSubscription for non-personal
@@ -334,5 +336,91 @@ describe('Dashboard view', () => {
 
     expect(wrapper.text()).toContain('课程')
     expect(wrapper.text()).toContain('考试')
+  })
+
+  // Error feedback: initial load failure
+  it('shows toast error when initial load fails', async () => {
+    mockApi.getSubscriptions.mockRejectedValue(new Error('network'))
+    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
+
+    await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('加载订阅列表失败')
+  })
+
+  // Error feedback: refresh subscription failure
+  it('shows toast error when refresh subscription fails', async () => {
+    const { wrapper } = await mountDashboard()
+    mockApi.refreshSubscription.mockRejectedValue({
+      response: { data: { detail: '刷新超时' } },
+    })
+
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('所有') && !b.text().includes('中')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('刷新超时')
+  })
+
+  // Error feedback: sync all failure
+  it('shows toast error when sync all fails', async () => {
+    const { wrapper } = await mountDashboard()
+    mockApi.refreshSubscription.mockRejectedValue({
+      response: { data: { detail: '同步超时' } },
+    })
+
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('同步超时')
+  })
+
+  // Error feedback: delete subscription failure
+  it('shows toast error when delete subscription fails', async () => {
+    const exploreSub = mockSubscription({
+      calendar_token: 'explore-1',
+      is_personal: false,
+      source_type: 'instructor',
+      source_name: '李四',
+    })
+    mockApi.deleteSubscription.mockRejectedValue({
+      response: { data: { detail: '删除失败' } },
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    const deleteButtons = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await deleteButtons[deleteButtons.length - 1].trigger('click')
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('删除失败')
+  })
+
+  // Error feedback: delete account failure
+  it('shows toast error when delete account fails', async () => {
+    mockApi.deleteUser.mockRejectedValue(new Error('server error'))
+    const { wrapper } = await mountDashboard()
+
+    // Type confirmation text
+    const input = wrapper.find('input[placeholder="确认删除"]')
+    await input.setValue('确认删除')
+
+    // Find and click "删除账号" action button (the last one, inside AlertDialog)
+    const actionButtons = wrapper.findAll('button').filter(b => b.text().includes('删除账号'))
+    const deleteAccountAction = actionButtons[actionButtons.length - 1]
+    await deleteAccountAction.trigger('click')
+    await flushPromises()
+
+    expect(mockToast.error).toHaveBeenCalledWith('删除账号失败')
   })
 })

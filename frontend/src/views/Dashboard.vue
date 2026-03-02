@@ -17,26 +17,24 @@
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncing"
+              :disabled="syncFeedback.stateOf() === 'loading'"
+              :class="{
+                'bg-green-600 hover:bg-green-600 text-white border-transparent': syncFeedback.stateOf() === 'success',
+                'bg-destructive hover:bg-destructive text-white border-transparent': syncFeedback.stateOf() === 'error'
+              }"
               @click="handleSyncAll"
             >
-              <Loader2 v-if="syncing" class="h-4 w-4 mr-1.5 animate-spin" />
+              <Loader2 v-if="syncFeedback.stateOf() === 'loading'" class="h-4 w-4 mr-1.5 animate-spin" />
+              <Check v-else-if="syncFeedback.stateOf() === 'success'" class="h-4 w-4 mr-1.5" />
+              <X v-else-if="syncFeedback.stateOf() === 'error'" class="h-4 w-4 mr-1.5" />
               <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-              同步所有
+              {{ { loading: '同步中', success: '已同步', error: '失败' }[syncFeedback.stateOf()] || '同步所有' }}
             </Button>
             <router-link to="/add">
               <Button variant="outline" size="sm" class="cursor-pointer">添加订阅</Button>
             </router-link>
           </div>
         </div>
-        <p
-          v-if="statusMessage"
-          class="text-sm mb-3"
-          :class="statusType === 'success' ? 'text-green-600' : 'text-destructive'"
-        >
-          {{ statusMessage }}
-        </p>
-
         <!-- Loading state -->
         <div v-if="loading" class="flex items-center justify-center py-8">
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
@@ -71,11 +69,17 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
+                :disabled="copyFeedback.stateOf(sub.calendar_token) === 'loading'"
+                :class="{
+                  'bg-green-600 hover:bg-green-600 text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'success',
+                  'bg-destructive hover:bg-destructive text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'error'
+                }"
                 @click="copyUrl(sub.subscription_url, sub.calendar_token)"
               >
-                <Check v-if="copiedToken === sub.calendar_token" class="h-4 w-4 mr-1.5" />
+                <Check v-if="copyFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
+                <X v-else-if="copyFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
                 <Copy v-else class="h-4 w-4 mr-1.5" />
-                {{ copiedToken === sub.calendar_token ? '已复制' : '复制' }}
+                {{ { success: '已复制', error: '失败' }[copyFeedback.stateOf(sub.calendar_token)] || '复制' }}
               </Button>
               <Button
                 variant="outline"
@@ -90,12 +94,18 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="refreshingToken === sub.calendar_token"
+                :disabled="refreshFeedback.stateOf(sub.calendar_token) === 'loading'"
+                :class="{
+                  'bg-green-600 hover:bg-green-600 text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'success',
+                  'bg-destructive hover:bg-destructive text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'error'
+                }"
                 @click="handleRefreshSub(sub.calendar_token)"
               >
-                <Loader2 v-if="refreshingToken === sub.calendar_token" class="h-4 w-4 animate-spin mr-1.5" />
+                <Loader2 v-if="refreshFeedback.stateOf(sub.calendar_token) === 'loading'" class="h-4 w-4 animate-spin mr-1.5" />
+                <Check v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
+                <X v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-                同步
+                {{ { loading: '同步中', success: '已刷新', error: '失败' }[refreshFeedback.stateOf(sub.calendar_token)] || '同步' }}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger as-child>
@@ -219,10 +229,13 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { RefreshCw, Loader2, Copy, Check, Trash2, QrCode, Download } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lucide-vue-next'
+import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config.js'
+import { toast } from 'vue-sonner'
 import api from '@/api'
+import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
@@ -254,25 +267,25 @@ const configStore = useConfigStore()
 
 // State
 const loading = ref(true)
-const syncing = ref(false)
 const deleting = ref(false)
 const showRiskWarning = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
-const statusMessage = ref('')
-const statusType = ref('success')
 const subscriptions = ref([])
 const subscriptionsMax = ref(5)
-const copiedToken = ref(null)
-const refreshingToken = ref(null)
 const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
   subscriptions.value.some(s => !s.last_synced_at)
 )
 
-let copiedTimer = null
 let pollTimer = null
+
+// Button feedback
+const copyFeedback = useButtonFeedback()
+const refreshFeedback = useButtonFeedback()
+const deleteFeedback = useButtonFeedback()
+const syncFeedback = useButtonFeedback()
 
 const SOURCE_TYPE_LABELS = {
   personal_all: '全部',
@@ -311,15 +324,9 @@ function formatDate(isoString) {
 }
 
 async function loadSubscriptions() {
-  try {
-    const data = await api.getSubscriptions(authStore.token)
-    subscriptions.value = data.subscriptions
-    subscriptionsMax.value = data.max
-  } catch {
-    // Silent fail on load
-  } finally {
-    loading.value = false
-  }
+  const data = await api.getSubscriptions(authStore.token)
+  subscriptions.value = data.subscriptions
+  subscriptionsMax.value = data.max
 }
 
 function stopPolling() {
@@ -349,55 +356,49 @@ function startSyncPolling() {
 
 async function copyUrl(url, token) {
   try {
-    await navigator.clipboard.writeText(url)
-    copiedToken.value = token
-    clearTimeout(copiedTimer)
-    copiedTimer = setTimeout(() => { copiedToken.value = null }, 1500)
+    await copyFeedback.run(async () => {
+      await navigator.clipboard.writeText(url)
+    }, token)
   } catch {
-    // Silent fail
+    // button shows error state, no toast needed for copy
   }
 }
 
 async function handleRefreshSub(subToken) {
-  refreshingToken.value = subToken
   try {
-    await api.refreshSubscription(authStore.token, subToken)
-    await loadSubscriptions()
-    await authStore.fetchUserInfo()
+    await refreshFeedback.run(async () => {
+      await api.refreshSubscription(authStore.token, subToken)
+      await loadSubscriptions().catch(() => {})
+      await authStore.fetchUserInfo()
+    }, subToken)
   } catch (error) {
-    statusMessage.value = error.response?.data?.detail || '刷新失败'
-    statusType.value = 'error'
-  } finally {
-    refreshingToken.value = null
+    toast.error(parseApiError(error, '刷新失败'))
   }
 }
 
 async function handleDeleteSub(subToken) {
   try {
-    await api.deleteSubscription(authStore.token, subToken)
-    await loadSubscriptions()
-  } catch {
-    // Silent fail
+    await deleteFeedback.run(async () => {
+      await api.deleteSubscription(authStore.token, subToken)
+      await loadSubscriptions().catch(() => {})
+    }, subToken)
+  } catch (error) {
+    toast.error(parseApiError(error, '删除订阅失败'))
   }
 }
 
 async function handleSyncAll() {
-  syncing.value = true
-  statusMessage.value = ''
   try {
-    const personalSubs = subscriptions.value.filter(s => s.is_personal)
-    for (const sub of personalSubs) {
-      await api.refreshSubscription(authStore.token, sub.calendar_token)
-    }
-    await loadSubscriptions()
-    await authStore.fetchUserInfo()
-    statusMessage.value = '同步成功'
-    statusType.value = 'success'
+    await syncFeedback.run(async () => {
+      const personalSubs = subscriptions.value.filter(s => s.is_personal)
+      for (const sub of personalSubs) {
+        await api.refreshSubscription(authStore.token, sub.calendar_token)
+      }
+      await loadSubscriptions().catch(() => {})
+      await authStore.fetchUserInfo()
+    })
   } catch (error) {
-    statusMessage.value = error.response?.data?.detail || '同步失败'
-    statusType.value = 'error'
-  } finally {
-    syncing.value = false
+    toast.error(parseApiError(error, '同步失败'))
   }
 }
 
@@ -408,8 +409,7 @@ async function handleDelete() {
     authStore.logout()
     router.push('/')
   } catch {
-    statusMessage.value = '删除失败'
-    statusType.value = 'error'
+    toast.error('删除账号失败')
   } finally {
     deleting.value = false
   }
@@ -420,14 +420,19 @@ onMounted(async () => {
   if (!acknowledged) {
     showRiskWarning.value = true
   }
-  await loadSubscriptions()
-  if (hasPendingSubs.value) {
-    startSyncPolling()
+  try {
+    await loadSubscriptions()
+    if (hasPendingSubs.value) {
+      startSyncPolling()
+    }
+  } catch {
+    toast.error('加载订阅列表失败')
+  } finally {
+    loading.value = false
   }
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(copiedTimer)
   if (pollTimer) {
     stopPolling()
   }

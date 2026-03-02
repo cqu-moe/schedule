@@ -26,9 +26,19 @@
               <Label for="password">密码</Label>
               <Input id="password" v-model="form.password" type="password" placeholder="请输入密码" />
             </div>
-            <p v-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
-            <Button type="submit" class="w-full cursor-pointer" :disabled="authStore.loading">
-              注册
+            <Alert v-if="errorMessage" variant="destructive">
+              <AlertDescription>{{ errorMessage }}</AlertDescription>
+            </Alert>
+            <Button type="submit" class="w-full cursor-pointer"
+              :disabled="registerFeedback.stateOf() === 'loading'"
+              :class="{
+                'bg-green-600 hover:bg-green-600 text-white': registerFeedback.stateOf() === 'success',
+                'bg-destructive hover:bg-destructive text-white': registerFeedback.stateOf() === 'error'
+              }">
+              <Loader2 v-if="registerFeedback.stateOf() === 'loading'" class="h-4 w-4 animate-spin mr-2" />
+              <Check v-else-if="registerFeedback.stateOf() === 'success'" class="h-4 w-4 mr-2" />
+              <X v-else-if="registerFeedback.stateOf() === 'error'" class="h-4 w-4 mr-2" />
+              {{ { loading: '注册中', success: '注册成功', error: '失败' }[registerFeedback.stateOf()] || '注册' }}
             </Button>
             <p class="text-center text-xs text-muted-foreground">
               已有 Token？
@@ -91,9 +101,11 @@
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Copy, Check, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
+import { Copy, Check, X, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
+import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
+import { toast } from 'vue-sonner'
 import api from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import Navbar from '@/components/Navbar.vue'
@@ -106,10 +118,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
+const registerFeedback = useButtonFeedback()
 const phase = ref('form')
 const currentStep = ref(0)
 const steps = ['验证凭据', '连接教务系统', '获取 Token']
@@ -135,7 +149,9 @@ onMounted(async () => {
     const config = await api.getCaptchaConfig()
     captchaEnabled.value = config.enabled
     captchaSitekey.value = config.sitekey
-  } catch {}
+  } catch {
+    // Proceed without captcha — graceful degradation
+  }
 })
 
 onBeforeUnmount(() => {
@@ -166,29 +182,34 @@ async function handleRegister() {
     }
   }
 
-  startProgressSteps()
+  try {
+    await registerFeedback.run(async () => {
+      startProgressSteps()
+      const result = await authStore.register(form.studentId, form.password, captchaToken)
 
-  const result = await authStore.register(form.studentId, form.password, captchaToken)
+      if (!result.success) {
+        phase.value = 'form'
+        errorMessage.value = result.error
+        stepTimers.forEach(clearTimeout)
+        hcaptchaRef.value?.reset()
+        throw new Error(result.error)
+      }
 
-  if (!result.success) {
-    phase.value = 'form'
-    errorMessage.value = result.error
-    stepTimers.forEach(clearTimeout)
-    hcaptchaRef.value?.reset()
-    return
+      currentStep.value = 3
+      await authStore.fetchUserInfo()
+
+      displayToken.value = result.token
+      opSaveValue.value = encodeOPSaveRequest({
+        title: 'CQU Schedule',
+        fields: [{ autocomplete: 'current-password', value: result.token }],
+        urls: ['https://schedule.cqu.moe'],
+      })
+      showTokenDialog.value = true
+      nextTick(() => activateOPButton())
+    })
+  } catch {
+    // error handled via errorMessage or button state
   }
-
-  currentStep.value = 3
-  await authStore.fetchUserInfo()
-
-  displayToken.value = result.token
-  opSaveValue.value = encodeOPSaveRequest({
-    title: 'CQU Schedule',
-    fields: [{ autocomplete: 'current-password', value: result.token }],
-    urls: ['https://schedule.cqu.moe'],
-  })
-  showTokenDialog.value = true
-  nextTick(() => activateOPButton())
 }
 
 async function copyToken() {
@@ -196,7 +217,7 @@ async function copyToken() {
     await navigator.clipboard.writeText(displayToken.value)
     copied.value = true
     setTimeout(() => { copied.value = false }, 1500)
-  } catch {}
+  } catch { toast.error('复制失败') }
 }
 
 function closeTokenDialog() {
