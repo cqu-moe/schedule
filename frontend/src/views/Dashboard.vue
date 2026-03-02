@@ -57,8 +57,8 @@
                 同步于 {{ formatDate(sub.last_synced_at) }}
               </span>
               <span v-else class="text-xs text-muted-foreground inline-flex items-center gap-1">
-                <Loader2 v-if="hasPendingSubs" class="h-3 w-3 animate-spin" />
-                {{ hasPendingSubs ? '同步中...' : '尚未同步' }}
+                <Loader2 v-if="isPolling" class="h-3 w-3 animate-spin" />
+                {{ isPolling ? '同步中...' : '尚未同步' }}
               </span>
             </div>
           </CardHeader>
@@ -266,6 +266,7 @@ const subscriptions = ref([])
 const subscriptionsMax = ref(5)
 const copiedToken = ref(null)
 const refreshingToken = ref(null)
+const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
   subscriptions.value.some(s => !s.last_synced_at)
 )
@@ -321,22 +322,27 @@ async function loadSubscriptions() {
   }
 }
 
+function stopPolling() {
+  clearInterval(pollTimer)
+  pollTimer = null
+  isPolling.value = false
+}
+
 function startSyncPolling() {
   if (pollTimer) return
+  isPolling.value = true
   const startTime = Date.now()
   const POLL_INTERVAL = 2000
   const POLL_TIMEOUT = 30000
 
   pollTimer = setInterval(async () => {
     if (Date.now() - startTime > POLL_TIMEOUT) {
-      clearInterval(pollTimer)
-      pollTimer = null
+      stopPolling()
       return
     }
     await loadSubscriptions()
     if (!hasPendingSubs.value) {
-      clearInterval(pollTimer)
-      pollTimer = null
+      stopPolling()
     }
   }, POLL_INTERVAL)
 }
@@ -423,8 +429,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   clearTimeout(copiedTimer)
   if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+    stopPolling()
   }
 })
 </script>
