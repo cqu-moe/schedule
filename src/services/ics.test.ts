@@ -79,7 +79,7 @@ describe("generateCoursesIcs", () => {
 
     expect(ics).toContain("SUMMARY:高等数学");
     expect(ics).toContain("LOCATION:D1234");
-    expect(ics).toContain("DESCRIPTION:张三");
+    expect(ics).toContain("DESCRIPTION:教师：张三");
   });
 
   it("should use position when room is empty", async () => {

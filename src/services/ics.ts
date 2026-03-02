@@ -125,7 +125,7 @@ export async function generateCoursesIcs(
         `DTEND:${endStr}`,
         `SUMMARY:${escapeIcsText(course.name)}`,
         `LOCATION:${escapeIcsText(location)}`,
-        `DESCRIPTION:${escapeIcsText(course.lecturer)}`,
+        `DESCRIPTION:${escapeIcsText(`教师：${course.lecturer}`)}`,
         "BEGIN:VALARM",
         "TRIGGER:-PT15M",
         "ACTION:DISPLAY",
@@ -154,6 +154,7 @@ export async function generateExamsIcs(
     const endStr = formatIcsTime(endTime);
     const uid = await generateUid(username, exam.name, startStr, endStr);
     const description = exam.seat > 0 ? `座位: ${exam.seat}` : "";
+    const location = exam.seat > 0 ? `${exam.room}@${exam.seat}` : exam.room;
 
     lines.push(
       "BEGIN:VEVENT",
@@ -161,7 +162,7 @@ export async function generateExamsIcs(
       `DTSTART:${startStr}`,
       `DTEND:${endStr}`,
       `SUMMARY:${escapeIcsText(exam.name)}`,
-      `LOCATION:${escapeIcsText(exam.room)}`,
+      `LOCATION:${escapeIcsText(location)}`,
       `DESCRIPTION:${escapeIcsText(description)}`,
       "BEGIN:VALARM",
       "TRIGGER:-PT1H",
