@@ -74,7 +74,11 @@ export async function verifyPassword(
 ): Promise<boolean> {
   try {
     const decrypted = await decrypt(encrypted, keyBase64);
-    return decrypted === password;
+    const enc = new TextEncoder();
+    const a = enc.encode(decrypted);
+    const b = enc.encode(password);
+    if (a.byteLength !== b.byteLength) return false;
+    return crypto.subtle.timingSafeEqual(a, b);
   } catch {
     return false;
   }
