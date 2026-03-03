@@ -90,7 +90,8 @@
 
   // Observability (Workers Logs & Traces)
   "observability": {
-    "enabled": false,
+    "enabled": true,
+    // TODO: 用户量上来后考虑降低 traces 采样率以控制成本
     "head_sampling_rate": 1,
     "logs": {
       "enabled": true,

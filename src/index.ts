@@ -75,6 +75,7 @@ export default {
   async queue(
     batch: MessageBatch,
     env: Env,
+    _ctx: ExecutionContext,
   ): Promise<void> {
     switch (batch.queue) {
       case "schedule-token-refresh":
@@ -87,4 +88,4 @@ export default {
         console.log(`queue: unknown queue ${batch.queue}`);
     }
   },
-};
+} satisfies ExportedHandler<Env>;
