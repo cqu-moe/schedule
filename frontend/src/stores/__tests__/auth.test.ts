@@ -96,21 +96,6 @@ describe('auth store', () => {
       expect(result).toEqual({ success: false, error: '验证码验证失败，请刷新页面重试' })
     })
 
-    it('returns already registered error on USER_EXISTS', async () => {
-      mockApi.register.mockRejectedValue({
-        response: {
-          status: 409,
-          data: { detail: { error: { code: 'USER_EXISTS', message: 'User exists' } } },
-        },
-      })
-
-      const { useAuthStore } = await import('@/stores/auth.js')
-      const store = useAuthStore()
-      const result = await store.register('20210001', 'password123')
-
-      expect(result).toEqual({ success: false, error: '该账号已注册，请使用 Token 登录' })
-    })
-
     it('sets loading during request', async () => {
       let resolveRegister: (value: any) => void
       mockApi.register.mockReturnValue(

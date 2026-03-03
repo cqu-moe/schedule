@@ -1,7 +1,6 @@
 const CODE_MESSAGES: Record<string, string> = {
   CAPTCHA_REQUIRED: '验证码验证失败，请刷新页面重试',
   CAPTCHA_FAILED: '验证码验证失败，请刷新页面重试',
-  USER_EXISTS: '该账号已注册，请使用 Token 登录',
 }
 
 export function parseApiError(error: unknown, fallback = '操作失败'): string {
