@@ -12,7 +12,7 @@ import {
   generateFormattedEvents,
   generateCsv,
 } from "../services/export";
-import { decryptOrPlaintext } from "../services/crypto";
+import { decrypt } from "../services/crypto";
 import { generateToken } from "../utils/token";
 import {
   PERSONAL_SOURCE_TYPES,
@@ -103,8 +103,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   }
 
   // Fetch target schedule and generate ICS
-  // TODO(#13): 收敛后替换为 decrypt()
-  const accessToken = await decryptOrPlaintext(user.accessToken!, c.env.ENCRYPTION_KEY);
+  const accessToken = await decrypt(user.accessToken!, c.env.ENCRYPTION_KEY);
   const api = new CQUAPIClient(accessToken);
 
   try {
@@ -221,8 +220,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
 
   if (!sub) return c.json({ detail: "Subscription not found" }, 404);
 
-  // TODO(#13): 收敛后替换为 decrypt()
-  const accessToken = await decryptOrPlaintext(user.accessToken!, c.env.ENCRYPTION_KEY);
+  const accessToken = await decrypt(user.accessToken!, c.env.ENCRYPTION_KEY);
   const api = new CQUAPIClient(accessToken);
 
   try {

@@ -94,4 +94,3 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - OAuth token (accessToken/refreshToken) 使用 AES-256-GCM 加密存储，读写路径:
   - 写入: `src/routes/users.ts` (注册+恢复), `src/cron/token-refresh.ts` (刷新+重登录)
   - 读取: `src/routes/subscriptions.ts`, `src/routes/explore.ts`, `src/cron/schedule-sync.ts`, `src/cron/token-refresh.ts`
-  - TODO(#13): `decryptOrPlaintext()` 明文兼容函数待清理

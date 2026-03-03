@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { lt, isNotNull, eq, and } from "drizzle-orm";
 import { users } from "../db/schema";
 import type { Env } from "../types";
-import { encrypt, decrypt, decryptOrPlaintext } from "../services/crypto";
+import { encrypt, decrypt } from "../services/crypto";
 import { refreshToken, login, AuthError } from "../services/auth";
 
 export interface TokenRefreshMessage {
@@ -77,8 +77,7 @@ export async function processTokenRefreshBatch(
       // Try refresh token first
       if (user.refreshToken) {
         try {
-          // TODO(#13): 收敛后替换为 decrypt()
-          const decryptedRefreshToken = await decryptOrPlaintext(user.refreshToken, env.ENCRYPTION_KEY);
+          const decryptedRefreshToken = await decrypt(user.refreshToken, env.ENCRYPTION_KEY);
           const result = await refreshToken(decryptedRefreshToken);
           await db
             .update(users)

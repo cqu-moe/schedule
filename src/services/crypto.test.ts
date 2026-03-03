@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encrypt, decrypt, verifyPassword, decryptOrPlaintext } from "./crypto";
+import { encrypt, decrypt, verifyPassword } from "./crypto";
 
 // Generate a test key: 32 bytes = 256 bits, base64 encoded
 const TEST_KEY = btoa(
@@ -65,14 +65,4 @@ describe("crypto", () => {
     await expect(decrypt(encrypted, wrongKey)).rejects.toThrow();
   });
 
-  it("decryptOrPlaintext should decrypt encrypted data", async () => {
-    const plaintext = "test-access-token";
-    const encrypted = await encrypt(plaintext, TEST_KEY);
-    expect(await decryptOrPlaintext(encrypted, TEST_KEY)).toBe(plaintext);
-  });
-
-  it("decryptOrPlaintext should return plaintext for non-encrypted data", async () => {
-    const plaintext = "raw-oauth-token-value";
-    expect(await decryptOrPlaintext(plaintext, TEST_KEY)).toBe(plaintext);
-  });
 });

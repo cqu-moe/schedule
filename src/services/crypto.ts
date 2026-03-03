@@ -83,17 +83,3 @@ export async function verifyPassword(
     return false;
   }
 }
-
-// TODO(#13): 移除明文兼容 — 当所有存量 token 自然轮换为加密格式后，
-// 将所有 decryptOrPlaintext() 调用替换为 decrypt()，然后删除此函数。
-// 预计部署后 24 小时内完成收敛（token-refresh cron 每小时运行）。
-export async function decryptOrPlaintext(
-  data: string,
-  keyBase64: string,
-): Promise<string> {
-  try {
-    return await decrypt(data, keyBase64);
-  } catch {
-    return data; // TODO(#13): 明文兼容回退
-  }
-}
