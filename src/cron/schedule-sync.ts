@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { isNotNull, eq } from "drizzle-orm";
 import { users, subscriptions } from "../db/schema";
 import type { Env } from "../types";
+import { decryptOrPlaintext } from "../services/crypto";
 import { CQUAPIClient } from "../services/cqu-api";
 import {
   PERSONAL_SOURCE_TYPES,
@@ -77,7 +78,9 @@ export async function processScheduleSyncBatch(
         continue;
       }
 
-      const api = new CQUAPIClient(user.accessToken);
+      // TODO(#13): 收敛后替换为 decrypt()
+      const accessToken = await decryptOrPlaintext(user.accessToken!, env.ENCRYPTION_KEY);
+      const api = new CQUAPIClient(accessToken);
       const now = new Date().toISOString();
       const ctx = await fetchSessionContextCached(api, env.CACHE);
 
