@@ -81,14 +81,17 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const calendarToken = generateToken();
   const now = new Date().toISOString();
 
-  // Create user
+  // Create user — encrypt OAuth tokens before storage
+  const encryptedAccessToken = await encrypt(tokenResult.accessToken, c.env.ENCRYPTION_KEY);
+  const encryptedRefreshToken = await encrypt(tokenResult.refreshToken, c.env.ENCRYPTION_KEY);
+
   const [newUser] = await db
     .insert(users)
     .values({
       studentId: body.student_id,
       encryptedPassword: encryptedPw,
-      accessToken: tokenResult.accessToken,
-      refreshToken: tokenResult.refreshToken,
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
       tokenExpiresAt: tokenResult.expiresAt,
       calendarToken,
       lastLoginAt: now,
@@ -230,12 +233,15 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
   const now = new Date().toISOString();
 
+  const encryptedAccessToken = await encrypt(tokenResult.accessToken, c.env.ENCRYPTION_KEY);
+  const encryptedRefreshToken = await encrypt(tokenResult.refreshToken, c.env.ENCRYPTION_KEY);
+
   await db
     .update(users)
     .set({
       encryptedPassword: encryptedPw,
-      accessToken: tokenResult.accessToken,
-      refreshToken: tokenResult.refreshToken,
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
       tokenExpiresAt: tokenResult.expiresAt,
       lastLoginAt: now,
       loginError: null,
