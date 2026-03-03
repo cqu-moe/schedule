@@ -55,12 +55,12 @@ export default {
   },
 
   async getUserInfo(token) {
-    const response = await client.get(`/users/${token}`)
+    const response = await client.get('/users/me', authHeaders(token))
     return response.data
   },
 
   async deleteUser(token) {
-    await client.delete(`/users/${token}`)
+    await client.delete('/users/me', authHeaders(token))
   },
 
   // 搜索相关

@@ -7,6 +7,7 @@ import { encrypt, verifyPassword } from "../services/crypto";
 import { login, AuthError } from "../services/auth";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
+import { requireAuth } from "../middleware/auth";
 import { generateToken } from "../utils/token";
 import { CQUAPIClient } from "../services/cqu-api";
 import {
@@ -131,20 +132,9 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   return c.json({ calendar_token: calendarToken });
 });
 
-// GET /api/v1/users/:token (get user info)
-app.get("/:token", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const token = c.req.param("token");
-  const db = drizzle(c.env.DB);
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.calendarToken, token))
-    .limit(1);
-
-  if (!user) {
-    return errorResponse("TOKEN_NOT_FOUND", "Calendar token not found", 404);
-  }
+// GET /api/v1/users/me (get current user info)
+app.get("/me", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const user = c.get("user");
 
   return c.json({
     student_id: user.studentId,
@@ -154,20 +144,10 @@ app.get("/:token", rateLimit("UNAUTH_LIMITER"), async (c) => {
   });
 });
 
-// DELETE /api/v1/users/:token
-app.delete("/:token", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const token = c.req.param("token");
+// DELETE /api/v1/users/me (delete current user)
+app.delete("/me", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const user = c.get("user");
   const db = drizzle(c.env.DB);
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.calendarToken, token))
-    .limit(1);
-
-  if (!user) {
-    return errorResponse("TOKEN_NOT_FOUND", "Calendar token not found", 404);
-  }
 
   await db.delete(users).where(eq(users.id, user.id));
   return c.body(null, 204);

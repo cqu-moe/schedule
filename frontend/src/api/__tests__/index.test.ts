@@ -154,12 +154,12 @@ describe('API module', () => {
   // ── getUserInfo ──
 
   describe('getUserInfo', () => {
-    it('GET /users/:token', async () => {
+    it('GET /users/me with auth header', async () => {
       mockClient.get.mockResolvedValueOnce({ data: { student_id: '2021001' } })
 
       const result = await api.getUserInfo('my-token')
 
-      expect(mockClient.get).toHaveBeenCalledWith('/users/my-token')
+      expect(mockClient.get).toHaveBeenCalledWith('/users/me', { headers: { Authorization: 'Bearer my-token' } })
       expect(result).toEqual({ student_id: '2021001' })
     })
   })
@@ -167,12 +167,12 @@ describe('API module', () => {
   // ── deleteUser ──
 
   describe('deleteUser', () => {
-    it('DELETE /users/:token', async () => {
+    it('DELETE /users/me with auth header', async () => {
       mockClient.delete.mockResolvedValueOnce({})
 
       await api.deleteUser('my-token')
 
-      expect(mockClient.delete).toHaveBeenCalledWith('/users/my-token')
+      expect(mockClient.delete).toHaveBeenCalledWith('/users/me', { headers: { Authorization: 'Bearer my-token' } })
     })
   })
 
