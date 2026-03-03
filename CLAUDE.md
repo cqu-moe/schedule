@@ -37,10 +37,12 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - vitest.config.ts 中 miniflare.compatibilityDate 设为 "2025-01-01" (规避 future date 错误)
 - wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
 - frontend/dist 和 frontend/node_modules 已 gitignore
+- 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
 - `npm test` 会同时跑前端测试，worktree 中前端 node_modules 缺失会导致失败；只跑后端测试需显式指定文件: `npm test -- src/services/crypto.test.ts src/routes/users.test.ts ...`
 - 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
+- Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
 - `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
 - workerd 中 `createCipheriv` 不接受 `null` 作为 IV，ECB 模式须传 `""` (空字符串)
 - `node:crypto` 需要 `nodejs_compat` flag 和 `@types/node` devDep + tsconfig types
@@ -57,7 +59,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
 - Workers placement 只影响 fetch handler，不影响 cron scheduled handler
 - Cron handler 只做入队 (`sendBatch`)，实际处理在 Queue consumer 中
-- `sendBatch` 最多 100 条/次，>100 用户需分批调用
+- `sendBatch` 最多 100 条/次，>100 用户需分批调用；支持 per-message `delaySeconds`（0-43200 秒）分散投递
 - Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
 - `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - Queue handler 的 `MessageBatch` 默认泛型为 `unknown`，须用 `batch as MessageBatch<T>` 类型断言
