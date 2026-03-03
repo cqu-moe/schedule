@@ -65,16 +65,16 @@
     "consumers": [
       {
         "queue": "schedule-token-refresh",
-        "max_batch_size": 20,
+        "max_batch_size": 5,
         "max_retries": 3,
-        "max_concurrency": 5,
+        "max_concurrency": 1,
         "max_batch_timeout": 30
       },
       {
         "queue": "schedule-sync",
-        "max_batch_size": 10,
+        "max_batch_size": 5,
         "max_retries": 3,
-        "max_concurrency": 3,
+        "max_concurrency": 1,
         "max_batch_timeout": 30
       }
     ]
@@ -115,7 +115,7 @@
   "triggers": {
     "crons": [
       "0 * * * *",
-      "0 19 * * *"
+      "0 17 * * *"
     ]
   }
 }
