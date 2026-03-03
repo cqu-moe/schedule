@@ -57,18 +57,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   const db = drizzle(c.env.DB);
 
-  // Check if user already exists
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(eq(users.studentId, body.student_id))
-    .limit(1);
-
-  if (existing) {
-    return errorResponse("USER_EXISTS", "User already registered", 409);
-  }
-
-  // Verify via SSO login
+  // Verify via SSO login FIRST (prevents user enumeration)
   let tokenResult;
   try {
     tokenResult = await login(body.student_id, body.password);
@@ -78,12 +67,37 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
 
   const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
-  const calendarToken = generateToken();
-  const now = new Date().toISOString();
-
-  // Create user — encrypt OAuth tokens before storage
   const encryptedAccessToken = await encrypt(tokenResult.accessToken, c.env.ENCRYPTION_KEY);
   const encryptedRefreshToken = await encrypt(tokenResult.refreshToken, c.env.ENCRYPTION_KEY);
+  const now = new Date().toISOString();
+
+  // Check if user already exists
+  const [existing] = await db
+    .select()
+    .from(users)
+    .where(eq(users.studentId, body.student_id))
+    .limit(1);
+
+  if (existing) {
+    // User exists — update password + OAuth tokens, return existing calendar_token
+    await db
+      .update(users)
+      .set({
+        encryptedPassword: encryptedPw,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        tokenExpiresAt: tokenResult.expiresAt,
+        lastLoginAt: now,
+        loginError: null,
+        updatedAt: now,
+      })
+      .where(eq(users.id, existing.id));
+
+    return c.json({ calendar_token: existing.calendarToken });
+  }
+
+  // New user — create with subscriptions
+  const calendarToken = generateToken();
 
   const [newUser] = await db
     .insert(users)
@@ -121,7 +135,6 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .values(personalSubValues)
     .returning({ id: subscriptions.id, sourceType: subscriptions.sourceType });
 
-  // Return response immediately, sync in background
   c.executionCtx.waitUntil(
     syncNewUserSubscriptions(
       c.env,
@@ -212,22 +225,24 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
   const db = drizzle(c.env.DB);
 
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.studentId, body.student_id))
-    .limit(1);
-
-  if (!user) {
-    return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
-  }
-
+  // Verify via SSO login FIRST (prevents user enumeration)
   let tokenResult;
   try {
     tokenResult = await login(body.student_id, body.password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;
+  }
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.studentId, body.student_id))
+    .limit(1);
+
+  // User not registered — return same error as SSO failure
+  if (!user) {
+    return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
   }
 
   const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);

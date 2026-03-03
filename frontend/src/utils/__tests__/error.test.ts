@@ -17,19 +17,9 @@ describe('parseApiError', () => {
     expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
   })
 
-  it('maps USER_EXISTS error code to message', () => {
-    const error = { response: { data: { detail: { error: { code: 'USER_EXISTS' } } } } }
-    expect(parseApiError(error)).toBe('该账号已注册，请使用 Token 登录')
-  })
-
   it('returns error.message from structured error', () => {
     const error = { response: { data: { detail: { error: { message: '具体错误信息' } } } } }
     expect(parseApiError(error)).toBe('具体错误信息')
-  })
-
-  it('prefers code mapping over error.message', () => {
-    const error = { response: { data: { detail: { error: { code: 'USER_EXISTS', message: '其他消息' } } } } }
-    expect(parseApiError(error)).toBe('该账号已注册，请使用 Token 登录')
   })
 
   it('returns fallback when no response', () => {
