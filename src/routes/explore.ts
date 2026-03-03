@@ -4,6 +4,7 @@ import type { User } from "../db/schema";
 import { requireAuthWithCquToken } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
+import { decryptOrPlaintext } from "../services/crypto";
 
 type AuthEnv = { Bindings: Env; Variables: { user: User } };
 
@@ -18,7 +19,9 @@ app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async 
   const grade = c.req.query("grade") ?? "";
 
   const user = c.get("user");
-  const api = new CQUAPIClient(user.accessToken!);
+  // TODO(#13): 收敛后替换为 decrypt()
+  const accessToken = await decryptOrPlaintext(user.accessToken!, c.env.ENCRYPTION_KEY);
+  const api = new CQUAPIClient(accessToken);
 
   try {
     let results;
@@ -62,7 +65,9 @@ app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async 
 // GET /api/v1/departments
 app.get("/departments", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) => {
   const user = c.get("user");
-  const api = new CQUAPIClient(user.accessToken!);
+  // TODO(#13): 收敛后替换为 decrypt()
+  const accessToken = await decryptOrPlaintext(user.accessToken!, c.env.ENCRYPTION_KEY);
+  const api = new CQUAPIClient(accessToken);
 
   try {
     const departments = await api.getDepartments();
