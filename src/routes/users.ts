@@ -17,6 +17,8 @@ import {
   applySyncResult,
 } from "../services/sync";
 
+const STUDENT_ID_PATTERN = /^\d{8}$|^\d{17}[\dX]$/;
+
 const app = new Hono<{ Bindings: Env }>();
 
 function errorResponse(code: string, message: string, status: number): Response {
@@ -53,6 +55,18 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
   if (!body.student_id || !body.password) {
     return c.json({ detail: "student_id and password required" }, 400);
+  }
+  if (!STUDENT_ID_PATTERN.test(body.student_id)) {
+    return c.json(
+      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
+      400,
+    );
+  }
+  if (body.password.length > 256) {
+    return c.json(
+      { detail: "password must not exceed 256 characters" },
+      400,
+    );
   }
 
   const db = drizzle(c.env.DB);
@@ -187,6 +201,21 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
   } catch {
     return c.json({ detail: "Invalid JSON body" }, 400);
   }
+  if (!body.student_id || !body.password) {
+    return c.json({ detail: "student_id and password required" }, 400);
+  }
+  if (!STUDENT_ID_PATTERN.test(body.student_id)) {
+    return c.json(
+      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
+      400,
+    );
+  }
+  if (body.password.length > 256) {
+    return c.json(
+      { detail: "password must not exceed 256 characters" },
+      400,
+    );
+  }
   const db = drizzle(c.env.DB);
 
   const [user] = await db
@@ -222,6 +251,21 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     body = await c.req.json();
   } catch {
     return c.json({ detail: "Invalid JSON body" }, 400);
+  }
+  if (!body.student_id || !body.password) {
+    return c.json({ detail: "student_id and password required" }, 400);
+  }
+  if (!STUDENT_ID_PATTERN.test(body.student_id)) {
+    return c.json(
+      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
+      400,
+    );
+  }
+  if (body.password.length > 256) {
+    return c.json(
+      { detail: "password must not exceed 256 characters" },
+      400,
+    );
   }
   const db = drizzle(c.env.DB);
 
