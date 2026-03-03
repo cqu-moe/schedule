@@ -7,6 +7,7 @@ import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
 import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
+import { addSecurityHeaders } from "./middleware/security-headers";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -47,12 +48,13 @@ app.onError((err, c) => {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    // API requests → Hono
+    let response: Response;
     if (url.pathname.startsWith("/api/")) {
-      return app.fetch(request, env, ctx);
+      response = await app.fetch(request, env, ctx);
+    } else {
+      response = await env.ASSETS.fetch(request);
     }
-    // Everything else → static assets (Vue SPA)
-    return env.ASSETS.fetch(request);
+    return addSecurityHeaders(response);
   },
   async scheduled(
     controller: ScheduledController,
