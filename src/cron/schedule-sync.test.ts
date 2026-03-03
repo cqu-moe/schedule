@@ -108,6 +108,7 @@ describe("enqueueScheduleSync (producer)", () => {
       userId,
       studentId: "20210001",
     });
+    expect(batch[0].delaySeconds).toBe(0);
   });
 
   it("should not enqueue users with null access tokens", async () => {
@@ -205,5 +206,11 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(userIds).toContain(id1);
     expect(userIds).toContain(id2);
     expect(userIds).toContain(id3);
+
+    // Verify delaySeconds is set with increasing intervals
+    // Interval = floor(21600 / 3) = 7200, clamped by max(10, ...)
+    expect(batch[0].delaySeconds).toBe(0);
+    expect(batch[1].delaySeconds).toBe(7200);
+    expect(batch[2].delaySeconds).toBe(14400);
   });
 });
