@@ -39,7 +39,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - frontend/dist 和 frontend/node_modules 已 gitignore
 - 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
-- `npm test` 会同时跑前端测试，worktree 中前端 node_modules 缺失会导致失败；只跑后端测试需显式指定文件: `npm test -- src/services/crypto.test.ts src/routes/users.test.ts ...`
+- `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试需显式指定文件或用 `npx vitest run src/`
 - 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
@@ -78,11 +78,11 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 429 限频由 axios interceptor (`frontend/src/api/index.js`) 统一转为 `{ detail: "操作过于频繁，请稍后再试" }`，`parseApiError` 自动处理
 
 ## 项目结构
-- `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler)
+- `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
 - `src/types.ts` — Env 接口定义
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
-- `src/middleware/` — 中间件 (auth, rate-limit)
+- `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
