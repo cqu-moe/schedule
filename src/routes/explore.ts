@@ -14,6 +14,12 @@ const app = new Hono<AuthEnv>();
 app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) => {
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
+  if (keyword.length > 100) {
+    return c.json(
+      { detail: "keyword must not exceed 100 characters" },
+      400,
+    );
+  }
   const sessionId = c.req.query("session_id") ?? "";
   const departmentId = c.req.query("department_id") ?? "";
   const grade = c.req.query("grade") ?? "";

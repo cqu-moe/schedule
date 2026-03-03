@@ -73,6 +73,21 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   } catch {
     return c.json({ detail: "Invalid JSON body" }, 400);
   }
+  if (!body.source_id || !body.source_name) {
+    return c.json({ detail: "source_id and source_name required" }, 400);
+  }
+  if (body.source_id.length > 100) {
+    return c.json(
+      { detail: "source_id must not exceed 100 characters" },
+      400,
+    );
+  }
+  if (body.source_name.length > 200) {
+    return c.json(
+      { detail: "source_name must not exceed 200 characters" },
+      400,
+    );
+  }
 
   const validTypes = [
     "instructor",
