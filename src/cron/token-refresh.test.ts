@@ -154,6 +154,7 @@ describe("enqueueTokenRefresh (producer)", () => {
       userId,
       studentId: "20210003",
     });
+    expect(batch[0].delaySeconds).toBe(0);
   });
 
   it("should enqueue users whose tokens have already expired", async () => {
@@ -251,5 +252,11 @@ describe("enqueueTokenRefresh (producer)", () => {
     );
     expect(userIds).toContain(id1);
     expect(userIds).toContain(id2);
+
+    // Verify delaySeconds is set with increasing intervals
+    expect(batch[0].delaySeconds).toBe(0);
+    expect(batch[1].delaySeconds).toBeGreaterThan(0);
+    // Interval = floor(3600 / 2) = 1800, clamped by max(5, ...)
+    expect(batch[1].delaySeconds).toBe(1800);
   });
 });

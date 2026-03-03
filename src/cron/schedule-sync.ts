@@ -36,11 +36,15 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   }
 
   const BATCH_SIZE = 100;
+  // Spread messages over 6 hours: interval between each message delivery
+  const interval = Math.max(10, Math.floor(21600 / activeUsers.length));
+
   for (let i = 0; i < activeUsers.length; i += BATCH_SIZE) {
     const chunk = activeUsers.slice(i, i + BATCH_SIZE);
     await env.SCHEDULE_SYNC_QUEUE.sendBatch(
-      chunk.map((u) => ({
+      chunk.map((u, j) => ({
         body: { userId: u.id, studentId: u.studentId } satisfies ScheduleSyncMessage,
+        delaySeconds: Math.min((i + j) * interval, 43200),
       })),
     );
   }

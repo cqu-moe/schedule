@@ -6,3 +6,4 @@ node_modules/
 .idea/
 frontend/dist/
 frontend/node_modules/
+.worktrees/
