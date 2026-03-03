@@ -79,10 +79,11 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .limit(1);
 
   if (existing) {
-    // User exists — update OAuth tokens (keeps them fresh), return existing calendar_token
+    // User exists — update password + OAuth tokens, return existing calendar_token
     await db
       .update(users)
       .set({
+        encryptedPassword: encryptedPw,
         accessToken: encryptedAccessToken,
         refreshToken: encryptedRefreshToken,
         tokenExpiresAt: tokenResult.expiresAt,
