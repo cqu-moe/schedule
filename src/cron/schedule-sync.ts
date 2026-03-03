@@ -44,7 +44,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     await env.SCHEDULE_SYNC_QUEUE.sendBatch(
       chunk.map((u, j) => ({
         body: { userId: u.id, studentId: u.studentId } satisfies ScheduleSyncMessage,
-        delaySeconds: (i + j) * interval,
+        delaySeconds: Math.min((i + j) * interval, 43200),
       })),
     );
   }

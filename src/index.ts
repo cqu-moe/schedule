@@ -63,7 +63,7 @@ export default {
       case "0 * * * *":
         await enqueueTokenRefresh(env);
         break;
-      case "0 19 * * *":
+      case "0 17 * * *":
         await enqueueScheduleSync(env);
         break;
       default:

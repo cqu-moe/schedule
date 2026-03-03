@@ -36,7 +36,7 @@ export async function enqueueTokenRefresh(env: Env): Promise<void> {
     await env.TOKEN_REFRESH_QUEUE.sendBatch(
       chunk.map((u, j) => ({
         body: { userId: u.id, studentId: u.studentId } satisfies TokenRefreshMessage,
-        delaySeconds: (i + j) * interval,
+        delaySeconds: Math.min((i + j) * interval, 43200),
       })),
     );
   }
