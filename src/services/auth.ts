@@ -1,6 +1,8 @@
 import { createCipheriv } from "node:crypto";
 
 // ── OAuth constants ──────────────────────────────────────────────
+// CQU 公开 OAuth 客户端凭据，从 CQU 官方移动端/Web 前端提取，非本项目私有机密。
+// 所有接入 CQU 教务 API 的第三方应用均使用同一组凭据。
 const TOKEN_REFRESH_URL = "https://my.cqu.edu.cn/authserver/oauth/token";
 const OAUTH_CLIENT_ID = "personal-prod";
 const OAUTH_CLIENT_SECRET = "app-a-1234";
