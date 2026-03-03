@@ -28,11 +28,15 @@ export async function enqueueTokenRefresh(env: Env): Promise<void> {
 
   // sendBatch accepts max 100 messages per call
   const BATCH_SIZE = 100;
+  // Spread messages over 1 hour: interval between each message delivery
+  const interval = Math.max(5, Math.floor(3600 / expiring.length));
+
   for (let i = 0; i < expiring.length; i += BATCH_SIZE) {
     const chunk = expiring.slice(i, i + BATCH_SIZE);
     await env.TOKEN_REFRESH_QUEUE.sendBatch(
-      chunk.map((u) => ({
+      chunk.map((u, j) => ({
         body: { userId: u.id, studentId: u.studentId } satisfies TokenRefreshMessage,
+        delaySeconds: (i + j) * interval,
       })),
     );
   }
