@@ -225,22 +225,24 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
   const db = drizzle(c.env.DB);
 
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.studentId, body.student_id))
-    .limit(1);
-
-  if (!user) {
-    return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
-  }
-
+  // Verify via SSO login FIRST (prevents user enumeration)
   let tokenResult;
   try {
     tokenResult = await login(body.student_id, body.password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;
+  }
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.studentId, body.student_id))
+    .limit(1);
+
+  // User not registered — return same error as SSO failure
+  if (!user) {
+    return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
   }
 
   const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
