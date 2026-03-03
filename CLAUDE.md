@@ -37,6 +37,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - vitest.config.ts 中 miniflare.compatibilityDate 设为 "2025-01-01" (规避 future date 错误)
 - wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
 - frontend/dist 和 frontend/node_modules 已 gitignore
+- Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
+- `npm test` 会同时跑前端测试，worktree 中前端 node_modules 缺失会导致失败；只跑后端测试需显式指定文件: `npm test -- src/services/crypto.test.ts src/routes/users.test.ts ...`
 - 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
@@ -87,3 +89,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `frontend/src/test-setup.ts` — 全局 mock (clipboard, hCaptcha, shadcn stubs)
 - `frontend/src/test-utils.ts` — 测试工具 (mock factories, mountWithContext)
 - `docs/plans/` — 设计文档和实现计划
+- OAuth token (accessToken/refreshToken) 使用 AES-256-GCM 加密存储，读写路径:
+  - 写入: `src/routes/users.ts` (注册+恢复), `src/cron/token-refresh.ts` (刷新+重登录)
+  - 读取: `src/routes/subscriptions.ts`, `src/routes/explore.ts`, `src/cron/schedule-sync.ts`, `src/cron/token-refresh.ts`
+  - TODO(#13): `decryptOrPlaintext()` 明文兼容函数待清理
