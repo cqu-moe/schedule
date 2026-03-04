@@ -4,6 +4,7 @@ import { users } from "../db/schema";
 import type { Env } from "../types";
 import { encrypt, decrypt } from "../services/crypto";
 import { refreshToken, login, AuthError } from "../services/auth";
+import { spreadEnqueue } from "../utils/queue";
 
 export interface TokenRefreshMessage {
   userId: string;
@@ -26,20 +27,13 @@ export async function enqueueTokenRefresh(env: Env): Promise<void> {
     return;
   }
 
-  // sendBatch accepts max 100 messages per call
-  const BATCH_SIZE = 100;
-  // Spread messages over 1 hour: interval between each message delivery
-  const interval = Math.max(5, Math.floor(3600 / expiring.length));
-
-  for (let i = 0; i < expiring.length; i += BATCH_SIZE) {
-    const chunk = expiring.slice(i, i + BATCH_SIZE);
-    await env.TOKEN_REFRESH_QUEUE.sendBatch(
-      chunk.map((u, j) => ({
-        body: { userId: u.id, studentId: u.studentId } satisfies TokenRefreshMessage,
-        delaySeconds: Math.min((i + j) * interval, 43200),
-      })),
-    );
-  }
+  await spreadEnqueue(
+    env.TOKEN_REFRESH_QUEUE,
+    expiring,
+    (u) => ({ body: { userId: u.id, studentId: u.studentId } satisfies TokenRefreshMessage }),
+    3600,
+    5,
+  );
 
   console.log(JSON.stringify({ event: "cron.token_refresh.enqueued", count: expiring.length, message: `Enqueued ${expiring.length} users for token refresh` }));
 }
