@@ -63,7 +63,14 @@ export async function processScheduleSyncBatch(
     const { userId, studentId } = message.body;
     try {
       const [user] = await db
-        .select()
+        .select({
+          id: users.id,
+          studentId: users.studentId,
+          accessToken: users.accessToken,
+          refreshToken: users.refreshToken,
+          encryptedPassword: users.encryptedPassword,
+          tokenExpiresAt: users.tokenExpiresAt,
+        })
         .from(users)
         .where(eq(users.id, userId));
 
@@ -73,7 +80,14 @@ export async function processScheduleSyncBatch(
       }
 
       const userSubs = await db
-        .select()
+        .select({
+          id: subscriptions.id,
+          sourceType: subscriptions.sourceType,
+          sourceId: subscriptions.sourceId,
+          sourceName: subscriptions.sourceName,
+          sessionId: subscriptions.sessionId,
+          sessionName: subscriptions.sessionName,
+        })
         .from(subscriptions)
         .where(eq(subscriptions.userId, userId));
 
