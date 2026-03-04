@@ -3,7 +3,11 @@ import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { users } from "../db/schema";
 import { encrypt } from "../services/crypto";
-import { enqueueTokenRefresh } from "./token-refresh";
+import {
+  enqueueTokenRefresh,
+  processTokenRefreshBatch,
+  type TokenRefreshMessage,
+} from "./token-refresh";
 import type { Env } from "../types";
 
 // Test encryption key: 32 bytes base64-encoded
@@ -258,5 +262,78 @@ describe("enqueueTokenRefresh (producer)", () => {
     expect(batch[1].delaySeconds).toBeGreaterThan(0);
     // Interval = floor(3600 / 2) = 1800, clamped by max(5, ...)
     expect(batch[1].delaySeconds).toBe(1800);
+  });
+});
+
+function mockMessage(body: TokenRefreshMessage) {
+  return {
+    body,
+    ack: vi.fn(),
+    retry: vi.fn(),
+  };
+}
+
+function mockBatch(messages: ReturnType<typeof mockMessage>[]) {
+  return {
+    messages,
+    queue: "test",
+    ackAll: vi.fn(),
+    retryAll: vi.fn(),
+  } as unknown as MessageBatch<TokenRefreshMessage>;
+}
+
+describe("processTokenRefreshBatch (consumer)", () => {
+  const db = drizzle(env.DB);
+
+  beforeAll(async () => {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS users (
+        id text PRIMARY KEY NOT NULL,
+        student_id text NOT NULL,
+        encrypted_password text NOT NULL,
+        access_token text,
+        refresh_token text,
+        token_expires_at text,
+        calendar_token text NOT NULL,
+        last_login_at text,
+        last_refresh_at text,
+        login_error text,
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      )`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_student_id_unique ON users (student_id)`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,
+    ).run();
+  });
+
+  beforeEach(async () => {
+    await env.DB.prepare("DELETE FROM users").run();
+  });
+
+  it("should ack messages for non-existent users", async () => {
+    const msg = mockMessage({ userId: "nonexistent", studentId: "00000000" });
+    await processTokenRefreshBatch(mockBatch([msg]), {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+    } as unknown as Env);
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it("should ack messages for users that no longer need refresh", async () => {
+    // Token expires in 3 hours (> 2h threshold = no refresh needed)
+    const id = await insertUser(db, {
+      studentId: "20210030",
+      tokenExpiresAt: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+    });
+    const msg = mockMessage({ userId: id, studentId: "20210030" });
+    await processTokenRefreshBatch(mockBatch([msg]), {
+      ...env,
+      ENCRYPTION_KEY: TEST_KEY,
+    } as unknown as Env);
+    expect(msg.ack).toHaveBeenCalled();
   });
 });

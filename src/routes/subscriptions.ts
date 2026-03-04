@@ -18,7 +18,7 @@ import { handleCquApiError } from "../utils/error";
 import {
   PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
-  fetchPersonalSchedule,
+  fetchPersonalScheduleCached,
   buildPersonalSyncResult,
   buildExploreSyncResult,
   applySyncResult,
@@ -261,7 +261,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
     let result;
 
     if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-      const data = await fetchPersonalSchedule(api, user.studentId, ctx);
+      const data = await fetchPersonalScheduleCached(api, user.studentId, ctx, c.env.CACHE);
       result = await buildPersonalSyncResult(sub.sourceType, data, user.studentId);
     } else {
       result = await buildExploreSyncResult(

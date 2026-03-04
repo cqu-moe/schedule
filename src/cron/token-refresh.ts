@@ -45,99 +45,101 @@ export async function processTokenRefreshBatch(
 ): Promise<void> {
   const db = drizzle(env.DB);
 
-  for (const message of batch.messages) {
-    const { userId, studentId } = message.body;
-    try {
-      // Read fresh user data (token may have been refreshed by another batch)
-      const [user] = await db
-        .select({
-          id: users.id,
-          studentId: users.studentId,
-          refreshToken: users.refreshToken,
-          encryptedPassword: users.encryptedPassword,
-          tokenExpiresAt: users.tokenExpiresAt,
-        })
-        .from(users)
-        .where(eq(users.id, userId));
+  await Promise.allSettled(
+    batch.messages.map(async (message) => {
+      const { userId, studentId } = message.body;
+      try {
+        // Read fresh user data (token may have been refreshed by another batch)
+        const [user] = await db
+          .select({
+            id: users.id,
+            studentId: users.studentId,
+            refreshToken: users.refreshToken,
+            encryptedPassword: users.encryptedPassword,
+            tokenExpiresAt: users.tokenExpiresAt,
+          })
+          .from(users)
+          .where(eq(users.id, userId));
 
-      if (!user) {
+        if (!user) {
+          message.ack();
+          return;
+        }
+
+        // Check if still needs refresh
+        const threshold = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+        if (!user.tokenExpiresAt || user.tokenExpiresAt >= threshold) {
+          message.ack();
+          return;
+        }
+
+        const now = new Date().toISOString();
+
+        // Try refresh token first
+        if (user.refreshToken) {
+          try {
+            const decryptedRefreshToken = await decrypt(user.refreshToken, env.ENCRYPTION_KEY);
+            const result = await refreshToken(decryptedRefreshToken);
+            await db
+              .update(users)
+              .set({
+                accessToken: await encrypt(result.accessToken, env.ENCRYPTION_KEY),
+                refreshToken: await encrypt(result.refreshToken, env.ENCRYPTION_KEY),
+                tokenExpiresAt: result.expiresAt,
+                lastRefreshAt: now,
+                loginError: null,
+                updatedAt: now,
+              })
+              .where(eq(users.id, userId));
+            console.log(JSON.stringify({ event: "queue.token_refresh.success", studentId, message: "Token refreshed" }));
+            message.ack();
+            return;
+          } catch (e) {
+            if (!(e instanceof AuthError) || e.code !== "TOKEN_EXPIRED") {
+              throw e;
+            }
+            console.warn(JSON.stringify({ event: "queue.token_refresh.fallback_login", studentId, message: "Refresh token expired, trying login" }));
+          }
+        }
+
+        // Fallback: re-login
+        const password = await decrypt(user.encryptedPassword, env.ENCRYPTION_KEY);
+        const result = await login(user.studentId, password);
+        await db
+          .update(users)
+          .set({
+            accessToken: await encrypt(result.accessToken, env.ENCRYPTION_KEY),
+            refreshToken: await encrypt(result.refreshToken, env.ENCRYPTION_KEY),
+            tokenExpiresAt: result.expiresAt,
+            lastLoginAt: now,
+            lastRefreshAt: now,
+            loginError: null,
+            updatedAt: now,
+          })
+          .where(eq(users.id, userId));
+        console.log(JSON.stringify({ event: "queue.token_refresh.login_success", studentId, message: "Re-login successful" }));
         message.ack();
-        continue;
-      }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(JSON.stringify({ event: "queue.token_refresh.failed", studentId, error: msg, message: "Token refresh failed" }));
 
-      // Check if still needs refresh
-      const threshold = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-      if (!user.tokenExpiresAt || user.tokenExpiresAt >= threshold) {
-        message.ack();
-        continue;
-      }
-
-      const now = new Date().toISOString();
-
-      // Try refresh token first
-      if (user.refreshToken) {
-        try {
-          const decryptedRefreshToken = await decrypt(user.refreshToken, env.ENCRYPTION_KEY);
-          const result = await refreshToken(decryptedRefreshToken);
+        // Permanent failures → ack and record error, don't retry
+        if (e instanceof AuthError && (e.code === "INVALID_CREDENTIALS" || e.code === "CAPTCHA_REQUIRED")) {
           await db
             .update(users)
-            .set({
-              accessToken: await encrypt(result.accessToken, env.ENCRYPTION_KEY),
-              refreshToken: await encrypt(result.refreshToken, env.ENCRYPTION_KEY),
-              tokenExpiresAt: result.expiresAt,
-              lastRefreshAt: now,
-              loginError: null,
-              updatedAt: now,
-            })
+            .set({ loginError: msg, updatedAt: new Date().toISOString() })
             .where(eq(users.id, userId));
-          console.log(JSON.stringify({ event: "queue.token_refresh.success", studentId, message: "Token refreshed" }));
           message.ack();
-          continue;
-        } catch (e) {
-          if (!(e instanceof AuthError) || e.code !== "TOKEN_EXPIRED") {
-            throw e;
-          }
-          console.warn(JSON.stringify({ event: "queue.token_refresh.fallback_login", studentId, message: "Refresh token expired, trying login" }));
+          return;
         }
-      }
 
-      // Fallback: re-login
-      const password = await decrypt(user.encryptedPassword, env.ENCRYPTION_KEY);
-      const result = await login(user.studentId, password);
-      await db
-        .update(users)
-        .set({
-          accessToken: await encrypt(result.accessToken, env.ENCRYPTION_KEY),
-          refreshToken: await encrypt(result.refreshToken, env.ENCRYPTION_KEY),
-          tokenExpiresAt: result.expiresAt,
-          lastLoginAt: now,
-          lastRefreshAt: now,
-          loginError: null,
-          updatedAt: now,
-        })
-        .where(eq(users.id, userId));
-      console.log(JSON.stringify({ event: "queue.token_refresh.login_success", studentId, message: "Re-login successful" }));
-      message.ack();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(JSON.stringify({ event: "queue.token_refresh.failed", studentId, error: msg, message: "Token refresh failed" }));
-
-      // Permanent failures → ack and record error, don't retry
-      if (e instanceof AuthError && (e.code === "INVALID_CREDENTIALS" || e.code === "CAPTCHA_REQUIRED")) {
+        // Transient failures → retry (timeout, network, upstream errors)
         await db
           .update(users)
           .set({ loginError: msg, updatedAt: new Date().toISOString() })
           .where(eq(users.id, userId));
-        message.ack();
-        continue;
+        message.retry();
       }
-
-      // Transient failures → retry (timeout, network, upstream errors)
-      await db
-        .update(users)
-        .set({ loginError: msg, updatedAt: new Date().toISOString() })
-        .where(eq(users.id, userId));
-      message.retry();
-    }
-  }
+    }),
+  );
 }

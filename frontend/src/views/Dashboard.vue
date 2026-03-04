@@ -386,9 +386,9 @@ async function handleSyncAll() {
   try {
     await syncFeedback.run(async () => {
       const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
-      for (const sub of personalSubs) {
-        await api.refreshSubscription(authStore.token, sub.calendar_token)
-      }
+      await Promise.all(
+        personalSubs.map(sub => api.refreshSubscription(authStore.token, sub.calendar_token))
+      )
       await subStore.load().catch(() => {})
       await authStore.fetchUserInfo()
     })
