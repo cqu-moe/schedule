@@ -8,8 +8,8 @@
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-base font-semibold">
             我的订阅
-            <span v-if="subscriptions.length > 0" class="text-muted-foreground font-normal text-sm ml-1">
-              ({{ subscriptions.length }}/{{ subscriptionsMax }})
+            <span v-if="subStore.subscriptions.length > 0" class="text-muted-foreground font-normal text-sm ml-1">
+              ({{ subStore.subscriptions.length }}/{{ subStore.max }})
             </span>
           </h3>
           <div class="flex gap-2">
@@ -41,7 +41,7 @@
         </div>
 
         <!-- Subscription cards -->
-        <Card v-for="sub in subscriptions" :key="sub.calendar_token" class="mb-4">
+        <Card v-for="sub in subStore.subscriptions" :key="sub.calendar_token" class="mb-4">
           <CardHeader>
             <CardTitle class="text-base flex items-center gap-2">
               <Badge variant="secondary" class="text-xs">{{ sourceTypeLabel(sub.source_type) }}</Badge>
@@ -161,7 +161,7 @@
         </Card>
 
         <!-- Empty state (only when not loading) -->
-        <div v-if="!loading && subscriptions.length === 0" class="text-center py-8 text-muted-foreground">
+        <div v-if="!loading && subStore.subscriptions.length === 0" class="text-center py-8 text-muted-foreground">
           <p class="text-sm mb-3">暂无订阅</p>
           <router-link to="/add">
             <Button variant="outline" size="sm" class="cursor-pointer">添加新订阅</Button>
@@ -233,6 +233,7 @@ import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lu
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config.js'
+import { useSubscriptionsStore } from '@/stores/subscriptions.js'
 import { toast } from 'vue-sonner'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
@@ -264,6 +265,7 @@ import {
 const router = useRouter()
 const authStore = useAuthStore()
 const configStore = useConfigStore()
+const subStore = useSubscriptionsStore()
 
 // State
 const loading = ref(true)
@@ -272,11 +274,9 @@ const showRiskWarning = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
-const subscriptions = ref([])
-const subscriptionsMax = ref(5)
 const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
-  subscriptions.value.some(s => !s.last_synced_at)
+  subStore.subscriptions.some(s => !s.last_synced_at)
 )
 
 let pollTimer = null
@@ -323,12 +323,6 @@ function formatDate(isoString) {
   })
 }
 
-async function loadSubscriptions() {
-  const data = await api.getSubscriptions(authStore.token)
-  subscriptions.value = data.subscriptions
-  subscriptionsMax.value = data.max
-}
-
 function stopPolling() {
   clearInterval(pollTimer)
   pollTimer = null
@@ -347,7 +341,7 @@ function startSyncPolling() {
       stopPolling()
       return
     }
-    await loadSubscriptions()
+    await subStore.load()
     if (!hasPendingSubs.value) {
       stopPolling()
     }
@@ -368,7 +362,7 @@ async function handleRefreshSub(subToken) {
   try {
     await refreshFeedback.run(async () => {
       await api.refreshSubscription(authStore.token, subToken)
-      await loadSubscriptions().catch(() => {})
+      await subStore.load().catch(() => {})
       await authStore.fetchUserInfo()
     }, subToken)
   } catch (error) {
@@ -380,7 +374,7 @@ async function handleDeleteSub(subToken) {
   try {
     await deleteFeedback.run(async () => {
       await api.deleteSubscription(authStore.token, subToken)
-      await loadSubscriptions().catch(() => {})
+      await subStore.load().catch(() => {})
     }, subToken)
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
@@ -390,11 +384,11 @@ async function handleDeleteSub(subToken) {
 async function handleSyncAll() {
   try {
     await syncFeedback.run(async () => {
-      const personalSubs = subscriptions.value.filter(s => s.is_personal)
+      const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
       for (const sub of personalSubs) {
         await api.refreshSubscription(authStore.token, sub.calendar_token)
       }
-      await loadSubscriptions().catch(() => {})
+      await subStore.load().catch(() => {})
       await authStore.fetchUserInfo()
     })
   } catch (error) {
@@ -421,7 +415,7 @@ onMounted(async () => {
     showRiskWarning.value = true
   }
   try {
-    await loadSubscriptions()
+    await subStore.load()
     if (hasPendingSubs.value) {
       startSyncPolling()
     }
