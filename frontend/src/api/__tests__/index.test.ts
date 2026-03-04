@@ -257,14 +257,13 @@ describe('API module', () => {
 
   describe('deleteSubscription', () => {
     it('DELETE /subscriptions/:subToken with auth', async () => {
-      mockClient.delete.mockResolvedValueOnce({ data: { ok: true } })
+      mockClient.delete.mockResolvedValueOnce({})
 
-      const result = await api.deleteSubscription('tok', 'sub1')
+      await api.deleteSubscription('tok', 'sub1')
 
       expect(mockClient.delete).toHaveBeenCalledWith('/subscriptions/sub1', {
         headers: { Authorization: 'Bearer tok' },
       })
-      expect(result).toEqual({ ok: true })
     })
   })
 

@@ -179,7 +179,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
       source_name: newSub.sourceName,
       session_name: newSub.sessionName,
       created_at: newSub.createdAt,
-    });
+    }, 201);
   } catch (e: any) {
     if (e?.statusCode === 401) {
       return c.json(
@@ -213,7 +213,7 @@ app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
     return c.json({ detail: "Cannot delete personal subscriptions" }, 403);
 
   await db.delete(subscriptions).where(eq(subscriptions.id, sub.id));
-  return c.json({ success: true });
+  return c.body(null, 204);
 });
 
 // POST /api/v1/subscriptions/:sub_token/refresh

@@ -96,8 +96,7 @@ export default {
   },
 
   async deleteSubscription(token, subToken) {
-    const response = await client.delete(`/subscriptions/${subToken}`, authHeaders(token))
-    return response.data
+    await client.delete(`/subscriptions/${subToken}`, authHeaders(token))
   },
 
   async refreshSubscription(token, subToken) {

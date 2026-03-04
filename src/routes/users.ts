@@ -159,7 +159,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     ),
   );
 
-  return c.json({ calendar_token: calendarToken });
+  return c.json({ calendar_token: calendarToken }, 201);
 });
 
 // GET /api/v1/users/me (get current user info)
