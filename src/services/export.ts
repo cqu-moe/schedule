@@ -1,5 +1,5 @@
 import { TIME_SLOTS } from "./cqu-api";
-import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
+import { calculateCourseEventTime, formatChinaIso } from "../utils/time";
 
 const SEMESTER_RE = /^(\d{4})-(\d{4})学年第(一|二)学期$/;
 
@@ -68,22 +68,8 @@ export function generateFormattedEvents(
           const endTimeStr = TIME_SLOTS[endSession - 1][1];
 
           for (const week of weeks) {
-            const daysSinceStart = (week - 1) * 7 + (dayOfWeek - 1);
-            const eventDateMs =
-              termStart.getTime() + daysSinceStart * 24 * 60 * 60 * 1000;
-            const eventDate = new Date(eventDateMs);
-
-            const [sh, sm, ss] = startTimeStr.split(":").map(Number);
-            const [eh, em, es] = endTimeStr.split(":").map(Number);
-
-            const year = eventDate.getFullYear();
-            const month = eventDate.getMonth();
-            const day = eventDate.getDate();
-
-            const startMs =
-              Date.UTC(year, month, day, sh, sm, ss) - CHINA_TZ_OFFSET_MS;
-            const endMs =
-              Date.UTC(year, month, day, eh, em, es) - CHINA_TZ_OFFSET_MS;
+            const startDate = calculateCourseEventTime(termStart, week, dayOfWeek, startTimeStr);
+            const endDate = calculateCourseEventTime(termStart, week, dayOfWeek, endTimeStr);
 
             events.push({
               name,
@@ -91,8 +77,8 @@ export function generateFormattedEvents(
               instructor,
               location,
               day_of_week: dayOfWeek,
-              start_time: formatChinaIso(new Date(startMs)),
-              end_time: formatChinaIso(new Date(endMs)),
+              start_time: formatChinaIso(startDate),
+              end_time: formatChinaIso(endDate),
               week,
             });
           }

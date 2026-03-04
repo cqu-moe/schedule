@@ -1,6 +1,6 @@
 import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
 import { bufferToBase64 } from "../utils/encoding";
-import { CHINA_TZ_OFFSET_MS } from "../utils/time";
+import { calculateCourseEventTime } from "../utils/time";
 
 const ICS_HEADER = [
   "BEGIN:VCALENDAR",
@@ -44,38 +44,6 @@ async function generateUid(
   return bufferToBase64(hash);
 }
 
-function calculateEventTime(
-  termStart: Date,
-  week: number,
-  dayOfWeek: number,
-  session: number,
-  isStart: boolean,
-): Date {
-  const daysSinceStart = (week - 1) * 7 + (dayOfWeek - 1);
-  const eventDateMs =
-    termStart.getTime() + daysSinceStart * 24 * 60 * 60 * 1000;
-  const eventDate = new Date(eventDateMs);
-
-  if (session < 1 || session > TIME_SLOTS.length) {
-    throw new Error(`Invalid session number: ${session}`);
-  }
-  const timeStr = TIME_SLOTS[session - 1][isStart ? 0 : 1];
-  const [h, m, s] = timeStr.split(":").map(Number);
-
-  // Build China local time, then convert to UTC
-  const chinaMs =
-    Date.UTC(
-      eventDate.getUTCFullYear(),
-      eventDate.getUTCMonth(),
-      eventDate.getUTCDate(),
-      h,
-      m,
-      s,
-    ) - CHINA_TZ_OFFSET_MS;
-
-  return new Date(chinaMs);
-}
-
 export async function generateCoursesIcs(
   courses: CourseEntry[],
   semesterStart: string,
@@ -93,19 +61,17 @@ export async function generateCoursesIcs(
           course.end_session < 1 || course.end_session > TIME_SLOTS.length) {
         continue;
       }
-      const startTime = calculateEventTime(
+      const startTime = calculateCourseEventTime(
         termStart,
         week,
         course.day_of_week,
-        course.start_session,
-        true,
+        TIME_SLOTS[course.start_session - 1][0],
       );
-      const endTime = calculateEventTime(
+      const endTime = calculateCourseEventTime(
         termStart,
         week,
         course.day_of_week,
-        course.end_session,
-        false,
+        TIME_SLOTS[course.end_session - 1][1],
       );
 
       const startStr = formatIcsTime(startTime);
