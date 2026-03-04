@@ -12,7 +12,6 @@ import {
   buildPersonalSyncResult,
   buildExploreSyncResult,
   applySyncResult,
-  type SessionContext,
   type PersonalScheduleData,
 } from "../services/sync";
 
@@ -54,7 +53,7 @@ export async function processScheduleSyncBatch(
 ): Promise<void> {
   const db = drizzle(env.DB);
 
-  for (const message of batch.messages) {
+  await Promise.allSettled(batch.messages.map(async (message) => {
     const { userId, studentId } = message.body;
     try {
       const [user] = await db
@@ -71,7 +70,7 @@ export async function processScheduleSyncBatch(
 
       if (!user || !user.accessToken) {
         message.ack();
-        continue;
+        return;
       }
 
       const userSubs = await db
@@ -88,7 +87,7 @@ export async function processScheduleSyncBatch(
 
       if (userSubs.length === 0) {
         message.ack();
-        continue;
+        return;
       }
 
       const accessToken = await decrypt(user.accessToken!, env.ENCRYPTION_KEY);
@@ -96,31 +95,43 @@ export async function processScheduleSyncBatch(
       const now = new Date().toISOString();
       const ctx = await fetchSessionContextCached(api, env.CACHE);
 
-      let personalData: PersonalScheduleData | null = null;
+      // Split subscriptions by type
+      const personalSubs = userSubs.filter((s) => PERSONAL_SOURCE_TYPES.has(s.sourceType));
+      const exploreSubs = userSubs.filter((s) => !PERSONAL_SOURCE_TYPES.has(s.sourceType));
+
       let personalFetchFailed = false;
-      let exploreFetchFailed = false;
       let syncedAny = false;
 
-      for (const sub of userSubs) {
-        if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-          if (!personalData && !personalFetchFailed) {
-            try {
-              personalData = await fetchPersonalScheduleCached(api, user.studentId, ctx, env.CACHE);
-            } catch (e) {
-              personalFetchFailed = true;
-              console.error(JSON.stringify({ event: "queue.schedule_sync.personal_failed", studentId, error: e instanceof Error ? e.message : String(e), message: "Personal schedule fetch failed" }));
-              continue;
-            }
-          }
-          if (!personalData) continue;
+      // Process personal subscriptions
+      if (personalSubs.length > 0) {
+        let personalData: PersonalScheduleData | null = null;
+        try {
+          personalData = await fetchPersonalScheduleCached(api, user.studentId, ctx, env.CACHE);
+        } catch (e) {
+          personalFetchFailed = true;
+          console.error(JSON.stringify({ event: "queue.schedule_sync.personal_failed", studentId, error: e instanceof Error ? e.message : String(e), message: "Personal schedule fetch failed" }));
+        }
 
-          const result = await buildPersonalSyncResult(sub.sourceType, personalData, user.studentId);
-          await applySyncResult(db, sub.id, result, ctx, {
-            sessionId: sub.sessionId,
-            sessionName: sub.sessionName,
-          });
-        } else {
-          try {
+        if (personalData) {
+          const personalResults = await Promise.allSettled(
+            personalSubs.map(async (sub) => {
+              const result = await buildPersonalSyncResult(sub.sourceType, personalData!, user.studentId);
+              await applySyncResult(db, sub.id, result, ctx, {
+                sessionId: sub.sessionId,
+                sessionName: sub.sessionName,
+              });
+              console.log(JSON.stringify({ event: "queue.schedule_sync.subscription_synced", studentId, source: sub.sourceName, message: "Subscription synced" }));
+            }),
+          );
+          if (personalResults.some((r) => r.status === "fulfilled")) syncedAny = true;
+        }
+      }
+
+      // Process explore subscriptions in parallel
+      let exploreFetchFailed = false;
+      if (exploreSubs.length > 0) {
+        const exploreResults = await Promise.allSettled(
+          exploreSubs.map(async (sub) => {
             const result = await buildExploreSyncResult(
               api, sub.sourceType, sub.sourceId, user.studentId, ctx,
             );
@@ -128,21 +139,26 @@ export async function processScheduleSyncBatch(
               sessionId: sub.sessionId,
               sessionName: sub.sessionName,
             });
-          } catch (e) {
-            exploreFetchFailed = true;
-            console.error(JSON.stringify({ event: "queue.schedule_sync.explore_failed", studentId, source: sub.sourceName, error: e instanceof Error ? e.message : String(e), message: "Explore subscription fetch failed" }));
-            continue;
+            console.log(JSON.stringify({ event: "queue.schedule_sync.subscription_synced", studentId, source: sub.sourceName, message: "Subscription synced" }));
+          }),
+        );
+        exploreFetchFailed = exploreResults.some((r) => r.status === "rejected");
+        if (exploreResults.some((r) => r.status === "fulfilled")) syncedAny = true;
+
+        // Log explore failures
+        for (let i = 0; i < exploreResults.length; i++) {
+          const r = exploreResults[i];
+          if (r.status === "rejected") {
+            console.error(JSON.stringify({ event: "queue.schedule_sync.explore_failed", studentId, source: exploreSubs[i].sourceName, error: r.reason instanceof Error ? r.reason.message : String(r.reason), message: "Explore subscription fetch failed" }));
           }
         }
-        syncedAny = true;
-        console.log(JSON.stringify({ event: "queue.schedule_sync.subscription_synced", studentId, source: sub.sourceName, message: "Subscription synced" }));
       }
 
       // If any fetch failed and nothing was synced, retry
       if ((personalFetchFailed || exploreFetchFailed) && !syncedAny) {
         console.warn(JSON.stringify({ event: "queue.schedule_sync.all_failed", studentId, message: "All syncs failed, retrying" }));
         message.retry();
-        continue;
+        return;
       }
 
       await db
@@ -156,5 +172,5 @@ export async function processScheduleSyncBatch(
       console.error(JSON.stringify({ event: "queue.schedule_sync.failed", studentId, error: msg, message: "Schedule sync failed" }));
       message.retry();
     }
-  }
+  }));
 }
