@@ -39,7 +39,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - frontend/dist 和 frontend/node_modules 已 gitignore
 - 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
-- `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试需显式指定文件或用 `npx vitest run src/`
+- `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试用 `npx vitest run --exclude 'frontend/**'`（`npx vitest run src/` 仍会拾取 frontend 测试）
 - 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
@@ -69,6 +69,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
+- 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
 ## 前端开发注意事项
 - 前端测试运行: `npm run test:frontend`（cd frontend && npm test），构建验证: `cd frontend && npm run build`
