@@ -25,7 +25,7 @@ export async function verifyCaptcha(env: Env, token: string | null): Promise<voi
     }
   } catch (e) {
     if (e instanceof CaptchaError) throw e;
-    console.error("hCaptcha verification network error:", e);
+    console.error(JSON.stringify({ event: "captcha.network_error", error: e instanceof Error ? e.message : String(e), message: "hCaptcha verification network error" }));
     throw new CaptchaError("CAPTCHA_SERVICE_UNAVAILABLE");
   }
 }

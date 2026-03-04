@@ -22,7 +22,7 @@ export interface ScheduleSyncMessage {
 
 /** Producer: enqueue all active users for schedule sync */
 export async function enqueueScheduleSync(env: Env): Promise<void> {
-  console.log("cron: enqueuing schedule sync");
+  console.log(JSON.stringify({ event: "cron.schedule_sync.start", message: "Enqueuing schedule sync" }));
   const db = drizzle(env.DB);
 
   const activeUsers = await db
@@ -31,7 +31,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     .where(isNotNull(users.accessToken));
 
   if (activeUsers.length === 0) {
-    console.log("cron: no active users, skipping sync");
+    console.log(JSON.stringify({ event: "cron.schedule_sync.skip", message: "No active users" }));
     return;
   }
 
@@ -49,7 +49,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     );
   }
 
-  console.log(`cron: enqueued ${activeUsers.length} users for schedule sync`);
+  console.log(JSON.stringify({ event: "cron.schedule_sync.enqueued", count: activeUsers.length, message: `Enqueued ${activeUsers.length} users for schedule sync` }));
 }
 
 /** Consumer: process a batch of schedule sync messages */
@@ -99,7 +99,7 @@ export async function processScheduleSyncBatch(
               personalData = await fetchPersonalSchedule(api, user.studentId, ctx);
             } catch (e) {
               personalFetchFailed = true;
-              console.error(`queue: failed to fetch personal schedule for ${studentId}: ${e}`);
+              console.error(JSON.stringify({ event: "queue.schedule_sync.personal_failed", studentId, error: e instanceof Error ? e.message : String(e), message: "Personal schedule fetch failed" }));
               continue;
             }
           }
@@ -121,17 +121,17 @@ export async function processScheduleSyncBatch(
             });
           } catch (e) {
             exploreFetchFailed = true;
-            console.error(`queue: failed to refresh subscription ${sub.sourceName}: ${e}`);
+            console.error(JSON.stringify({ event: "queue.schedule_sync.explore_failed", studentId, source: sub.sourceName, error: e instanceof Error ? e.message : String(e), message: "Explore subscription fetch failed" }));
             continue;
           }
         }
         syncedAny = true;
-        console.log(`queue: synced ${sub.sourceName} for ${studentId}`);
+        console.log(JSON.stringify({ event: "queue.schedule_sync.subscription_synced", studentId, source: sub.sourceName, message: "Subscription synced" }));
       }
 
       // If any fetch failed and nothing was synced, retry
       if ((personalFetchFailed || exploreFetchFailed) && !syncedAny) {
-        console.warn(`queue: all syncs failed for ${studentId}, retrying`);
+        console.warn(JSON.stringify({ event: "queue.schedule_sync.all_failed", studentId, message: "All syncs failed, retrying" }));
         message.retry();
         continue;
       }
@@ -144,7 +144,7 @@ export async function processScheduleSyncBatch(
       message.ack();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`queue: schedule sync failed for ${studentId}: ${msg}`);
+      console.error(JSON.stringify({ event: "queue.schedule_sync.failed", studentId, error: msg, message: "Schedule sync failed" }));
       message.retry();
     }
   }

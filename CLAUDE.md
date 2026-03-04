@@ -63,6 +63,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
 - `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - Queue handler 的 `MessageBatch` 默认泛型为 `unknown`，须用 `batch as MessageBatch<T>` 类型断言
+- `response.headers.getSetCookie()` 在 Workers runtime 可用但 `@cloudflare/workers-types` 默认不含类型声明，已在 `src/types/headers.d.ts` 补充
+- 日志格式: `console.log(JSON.stringify({ event: "context.subsystem.action", message: "...", ...fields }))` — 结构化 JSON，便于 Workers Observability 过滤
 - 前端测试: `frontend/src/test-utils.ts` 提供 `mountWithContext()` helper (Pinia + Router + 默认 stubs)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
@@ -85,6 +87,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
+- `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)
 - `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
 - `frontend/` — Vue 前端 (独立 npm 项目)
 - `frontend/vitest.config.ts` — 前端测试配置 (jsdom, @/ alias)

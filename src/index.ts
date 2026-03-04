@@ -41,7 +41,7 @@ app.route("/api/v1", exploreRoutes);
 
 // Global error handler
 app.onError((err, c) => {
-  console.error("Unhandled error:", err);
+  console.error(JSON.stringify({ event: "http.unhandled_error", error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined, message: "Unhandled error" }));
   return c.json({ detail: "Internal server error" }, 500);
 });
 
@@ -69,7 +69,7 @@ export default {
         await enqueueScheduleSync(env);
         break;
       default:
-        console.log(`cron: unknown schedule ${controller.cron}`);
+        console.warn(JSON.stringify({ event: "http.unknown_cron", cron: controller.cron, message: "Unknown cron schedule" }));
     }
   },
   async queue(
@@ -85,7 +85,7 @@ export default {
         await processScheduleSyncBatch(batch as MessageBatch<ScheduleSyncMessage>, env);
         break;
       default:
-        console.log(`queue: unknown queue ${batch.queue}`);
+        console.warn(JSON.stringify({ event: "http.unknown_queue", queue: batch.queue, message: "Unknown queue" }));
     }
   },
 } satisfies ExportedHandler<Env>;
