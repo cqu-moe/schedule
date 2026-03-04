@@ -106,7 +106,8 @@ import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useCaptcha } from '@/composables/useCaptcha'
 import { useRiskWarning } from '@/composables/useRiskWarning'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
-import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
+import { activateOPButton } from '@1password/save-button'
+import { buildOPSaveValue } from '@/utils/opSave'
 import { toast } from 'vue-sonner'
 import api from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -182,11 +183,7 @@ async function handleRegister() {
       await authStore.fetchUserInfo()
 
       displayToken.value = result.token
-      opSaveValue.value = encodeOPSaveRequest({
-        title: 'CQU Schedule',
-        fields: [{ autocomplete: 'current-password', value: result.token }],
-        urls: ['https://schedule.cqu.moe'],
-      })
+      opSaveValue.value = buildOPSaveValue(result.token)
       showTokenDialog.value = true
       nextTick(() => activateOPButton())
     })

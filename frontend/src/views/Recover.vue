@@ -119,7 +119,8 @@ import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { parseApiError } from '@/utils/error'
-import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
+import { activateOPButton } from '@1password/save-button'
+import { buildOPSaveValue } from '@/utils/opSave'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -151,11 +152,7 @@ async function handleRecover() {
     await recoverFeedback.run(async () => {
       const data = await api.recoverToken(form.studentId, form.password, captchaToken)
       recoveredToken.value = data.calendar_token
-      opSaveValue.value = encodeOPSaveRequest({
-        title: 'CQU Schedule',
-        fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
-        urls: ['https://schedule.cqu.moe'],
-      })
+      opSaveValue.value = buildOPSaveValue(data.calendar_token)
       await authStore.loginWithToken(data.calendar_token)
       step.value = 'success'
       nextTick(() => activateOPButton())
@@ -187,11 +184,7 @@ async function handleVerify() {
     await recoverFeedback.run(async () => {
       const data = await api.recoverTokenVerify(form.studentId, form.password, captchaToken)
       recoveredToken.value = data.calendar_token
-      opSaveValue.value = encodeOPSaveRequest({
-        title: 'CQU Schedule',
-        fields: [{ autocomplete: 'current-password', value: data.calendar_token }],
-        urls: ['https://schedule.cqu.moe'],
-      })
+      opSaveValue.value = buildOPSaveValue(data.calendar_token)
       await authStore.loginWithToken(data.calendar_token)
       step.value = 'success'
       nextTick(() => activateOPButton())
