@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requireAuthWithCquToken, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { CQUAPIClient } from "../services/cqu-api";
+import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
 import { decrypt } from "../services/crypto";
 import { handleCquApiError } from "../utils/error";
 
@@ -60,7 +60,8 @@ app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async 
     }
     return c.json({ results });
   } catch (e) {
-    return handleCquApiError(c, e, "Search failed");
+    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Search failed");
+    throw e;
   }
 });
 
@@ -74,7 +75,8 @@ app.get("/departments", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), a
     const departments = await api.getDepartments();
     return c.json({ departments });
   } catch (e) {
-    return handleCquApiError(c, e, "Failed to load departments");
+    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Failed to load departments");
+    throw e;
   }
 });
 
