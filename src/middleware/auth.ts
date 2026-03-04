@@ -4,18 +4,36 @@ import { eq } from "drizzle-orm";
 import { users, type User } from "../db/schema";
 import type { Env } from "../types";
 
-type AuthEnv = { Bindings: Env; Variables: { user: User } };
+/** Light user: no encrypted fields, for routes that don't need CQU tokens */
+export type LightUser = Pick<User, 'id' | 'studentId' | 'calendarToken' | 'createdAt' | 'lastRefreshAt'>;
 
-async function lookupUser(c: any): Promise<User | Response> {
+/** Auth user: adds accessToken for routes that call CQU API */
+export type AuthUser = LightUser & Pick<User, 'accessToken'>;
+
+function parseToken(c: any): string | Response {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return c.json({ detail: "Invalid authorization header" }, 401);
   }
+  return authHeader.slice(7);
+}
 
-  const token = authHeader.slice(7);
+export const requireAuth = createMiddleware<{
+  Bindings: Env;
+  Variables: { user: LightUser };
+}>(async (c, next) => {
+  const token = parseToken(c);
+  if (token instanceof Response) return token;
+
   const db = drizzle(c.env.DB);
   const [user] = await db
-    .select()
+    .select({
+      id: users.id,
+      studentId: users.studentId,
+      calendarToken: users.calendarToken,
+      createdAt: users.createdAt,
+      lastRefreshAt: users.lastRefreshAt,
+    })
     .from(users)
     .where(eq(users.calendarToken, token))
     .limit(1);
@@ -24,27 +42,39 @@ async function lookupUser(c: any): Promise<User | Response> {
     return c.json({ detail: "Invalid token" }, 401);
   }
 
-  return user;
-}
-
-export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
-  const result = await lookupUser(c);
-  if (result instanceof Response) return result;
-
-  c.set("user", result);
+  c.set("user", user);
   await next();
 });
 
-export const requireAuthWithCquToken = createMiddleware<AuthEnv>(
-  async (c, next) => {
-    const result = await lookupUser(c);
-    if (result instanceof Response) return result;
+export const requireAuthWithCquToken = createMiddleware<{
+  Bindings: Env;
+  Variables: { user: AuthUser };
+}>(async (c, next) => {
+  const token = parseToken(c);
+  if (token instanceof Response) return token;
 
-    if (!result.accessToken) {
-      return c.json({ detail: "CQU token expired, please re-login" }, 401);
-    }
+  const db = drizzle(c.env.DB);
+  const [user] = await db
+    .select({
+      id: users.id,
+      studentId: users.studentId,
+      calendarToken: users.calendarToken,
+      createdAt: users.createdAt,
+      lastRefreshAt: users.lastRefreshAt,
+      accessToken: users.accessToken,
+    })
+    .from(users)
+    .where(eq(users.calendarToken, token))
+    .limit(1);
 
-    c.set("user", result);
-    await next();
-  },
-);
+  if (!user) {
+    return c.json({ detail: "Invalid token" }, 401);
+  }
+
+  if (!user.accessToken) {
+    return c.json({ detail: "CQU token expired, please re-login" }, 401);
+  }
+
+  c.set("user", user);
+  await next();
+});

@@ -56,7 +56,13 @@ export async function processTokenRefreshBatch(
     try {
       // Read fresh user data (token may have been refreshed by another batch)
       const [user] = await db
-        .select()
+        .select({
+          id: users.id,
+          studentId: users.studentId,
+          refreshToken: users.refreshToken,
+          encryptedPassword: users.encryptedPassword,
+          tokenExpiresAt: users.tokenExpiresAt,
+        })
         .from(users)
         .where(eq(users.id, userId));
 

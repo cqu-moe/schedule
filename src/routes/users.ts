@@ -87,7 +87,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   // Check if user already exists
   const [existing] = await db
-    .select()
+    .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
     .where(eq(users.studentId, body.student_id))
     .limit(1);
@@ -219,7 +219,10 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const db = drizzle(c.env.DB);
 
   const [user] = await db
-    .select()
+    .select({
+      encryptedPassword: users.encryptedPassword,
+      calendarToken: users.calendarToken,
+    })
     .from(users)
     .where(eq(users.studentId, body.student_id))
     .limit(1);
@@ -279,7 +282,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   }
 
   const [user] = await db
-    .select()
+    .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
     .where(eq(users.studentId, body.student_id))
     .limit(1);

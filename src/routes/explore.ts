@@ -1,12 +1,11 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import type { User } from "../db/schema";
-import { requireAuthWithCquToken } from "../middleware/auth";
+import { requireAuthWithCquToken, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
 import { decrypt } from "../services/crypto";
 
-type AuthEnv = { Bindings: Env; Variables: { user: User } };
+type AuthEnv = { Bindings: Env; Variables: { user: AuthUser } };
 
 const app = new Hono<AuthEnv>();
 
