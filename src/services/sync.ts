@@ -72,8 +72,10 @@ export async function fetchPersonalSchedule(
   studentId: string,
   ctx: SessionContext,
 ): Promise<PersonalScheduleData> {
-  const courses = await api.getSchedule(studentId, ctx.sessionId);
-  const exams = await api.getExams();
+  const [courses, exams] = await Promise.all([
+    api.getSchedule(studentId, ctx.sessionId),
+    api.getExams(),
+  ]);
   return {
     courses,
     exams,
