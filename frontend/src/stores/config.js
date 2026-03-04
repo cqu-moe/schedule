@@ -5,6 +5,9 @@ export const useConfigStore = defineStore('config', {
   state: () => ({
     publicUrl: window.location.origin,
     loaded: false,
+    captchaEnabled: false,
+    captchaSitekey: '',
+    captchaLoaded: false,
   }),
 
   actions: {
@@ -17,6 +20,19 @@ export const useConfigStore = defineStore('config', {
         // fallback: keep window.location.origin
       } finally {
         this.loaded = true
+      }
+    },
+
+    async loadCaptchaConfig() {
+      if (this.captchaLoaded) return
+      try {
+        const config = await api.getCaptchaConfig()
+        this.captchaEnabled = config.enabled
+        this.captchaSitekey = config.sitekey
+        this.captchaLoaded = true
+      } catch {
+        // Proceed without captcha — graceful degradation
+        // Don't set captchaLoaded so it can be retried
       }
     },
   },

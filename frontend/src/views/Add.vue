@@ -87,7 +87,7 @@
                 v-else
                 size="sm"
                 class="ml-3 shrink-0 cursor-pointer"
-                :disabled="subscribeFeedback.stateOf(item.id) === 'loading' || subscriptions.length >= subscriptionsMax"
+                :disabled="subscribeFeedback.stateOf(item.id) === 'loading' || subStore.subscriptions.length >= subStore.max"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white': subscribeFeedback.stateOf(item.id) === 'success',
                   'bg-destructive hover:bg-destructive text-white': subscribeFeedback.stateOf(item.id) === 'error'
@@ -109,8 +109,8 @@
           </p>
 
           <!-- Limit warning -->
-          <p v-if="subscriptions.length >= subscriptionsMax" class="text-sm text-amber-600 dark:text-amber-400">
-            已达最大订阅数 ({{ subscriptionsMax }})，请先删除不需要的订阅
+          <p v-if="subStore.subscriptions.length >= subStore.max" class="text-sm text-amber-600 dark:text-amber-400">
+            已达最大订阅数 ({{ subStore.max }})，请先删除不需要的订阅
           </p>
 
           <VueHcaptcha
@@ -147,9 +147,11 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { useCaptcha } from '@/composables/useCaptcha'
 import { toast } from 'vue-sonner'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { useAuthStore } from '@/stores/auth'
+import { useSubscriptionsStore } from '@/stores/subscriptions.js'
 import api from '@/api'
 import Navbar from '@/components/Navbar.vue'
 import { Card, CardContent } from '@/components/ui/card'
@@ -165,6 +167,8 @@ import { parseApiError } from '@/utils/error'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 
 const authStore = useAuthStore()
+const subStore = useSubscriptionsStore()
+const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
 
 const sourceType = ref('instructor')
 const keyword = ref('')
@@ -175,13 +179,8 @@ const searchResults = ref([])
 const searching = ref(false)
 const searched = ref(false)
 const subscribeFeedback = useButtonFeedback()
-const subscriptions = ref([])
-const subscriptionsMax = ref(5)
 const errorMessage = ref('')
 const isTokenExpired = ref(false)
-const captchaEnabled = ref(false)
-const captchaSitekey = ref('')
-const hcaptchaRef = ref(null)
 
 let debounceTimer = null
 
@@ -197,7 +196,7 @@ const searchPlaceholder = computed(() => {
 })
 
 function isSubscribed(sourceId) {
-  return subscriptions.value.some(
+  return subStore.subscriptions.some(
     s => s.source_id === sourceId && s.source_type === sourceType.value
   )
 }
@@ -292,14 +291,11 @@ async function handleSubscribe(item) {
   clearError()
 
   let captchaToken = null
-  if (captchaEnabled.value && hcaptchaRef.value) {
-    try {
-      const { response } = await hcaptchaRef.value.executeAsync()
-      captchaToken = response
-    } catch {
-      errorMessage.value = '验证码加载失败，请刷新页面重试'
-      return
-    }
+  try {
+    captchaToken = await getCaptchaToken()
+  } catch {
+    errorMessage.value = '验证码加载失败，请刷新页面重试'
+    return
   }
 
   try {
@@ -307,7 +303,7 @@ async function handleSubscribe(item) {
       await api.createSubscription(
         authStore.token, sourceType.value, item.id, item.name, captchaToken
       )
-      await loadSubscriptions().catch(() => {})
+      await subStore.load().catch(() => {})
     }, item.id)
   } catch (err) {
     handleApiError(err, '订阅失败')
@@ -316,24 +312,11 @@ async function handleSubscribe(item) {
   }
 }
 
-async function loadSubscriptions() {
-  const data = await api.getSubscriptions(authStore.token)
-  subscriptions.value = data.subscriptions
-  subscriptionsMax.value = data.max
-}
-
 onMounted(async () => {
   try {
-    await loadSubscriptions()
+    await subStore.load()
   } catch {
     toast.error('加载订阅列表失败')
-  }
-  try {
-    const config = await api.getCaptchaConfig()
-    captchaEnabled.value = config.enabled
-    captchaSitekey.value = config.sitekey
-  } catch {
-    // Proceed without captcha — graceful degradation
   }
 })
 

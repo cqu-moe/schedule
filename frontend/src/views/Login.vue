@@ -38,10 +38,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useRiskWarning } from '@/composables/useRiskWarning'
 import Navbar from '@/components/Navbar.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -54,15 +55,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
+const { showRiskWarning } = useRiskWarning()
+
 const tokenInput = ref('')
 const errorMessage = ref('')
-const showRiskWarning = ref(false)
-
-onMounted(() => {
-  if (!localStorage.getItem('risk_warning_acknowledged')) {
-    showRiskWarning.value = true
-  }
-})
 
 async function handleLogin() {
   errorMessage.value = ''

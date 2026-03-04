@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '../api'
 import { parseApiError } from '@/utils/error'
+import { useSubscriptionsStore } from '@/stores/subscriptions.js'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('calendar_token') || '')
@@ -52,6 +53,8 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = ''
     userInfo.value = null
     localStorage.removeItem('calendar_token')
+    // Clear shared stores to prevent cross-session data leakage
+    useSubscriptionsStore().$reset()
   }
 
   // 初始化时检查 token 有效性
