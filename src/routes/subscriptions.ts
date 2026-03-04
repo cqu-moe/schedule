@@ -28,7 +28,7 @@ type AuthEnv = { Bindings: Env; Variables: { user: User } };
 const app = new Hono<AuthEnv>();
 
 // GET /api/v1/subscriptions
-app.get("/", requireAuth, async (c) => {
+app.get("/", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const user = c.get("user");
   const db = drizzle(c.env.DB);
   const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
@@ -192,7 +192,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
 });
 
 // DELETE /api/v1/subscriptions/:sub_token
-app.delete("/:sub_token", requireAuth, async (c) => {
+app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const subToken = c.req.param("sub_token");
   const user = c.get("user");
   const db = drizzle(c.env.DB);
