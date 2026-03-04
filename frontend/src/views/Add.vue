@@ -147,6 +147,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { useCaptcha } from '@/composables/useCaptcha'
 import { toast } from 'vue-sonner'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { useAuthStore } from '@/stores/auth'
@@ -165,6 +166,7 @@ import { parseApiError } from '@/utils/error'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 
 const authStore = useAuthStore()
+const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
 
 const sourceType = ref('instructor')
 const keyword = ref('')
@@ -179,9 +181,6 @@ const subscriptions = ref([])
 const subscriptionsMax = ref(5)
 const errorMessage = ref('')
 const isTokenExpired = ref(false)
-const captchaEnabled = ref(false)
-const captchaSitekey = ref('')
-const hcaptchaRef = ref(null)
 
 let debounceTimer = null
 
@@ -292,14 +291,11 @@ async function handleSubscribe(item) {
   clearError()
 
   let captchaToken = null
-  if (captchaEnabled.value && hcaptchaRef.value) {
-    try {
-      const { response } = await hcaptchaRef.value.executeAsync()
-      captchaToken = response
-    } catch {
-      errorMessage.value = '验证码加载失败，请刷新页面重试'
-      return
-    }
+  try {
+    captchaToken = await getCaptchaToken()
+  } catch {
+    errorMessage.value = '验证码加载失败，请刷新页面重试'
+    return
   }
 
   try {
@@ -327,13 +323,6 @@ onMounted(async () => {
     await loadSubscriptions()
   } catch {
     toast.error('加载订阅列表失败')
-  }
-  try {
-    const config = await api.getCaptchaConfig()
-    captchaEnabled.value = config.enabled
-    captchaSitekey.value = config.sitekey
-  } catch {
-    // Proceed without captcha — graceful degradation
   }
 })
 

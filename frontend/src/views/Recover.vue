@@ -105,6 +105,7 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2, Copy, Check, X } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { useCaptcha } from '@/composables/useCaptcha'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { toast } from 'vue-sonner'
 import api from '@/api'
@@ -121,6 +122,7 @@ import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
 
 const recoverFeedback = useButtonFeedback()
 const step = ref('form')
@@ -129,42 +131,26 @@ const errorMessage = ref('')
 const recoveredToken = ref('')
 const copied = ref(false)
 const showRiskWarning = ref(false)
-const captchaEnabled = ref(false)
-const captchaSitekey = ref('')
-const hcaptchaRef = ref(null)
 const opSaveValue = ref('')
 
-onMounted(async () => {
+onMounted(() => {
   if (!localStorage.getItem('risk_warning_acknowledged')) {
     showRiskWarning.value = true
   }
-  try {
-    const config = await api.getCaptchaConfig()
-    captchaEnabled.value = config.enabled
-    captchaSitekey.value = config.sitekey
-  } catch {
-    // Proceed without captcha — graceful degradation
-  }
 })
-
-async function getCaptchaToken() {
-  if (!captchaEnabled.value || !hcaptchaRef.value) return null
-  try {
-    const { response } = await hcaptchaRef.value.executeAsync()
-    return response
-  } catch {
-    errorMessage.value = '验证码加载失败，请刷新页面重试'
-    return false
-  }
-}
 
 async function handleRecover() {
   errorMessage.value = ''
   if (!form.studentId) { errorMessage.value = '请输入统一身份认证号'; return }
   if (!form.password) { errorMessage.value = '请输入密码'; return }
 
-  const captchaToken = await getCaptchaToken()
-  if (captchaToken === false) return
+  let captchaToken
+  try {
+    captchaToken = await getCaptchaToken()
+  } catch {
+    errorMessage.value = '验证码加载失败，请刷新页面重试'
+    return
+  }
 
   try {
     await recoverFeedback.run(async () => {
@@ -194,8 +180,13 @@ async function handleRecover() {
 async function handleVerify() {
   errorMessage.value = ''
 
-  const captchaToken = await getCaptchaToken()
-  if (captchaToken === false) return
+  let captchaToken
+  try {
+    captchaToken = await getCaptchaToken()
+  } catch {
+    errorMessage.value = '验证码加载失败，请刷新页面重试'
+    return
+  }
 
   try {
     await recoverFeedback.run(async () => {
