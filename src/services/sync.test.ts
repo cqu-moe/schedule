@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { fetchPersonalSchedule, type SessionContext } from "./sync";
+import { describe, it, expect, vi } from "vitest";
+import {
+  fetchPersonalSchedule,
+  fetchPersonalScheduleCached,
+  type SessionContext,
+} from "./sync";
 import type { CQUAPIClient, CourseEntry, ExamEntry } from "./cqu-api";
 
 const testCourse: CourseEntry = {
@@ -87,5 +91,49 @@ describe("fetchPersonalSchedule", () => {
     // Both calls must have started before the first one ended
     expect(startEntries).toHaveLength(2);
     expect(firstEndIndex).toBeGreaterThanOrEqual(2);
+  });
+});
+
+function mockKV(store: Record<string, string> = {}) {
+  return {
+    get: vi.fn(async (key: string, _type?: string) => store[key] ? JSON.parse(store[key]) : null),
+    put: vi.fn(async (key: string, value: string) => { store[key] = value; }),
+  } as unknown as KVNamespace;
+}
+
+describe("fetchPersonalScheduleCached", () => {
+  it("should return cached data on cache hit without calling API", async () => {
+    const cachedData = {
+      courses: [testCourse],
+      exams: [testExam],
+      semesterStart: "2025-02-24",
+    };
+    const kv = mockKV({ "sync:personal:20210001": JSON.stringify(cachedData) });
+    const { api } = createMockApi({ delayMs: 0 });
+
+    const result = await fetchPersonalScheduleCached(api, "20210001", testCtx, kv);
+
+    expect(result).toEqual(cachedData);
+    expect(kv.get).toHaveBeenCalledWith("sync:personal:20210001", "json");
+    // KV put should NOT have been called (cache hit = no API fetch = no write-back)
+    expect(kv.put).not.toHaveBeenCalled();
+  });
+
+  it("should fetch from API on cache miss and write to KV with TTL", async () => {
+    const kv = mockKV(); // empty store = cache miss
+    const { api } = createMockApi({ delayMs: 0 });
+
+    const result = await fetchPersonalScheduleCached(api, "20210001", testCtx, kv);
+
+    expect(result.courses).toEqual([testCourse]);
+    expect(result.exams).toEqual([testExam]);
+    expect(result.semesterStart).toBe("2025-02-24");
+
+    // Should have written the result to KV
+    expect(kv.put).toHaveBeenCalledWith(
+      "sync:personal:20210001",
+      JSON.stringify(result),
+      { expirationTtl: 300 },
+    );
   });
 });
