@@ -12,7 +12,7 @@ export interface TokenRefreshMessage {
 
 /** Producer: query users needing refresh, send to queue */
 export async function enqueueTokenRefresh(env: Env): Promise<void> {
-  console.log("cron: enqueuing token refresh");
+  console.log(JSON.stringify({ event: "cron.token_refresh.start", message: "Enqueuing token refresh" }));
   const db = drizzle(env.DB);
 
   const threshold = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
@@ -22,7 +22,7 @@ export async function enqueueTokenRefresh(env: Env): Promise<void> {
     .where(and(isNotNull(users.tokenExpiresAt), lt(users.tokenExpiresAt, threshold)));
 
   if (expiring.length === 0) {
-    console.log("cron: no users need token refresh");
+    console.log(JSON.stringify({ event: "cron.token_refresh.skip", message: "No users need token refresh" }));
     return;
   }
 
@@ -41,7 +41,7 @@ export async function enqueueTokenRefresh(env: Env): Promise<void> {
     );
   }
 
-  console.log(`cron: enqueued ${expiring.length} users for token refresh`);
+  console.log(JSON.stringify({ event: "cron.token_refresh.enqueued", count: expiring.length, message: `Enqueued ${expiring.length} users for token refresh` }));
 }
 
 /** Consumer: process a batch of token refresh messages */
@@ -90,14 +90,14 @@ export async function processTokenRefreshBatch(
               updatedAt: now,
             })
             .where(eq(users.id, userId));
-          console.log(`queue: token refreshed for ${studentId}`);
+          console.log(JSON.stringify({ event: "queue.token_refresh.success", studentId, message: "Token refreshed" }));
           message.ack();
           continue;
         } catch (e) {
           if (!(e instanceof AuthError) || e.code !== "TOKEN_EXPIRED") {
             throw e;
           }
-          console.warn(`queue: refresh token expired for ${studentId}, trying login`);
+          console.warn(JSON.stringify({ event: "queue.token_refresh.fallback_login", studentId, message: "Refresh token expired, trying login" }));
         }
       }
 
@@ -116,11 +116,11 @@ export async function processTokenRefreshBatch(
           updatedAt: now,
         })
         .where(eq(users.id, userId));
-      console.log(`queue: re-login successful for ${studentId}`);
+      console.log(JSON.stringify({ event: "queue.token_refresh.login_success", studentId, message: "Re-login successful" }));
       message.ack();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`queue: token refresh failed for ${studentId}: ${msg}`);
+      console.error(JSON.stringify({ event: "queue.token_refresh.failed", studentId, error: msg, message: "Token refresh failed" }));
 
       // Permanent failures → ack and record error, don't retry
       if (e instanceof AuthError && (e.code === "INVALID_CREDENTIALS" || e.code === "CAPTCHA_REQUIRED")) {

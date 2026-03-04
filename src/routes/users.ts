@@ -339,9 +339,9 @@ export async function syncNewUserSubscriptions(
       .set({ lastRefreshAt: now, updatedAt: now })
       .where(eq(users.id, userId));
 
-    console.log(`registration: synced ${subIds.length} subscriptions for ${studentId}`);
+    console.log(JSON.stringify({ event: "registration.sync_complete", studentId, count: subIds.length, message: `Synced ${subIds.length} subscriptions` }));
   } catch (e) {
-    console.error(`registration: background sync failed for ${studentId}:`, e);
+    console.error(JSON.stringify({ event: "registration.sync_failed", studentId, error: e instanceof Error ? e.message : String(e), message: "Background sync failed" }));
   }
 }
 
