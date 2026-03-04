@@ -4,6 +4,7 @@ import { requireAuthWithCquToken, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
 import { decrypt } from "../services/crypto";
+import { handleCquApiError } from "../utils/error";
 
 type AuthEnv = { Bindings: Env; Variables: { user: AuthUser } };
 
@@ -59,12 +60,7 @@ app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async 
     }
     return c.json({ results });
   } catch (e) {
-    if (e instanceof CQUAPIError) {
-      if (e.statusCode === 401) {
-        return c.json({ detail: "CQU token expired, please re-login" }, 401);
-      }
-      return c.json({ detail: e.message }, 502);
-    }
+    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Search failed");
     throw e;
   }
 });
@@ -79,9 +75,7 @@ app.get("/departments", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), a
     const departments = await api.getDepartments();
     return c.json({ departments });
   } catch (e) {
-    if (e instanceof CQUAPIError) {
-      return c.json({ detail: e.message }, 502);
-    }
+    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Failed to load departments");
     throw e;
   }
 });

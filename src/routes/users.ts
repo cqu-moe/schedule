@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { users, subscriptions } from "../db/schema";
@@ -35,18 +36,22 @@ function handleAuthError(e: AuthError): Response {
   return errorResponse("UPSTREAM_ERROR", e.message, 502);
 }
 
-// POST /api/v1/users (register)
-app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
+async function requireCaptcha(c: Context<{ Bindings: Env }>): Promise<Response | null> {
   const captchaToken = c.req.header("X-Captcha-Token") ?? null;
   try {
     await verifyCaptcha(c.env, captchaToken);
+    return null;
   } catch (e) {
     if (e instanceof CaptchaError) {
       return c.json({ detail: e.message }, 403);
     }
     throw e;
   }
+}
 
+async function parseCredentials(
+  c: Context<{ Bindings: Env }>,
+): Promise<{ student_id: string; password: string } | Response> {
   let body: { student_id: string; password: string };
   try {
     body = await c.req.json();
@@ -68,19 +73,29 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
       400,
     );
   }
+  return body;
+}
+
+// POST /api/v1/users (register)
+app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
+  const captchaErr = await requireCaptcha(c);
+  if (captchaErr) return captchaErr;
+  const result = await parseCredentials(c);
+  if (result instanceof Response) return result;
+  const { student_id, password } = result;
 
   const db = drizzle(c.env.DB);
 
   // Verify via SSO login FIRST (prevents user enumeration)
   let tokenResult;
   try {
-    tokenResult = await login(body.student_id, body.password);
+    tokenResult = await login(student_id, password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;
   }
 
-  const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
+  const encryptedPw = await encrypt(password, c.env.ENCRYPTION_KEY);
   const encryptedAccessToken = await encrypt(tokenResult.accessToken, c.env.ENCRYPTION_KEY);
   const encryptedRefreshToken = await encrypt(tokenResult.refreshToken, c.env.ENCRYPTION_KEY);
   const now = new Date().toISOString();
@@ -89,7 +104,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const [existing] = await db
     .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
-    .where(eq(users.studentId, body.student_id))
+    .where(eq(users.studentId, student_id))
     .limit(1);
 
   if (existing) {
@@ -116,7 +131,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const [newUser] = await db
     .insert(users)
     .values({
-      studentId: body.student_id,
+      studentId: student_id,
       encryptedPassword: encryptedPw,
       accessToken: encryptedAccessToken,
       refreshToken: encryptedRefreshToken,
@@ -136,7 +151,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   ].map(({ sourceType, sourceName }) => ({
     userId: newUser.id,
     sourceType,
-    sourceId: body.student_id,
+    sourceId: student_id,
     sourceName,
     calendarToken: generateToken(),
     isPersonal: true,
@@ -153,7 +168,7 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     syncNewUserSubscriptions(
       c.env,
       newUser.id,
-      body.student_id,
+      student_id,
       tokenResult.accessToken,
       newSubs,
     ),
@@ -185,37 +200,12 @@ app.delete("/me", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
 
 // POST /api/v1/users/recover (recover by stored password)
 app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const captchaToken = c.req.header("X-Captcha-Token") ?? null;
-  try {
-    await verifyCaptcha(c.env, captchaToken);
-  } catch (e) {
-    if (e instanceof CaptchaError) {
-      return c.json({ detail: e.message }, 403);
-    }
-    throw e;
-  }
+  const captchaErr = await requireCaptcha(c);
+  if (captchaErr) return captchaErr;
+  const result = await parseCredentials(c);
+  if (result instanceof Response) return result;
+  const { student_id, password } = result;
 
-  let body: { student_id: string; password: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ detail: "Invalid JSON body" }, 400);
-  }
-  if (!body.student_id || !body.password) {
-    return c.json({ detail: "student_id and password required" }, 400);
-  }
-  if (!STUDENT_ID_PATTERN.test(body.student_id)) {
-    return c.json(
-      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
-      400,
-    );
-  }
-  if (body.password.length > 256) {
-    return c.json(
-      { detail: "password must not exceed 256 characters" },
-      400,
-    );
-  }
   const db = drizzle(c.env.DB);
 
   const [user] = await db
@@ -224,12 +214,12 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
       calendarToken: users.calendarToken,
     })
     .from(users)
-    .where(eq(users.studentId, body.student_id))
+    .where(eq(users.studentId, student_id))
     .limit(1);
 
   if (
     !user ||
-    !(await verifyPassword(body.password, user.encryptedPassword, c.env.ENCRYPTION_KEY))
+    !(await verifyPassword(password, user.encryptedPassword, c.env.ENCRYPTION_KEY))
   ) {
     return errorResponse("PASSWORD_MISMATCH", "Password does not match", 422);
   }
@@ -239,43 +229,18 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
 // POST /api/v1/users/recover/verify (recover via SSO login)
 app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const captchaToken = c.req.header("X-Captcha-Token") ?? null;
-  try {
-    await verifyCaptcha(c.env, captchaToken);
-  } catch (e) {
-    if (e instanceof CaptchaError) {
-      return c.json({ detail: e.message }, 403);
-    }
-    throw e;
-  }
+  const captchaErr = await requireCaptcha(c);
+  if (captchaErr) return captchaErr;
+  const result = await parseCredentials(c);
+  if (result instanceof Response) return result;
+  const { student_id, password } = result;
 
-  let body: { student_id: string; password: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ detail: "Invalid JSON body" }, 400);
-  }
-  if (!body.student_id || !body.password) {
-    return c.json({ detail: "student_id and password required" }, 400);
-  }
-  if (!STUDENT_ID_PATTERN.test(body.student_id)) {
-    return c.json(
-      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
-      400,
-    );
-  }
-  if (body.password.length > 256) {
-    return c.json(
-      { detail: "password must not exceed 256 characters" },
-      400,
-    );
-  }
   const db = drizzle(c.env.DB);
 
   // Verify via SSO login FIRST (prevents user enumeration)
   let tokenResult;
   try {
-    tokenResult = await login(body.student_id, body.password);
+    tokenResult = await login(student_id, password);
   } catch (e) {
     if (e instanceof AuthError) return handleAuthError(e);
     throw e;
@@ -284,7 +249,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const [user] = await db
     .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
-    .where(eq(users.studentId, body.student_id))
+    .where(eq(users.studentId, student_id))
     .limit(1);
 
   // User not registered — return same error as SSO failure
@@ -292,7 +257,7 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
   }
 
-  const encryptedPw = await encrypt(body.password, c.env.ENCRYPTION_KEY);
+  const encryptedPw = await encrypt(password, c.env.ENCRYPTION_KEY);
   const now = new Date().toISOString();
 
   const encryptedAccessToken = await encrypt(tokenResult.accessToken, c.env.ENCRYPTION_KEY);

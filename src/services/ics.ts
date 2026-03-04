@@ -1,6 +1,6 @@
 import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
-
-const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+import { bufferToBase64 } from "../utils/encoding";
+import { calculateCourseEventTime } from "../utils/time";
 
 const ICS_HEADER = [
   "BEGIN:VCALENDAR",
@@ -41,44 +41,7 @@ async function generateUid(
   const source = `${username},${summary},${start},${end}`;
   const encoded = new TextEncoder().encode(source);
   const hash = await crypto.subtle.digest("SHA-256", encoded);
-  const bytes = new Uint8Array(hash);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function calculateEventTime(
-  termStart: Date,
-  week: number,
-  dayOfWeek: number,
-  session: number,
-  isStart: boolean,
-): Date {
-  const daysSinceStart = (week - 1) * 7 + (dayOfWeek - 1);
-  const eventDateMs =
-    termStart.getTime() + daysSinceStart * 24 * 60 * 60 * 1000;
-  const eventDate = new Date(eventDateMs);
-
-  if (session < 1 || session > TIME_SLOTS.length) {
-    throw new Error(`Invalid session number: ${session}`);
-  }
-  const timeStr = TIME_SLOTS[session - 1][isStart ? 0 : 1];
-  const [h, m, s] = timeStr.split(":").map(Number);
-
-  // Build China local time, then convert to UTC
-  const chinaMs =
-    Date.UTC(
-      eventDate.getUTCFullYear(),
-      eventDate.getUTCMonth(),
-      eventDate.getUTCDate(),
-      h,
-      m,
-      s,
-    ) - CHINA_TZ_OFFSET_MS;
-
-  return new Date(chinaMs);
+  return bufferToBase64(hash);
 }
 
 export async function generateCoursesIcs(
@@ -98,19 +61,17 @@ export async function generateCoursesIcs(
           course.end_session < 1 || course.end_session > TIME_SLOTS.length) {
         continue;
       }
-      const startTime = calculateEventTime(
+      const startTime = calculateCourseEventTime(
         termStart,
         week,
         course.day_of_week,
-        course.start_session,
-        true,
+        TIME_SLOTS[course.start_session - 1][0],
       );
-      const endTime = calculateEventTime(
+      const endTime = calculateCourseEventTime(
         termStart,
         week,
         course.day_of_week,
-        course.end_session,
-        false,
+        TIME_SLOTS[course.end_session - 1][1],
       );
 
       const startStr = formatIcsTime(startTime);

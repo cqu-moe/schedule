@@ -4,6 +4,7 @@ import { users, subscriptions } from "../db/schema";
 import type { Env } from "../types";
 import { decrypt } from "../services/crypto";
 import { CQUAPIClient } from "../services/cqu-api";
+import { spreadEnqueue } from "../utils/queue";
 import {
   PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
@@ -35,19 +36,13 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     return;
   }
 
-  const BATCH_SIZE = 100;
-  // Spread messages over 6 hours: interval between each message delivery
-  const interval = Math.max(10, Math.floor(21600 / activeUsers.length));
-
-  for (let i = 0; i < activeUsers.length; i += BATCH_SIZE) {
-    const chunk = activeUsers.slice(i, i + BATCH_SIZE);
-    await env.SCHEDULE_SYNC_QUEUE.sendBatch(
-      chunk.map((u, j) => ({
-        body: { userId: u.id, studentId: u.studentId } satisfies ScheduleSyncMessage,
-        delaySeconds: Math.min((i + j) * interval, 43200),
-      })),
-    );
-  }
+  await spreadEnqueue(
+    env.SCHEDULE_SYNC_QUEUE,
+    activeUsers,
+    (u) => ({ body: { userId: u.id, studentId: u.studentId } satisfies ScheduleSyncMessage }),
+    21600,
+    10,
+  );
 
   console.log(JSON.stringify({ event: "cron.schedule_sync.enqueued", count: activeUsers.length, message: `Enqueued ${activeUsers.length} users for schedule sync` }));
 }

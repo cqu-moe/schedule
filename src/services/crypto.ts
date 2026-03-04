@@ -1,3 +1,5 @@
+import { bufferToBase64 } from "../utils/encoding";
+
 const IV_LENGTH = 12;
 
 function base64ToBuffer(base64: string): ArrayBuffer {
@@ -7,15 +9,6 @@ function base64ToBuffer(base64: string): ArrayBuffer {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes.buffer;
-}
-
-function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
 }
 
 async function importKey(keyBase64: string): Promise<CryptoKey> {
