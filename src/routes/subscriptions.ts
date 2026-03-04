@@ -34,7 +34,17 @@ app.get("/", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
 
   const subs = await db
-    .select()
+    .select({
+      calendarToken: subscriptions.calendarToken,
+      sourceType: subscriptions.sourceType,
+      sourceId: subscriptions.sourceId,
+      sourceName: subscriptions.sourceName,
+      sessionId: subscriptions.sessionId,
+      sessionName: subscriptions.sessionName,
+      isPersonal: subscriptions.isPersonal,
+      lastSyncedAt: subscriptions.lastSyncedAt,
+      createdAt: subscriptions.createdAt,
+    })
     .from(subscriptions)
     .where(eq(subscriptions.userId, user.id))
     .orderBy(desc(subscriptions.isPersonal), asc(subscriptions.createdAt));
@@ -106,7 +116,11 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
 
   // Count all existing subscriptions
   const existingSubs = await db
-    .select()
+    .select({
+      sourceType: subscriptions.sourceType,
+      sourceId: subscriptions.sourceId,
+      sessionId: subscriptions.sessionId,
+    })
     .from(subscriptions)
     .where(eq(subscriptions.userId, user.id));
 
@@ -198,7 +212,10 @@ app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
-    .select()
+    .select({
+      id: subscriptions.id,
+      isPersonal: subscriptions.isPersonal,
+    })
     .from(subscriptions)
     .where(
       and(
@@ -223,7 +240,13 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
-    .select()
+    .select({
+      id: subscriptions.id,
+      sourceType: subscriptions.sourceType,
+      sourceId: subscriptions.sourceId,
+      sessionId: subscriptions.sessionId,
+      sessionName: subscriptions.sessionName,
+    })
     .from(subscriptions)
     .where(
       and(
@@ -278,7 +301,7 @@ app.get("/:sub_token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
-    .select()
+    .select({ icsContent: subscriptions.icsContent })
     .from(subscriptions)
     .where(eq(subscriptions.calendarToken, subToken))
     .limit(1);
@@ -367,7 +390,9 @@ app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
   });
 });
 
-function parseSubJson(sub: Subscription): { courses: any[] | null; exams: any[] | null } | null {
+type ExportSub = Pick<Subscription, 'coursesJson' | 'examsJson' | 'semesterStart' | 'sessionName'>;
+
+function parseSubJson(sub: ExportSub): { courses: any[] | null; exams: any[] | null } | null {
   try {
     return {
       courses: sub.coursesJson ? JSON.parse(sub.coursesJson) : null,
@@ -378,12 +403,17 @@ function parseSubJson(sub: Subscription): { courses: any[] | null; exams: any[] 
   }
 }
 
-async function getSubForExport(c: any): Promise<Subscription | Response> {
+async function getSubForExport(c: any): Promise<ExportSub | Response> {
   const subToken = c.req.param("sub_token");
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
-    .select()
+    .select({
+      coursesJson: subscriptions.coursesJson,
+      examsJson: subscriptions.examsJson,
+      semesterStart: subscriptions.semesterStart,
+      sessionName: subscriptions.sessionName,
+    })
     .from(subscriptions)
     .where(eq(subscriptions.calendarToken, subToken))
     .limit(1);
