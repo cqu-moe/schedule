@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { users, subscriptions, type User, type Subscription } from "../db/schema";
+import { users, subscriptions, type Subscription } from "../db/schema";
 import type { Env } from "../types";
-import { requireAuth, requireAuthWithCquToken } from "../middleware/auth";
+import { requireAuth, requireAuthWithCquToken, type LightUser, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { CQUAPIClient } from "../services/cqu-api";
@@ -23,7 +23,7 @@ import {
   applySyncResult,
 } from "../services/sync";
 
-type AuthEnv = { Bindings: Env; Variables: { user: User } };
+type AuthEnv = { Bindings: Env; Variables: { user: LightUser } };
 
 const app = new Hono<AuthEnv>();
 
@@ -100,7 +100,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     return c.json({ detail: "Invalid source_type" }, 400);
   }
 
-  const user = c.get("user");
+  const user = c.get("user") as AuthUser;
   const db = drizzle(c.env.DB);
   const maxSubs = Number(c.env.MAX_SUBSCRIPTIONS ?? "10");
 
@@ -219,7 +219,7 @@ app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
 // POST /api/v1/subscriptions/:sub_token/refresh
 app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER"), async (c) => {
   const subToken = c.req.param("sub_token");
-  const user = c.get("user");
+  const user = c.get("user") as AuthUser;
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
