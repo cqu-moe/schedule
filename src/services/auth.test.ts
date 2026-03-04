@@ -292,6 +292,55 @@ describe("login", () => {
     expect((step2Init.headers as Record<string, string>)["Cookie"]).toContain("JSESSIONID=sess-abc");
   });
 
+  it("should handle multiple Set-Cookie headers with Expires containing commas", async () => {
+    // Step 1 returns multiple Set-Cookie headers via Headers.append()
+    const loginPageHeaders = new Headers();
+    loginPageHeaders.append("Set-Cookie", "JSESSIONID=abc123; Path=/; Expires=Thu, 01 Jan 2026 00:00:00 GMT");
+    loginPageHeaders.append("Set-Cookie", "OTHER=xyz; Path=/");
+
+    let callIndex = 0;
+    globalThis.fetch = vi.fn().mockImplementation(() => {
+      callIndex++;
+      switch (callIndex) {
+        case 1:
+          return Promise.resolve(new Response(SAMPLE_LOGIN_HTML, { status: 200, headers: loginPageHeaders }));
+        case 2:
+          return Promise.resolve(new Response("", {
+            status: 302,
+            headers: {
+              Location: "https://my.cqu.edu.cn/authserver/authentication/cas?ticket=ST-test123",
+              "Set-Cookie": "CASTGC=TGC-test456; Path=/; HttpOnly",
+            },
+          }));
+        case 3:
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { "Set-Cookie": "SESSION=test-session; Path=/", Location: "/workspace/cas" },
+          }));
+        case 4:
+          return Promise.resolve(new Response(null, {
+            status: 302,
+            headers: { Location: "https://my.cqu.edu.cn/workspace/token-index?code=test-code&state=" },
+          }));
+        case 5:
+          return Promise.resolve(new Response(
+            JSON.stringify({ access_token: "test-access", refresh_token: "test-refresh", expires_in: 14400 }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ));
+        default:
+          return Promise.reject(new Error(`Unexpected fetch call #${callIndex}`));
+      }
+    });
+
+    await login("user1", "pass1");
+
+    const step2Call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const step2Init = step2Call[1] as RequestInit;
+    const cookieHeader = (step2Init.headers as Record<string, string>)["Cookie"];
+    expect(cookieHeader).toContain("JSESSIONID=abc123");
+    expect(cookieHeader).toContain("OTHER=xyz");
+  });
+
   it("should forward CASTGC cookie to Step 3", async () => {
     globalThis.fetch = createLoginFetchMock({
       loginCookie: "CASTGC=TGC-xyz789; Path=/; HttpOnly",

@@ -348,16 +348,19 @@ export async function login(
 // ── Helpers ─────────────────────────────────────────────────────
 
 function extractCookie(response: Response, name: string): string | null {
-  const setCookie = response.headers.get("set-cookie") ?? "";
-  const match = setCookie.match(new RegExp(`${name}=([^;]+)`));
-  return match ? `${name}=${match[1]}` : null;
+  for (const header of response.headers.getSetCookie()) {
+    const match = header.match(new RegExp(`${name}=([^;]+)`));
+    if (match) return `${name}=${match[1]}`;
+  }
+  return null;
 }
 
 function extractAllCookies(response: Response): string | null {
-  const setCookie = response.headers.get("set-cookie") ?? "";
-  const cookies = [...setCookie.matchAll(/([^=;\s,]+)=([^;,]+)/g)]
-    .filter(m => !["Path", "Domain", "Expires", "Max-Age", "SameSite"].includes(m[1]))
-    .map(m => `${m[1]}=${m[2]}`);
+  const cookies: string[] = [];
+  for (const header of response.headers.getSetCookie()) {
+    const match = header.match(/^([^=;\s]+)=([^;]+)/);
+    if (match) cookies.push(`${match[1]}=${match[2]}`);
+  }
   return cookies.length > 0 ? cookies.join("; ") : null;
 }
 
