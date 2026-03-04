@@ -101,11 +101,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2, Copy, Check, X } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useCaptcha } from '@/composables/useCaptcha'
+import { useRiskWarning } from '@/composables/useRiskWarning'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { toast } from 'vue-sonner'
 import api from '@/api'
@@ -123,6 +124,7 @@ import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 const router = useRouter()
 const authStore = useAuthStore()
 const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
+const { showRiskWarning } = useRiskWarning()
 
 const recoverFeedback = useButtonFeedback()
 const step = ref('form')
@@ -130,14 +132,7 @@ const form = reactive({ studentId: '', password: '' })
 const errorMessage = ref('')
 const recoveredToken = ref('')
 const copied = ref(false)
-const showRiskWarning = ref(false)
 const opSaveValue = ref('')
-
-onMounted(() => {
-  if (!localStorage.getItem('risk_warning_acknowledged')) {
-    showRiskWarning.value = true
-  }
-})
 
 async function handleRecover() {
   errorMessage.value = ''

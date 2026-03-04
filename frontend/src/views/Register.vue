@@ -99,11 +99,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Copy, Check, X, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useCaptcha } from '@/composables/useCaptcha'
+import { useRiskWarning } from '@/composables/useRiskWarning'
 import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { encodeOPSaveRequest, activateOPButton } from '@1password/save-button'
 import { toast } from 'vue-sonner'
@@ -124,6 +125,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 const router = useRouter()
 const authStore = useAuthStore()
 const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
+const { showRiskWarning } = useRiskWarning()
 
 const registerFeedback = useButtonFeedback()
 const phase = ref('form')
@@ -133,17 +135,10 @@ const steps = ['验证凭据', '连接教务系统', '获取 Token']
 const form = reactive({ studentId: '', password: '' })
 const errorMessage = ref('')
 const showTokenDialog = ref(false)
-const showRiskWarning = ref(false)
 const displayToken = ref('')
 const copied = ref(false)
 const opSaveValue = ref('')
 let stepTimers = []
-
-onMounted(() => {
-  if (!localStorage.getItem('risk_warning_acknowledged')) {
-    showRiskWarning.value = true
-  }
-})
 
 onBeforeUnmount(() => {
   stepTimers.forEach(clearTimeout)

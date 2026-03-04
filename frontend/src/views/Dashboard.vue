@@ -231,6 +231,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { useRiskWarning } from '@/composables/useRiskWarning'
 import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config.js'
 import { useSubscriptionsStore } from '@/stores/subscriptions.js'
@@ -266,11 +267,11 @@ const router = useRouter()
 const authStore = useAuthStore()
 const configStore = useConfigStore()
 const subStore = useSubscriptionsStore()
+const { showRiskWarning } = useRiskWarning()
 
 // State
 const loading = ref(true)
 const deleting = ref(false)
-const showRiskWarning = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
@@ -410,10 +411,6 @@ async function handleDelete() {
 }
 
 onMounted(async () => {
-  const acknowledged = localStorage.getItem('risk_warning_acknowledged')
-  if (!acknowledged) {
-    showRiskWarning.value = true
-  }
   try {
     await subStore.load()
     if (hasPendingSubs.value) {
