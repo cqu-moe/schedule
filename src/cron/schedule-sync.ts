@@ -124,6 +124,7 @@ export async function processScheduleSyncBatch(
             }),
           );
           if (personalResults.some((r) => r.status === "fulfilled")) syncedAny = true;
+          if (personalResults.some((r) => r.status === "rejected")) personalFetchFailed = true;
         }
       }
 

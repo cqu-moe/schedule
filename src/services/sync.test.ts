@@ -119,6 +119,19 @@ describe("fetchPersonalScheduleCached", () => {
     expect(kv.put).not.toHaveBeenCalled();
   });
 
+  it("should return data even if KV put fails", async () => {
+    const kv = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => { throw new Error("KV write failed"); }),
+    } as unknown as KVNamespace;
+    const { api } = createMockApi({ delayMs: 0 });
+
+    const result = await fetchPersonalScheduleCached(api, "20210001", testCtx, kv);
+
+    expect(result.courses).toEqual([testCourse]);
+    expect(result.exams).toEqual([testExam]);
+  });
+
   it("should fetch from API on cache miss and write to KV with TTL", async () => {
     const kv = mockKV(); // empty store = cache miss
     const { api } = createMockApi({ delayMs: 0 });

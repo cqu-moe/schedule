@@ -80,7 +80,7 @@ export async function fetchPersonalScheduleCached(
   if (cached) return cached as PersonalScheduleData;
 
   const data = await fetchPersonalSchedule(api, studentId, ctx);
-  await kv.put(cacheKey, JSON.stringify(data), { expirationTtl: PERSONAL_CACHE_TTL });
+  kv.put(cacheKey, JSON.stringify(data), { expirationTtl: PERSONAL_CACHE_TTL }).catch(() => {});
   return data;
 }
 
