@@ -75,10 +75,11 @@ export async function verifyPassword(
   try {
     const decrypted = await decrypt(encrypted, keyBase64);
     const enc = new TextEncoder();
-    const a = enc.encode(decrypted);
-    const b = enc.encode(password);
-    if (a.byteLength !== b.byteLength) return false;
-    return crypto.subtle.timingSafeEqual(a, b);
+    const [hashA, hashB] = await Promise.all([
+      crypto.subtle.digest("SHA-256", enc.encode(decrypted)),
+      crypto.subtle.digest("SHA-256", enc.encode(password)),
+    ]);
+    return crypto.subtle.timingSafeEqual(hashA, hashB);
   } catch {
     return false;
   }

@@ -51,6 +51,13 @@ describe("crypto", () => {
     );
   });
 
+  it("verifyPassword should return false for different-length password", async () => {
+    const encrypted = await encrypt("short", TEST_KEY);
+    expect(
+      await verifyPassword("a-much-longer-password", encrypted, TEST_KEY),
+    ).toBe(false);
+  });
+
   it("verifyPassword should return false for invalid encrypted data", async () => {
     expect(await verifyPassword("password", "invalid-data", TEST_KEY)).toBe(
       false,
