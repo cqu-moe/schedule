@@ -8,7 +8,7 @@ import { spreadEnqueue } from "../utils/queue";
 import {
   PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
-  fetchPersonalSchedule,
+  fetchPersonalScheduleCached,
   buildPersonalSyncResult,
   buildExploreSyncResult,
   applySyncResult,
@@ -105,7 +105,7 @@ export async function processScheduleSyncBatch(
         if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
           if (!personalData && !personalFetchFailed) {
             try {
-              personalData = await fetchPersonalSchedule(api, user.studentId, ctx);
+              personalData = await fetchPersonalScheduleCached(api, user.studentId, ctx, env.CACHE);
             } catch (e) {
               personalFetchFailed = true;
               console.error(JSON.stringify({ event: "queue.schedule_sync.personal_failed", studentId, error: e instanceof Error ? e.message : String(e), message: "Personal schedule fetch failed" }));
