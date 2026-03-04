@@ -14,6 +14,7 @@ import {
 } from "../services/export";
 import { decrypt } from "../services/crypto";
 import { generateToken } from "../utils/token";
+import { handleCquApiError } from "../utils/error";
 import {
   PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
@@ -194,14 +195,8 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
       session_name: newSub.sessionName,
       created_at: newSub.createdAt,
     }, 201);
-  } catch (e: any) {
-    if (e?.statusCode === 401) {
-      return c.json(
-        { detail: "CQU token expired, please re-login" },
-        401,
-      );
-    }
-    return c.json({ detail: e?.message ?? "Failed to fetch schedule" }, 502);
+  } catch (e) {
+    return handleCquApiError(c, e, "Failed to fetch schedule");
   }
 });
 
@@ -282,14 +277,8 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
       sessionId: sub.sessionId,
       sessionName: sub.sessionName,
     });
-  } catch (e: any) {
-    if (e?.statusCode === 401) {
-      return c.json(
-        { detail: "CQU token expired, please re-login" },
-        401,
-      );
-    }
-    return c.json({ detail: e?.message ?? "Refresh failed" }, 502);
+  } catch (e) {
+    return handleCquApiError(c, e, "Refresh failed");
   }
 
   return c.json({ success: true });
