@@ -14,6 +14,9 @@ const app = new Hono<AuthEnv>();
 app.get("/search", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) => {
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
+  if (!keyword.trim()) {
+    return c.json({ detail: "keyword is required" }, 400);
+  }
   if (keyword.length > 100) {
     return c.json(
       { detail: "keyword must not exceed 100 characters" },
