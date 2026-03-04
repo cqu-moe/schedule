@@ -406,6 +406,37 @@ describe('Dashboard view', () => {
     expect(mockToast.error).toHaveBeenCalledWith('删除失败')
   })
 
+  // Sync all calls refreshSubscription in parallel
+  it('sync all calls refreshSubscription in parallel (not sequentially)', async () => {
+    vi.useFakeTimers()
+
+    const subs = [
+      mockSubscription({ calendar_token: 'p1', is_personal: true }),
+      mockSubscription({ calendar_token: 'p2', is_personal: true, source_type: 'personal_courses' }),
+    ]
+    const { wrapper } = await mountDashboard(subs)
+
+    // Set mock AFTER mountDashboard (which resets it via mockResolvedValue)
+    const callOrder: string[] = []
+    mockApi.refreshSubscription.mockImplementation(async (_token: string, subToken: string) => {
+      callOrder.push(`start:${subToken}`)
+      await new Promise(r => setTimeout(r, 50))
+      callOrder.push(`end:${subToken}`)
+      return {}
+    })
+
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+
+    // Advance timers to resolve the setTimeout(50) inside the mock
+    await vi.advanceTimersByTimeAsync(100)
+    await flushPromises()
+
+    // Both should start before either ends (parallel execution)
+    expect(callOrder.indexOf('start:p2')).toBeLessThan(callOrder.indexOf('end:p1'))
+  })
+
   // Error feedback: delete account failure
   it('shows toast error when delete account fails', async () => {
     mockApi.deleteUser.mockRejectedValue(new Error('server error'))
