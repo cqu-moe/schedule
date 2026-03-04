@@ -1,4 +1,5 @@
 import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
+import { bufferToBase64 } from "../utils/encoding";
 
 const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
 
@@ -41,12 +42,7 @@ async function generateUid(
   const source = `${username},${summary},${start},${end}`;
   const encoded = new TextEncoder().encode(source);
   const hash = await crypto.subtle.digest("SHA-256", encoded);
-  const bytes = new Uint8Array(hash);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+  return bufferToBase64(hash);
 }
 
 function calculateEventTime(
