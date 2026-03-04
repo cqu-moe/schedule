@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { users, subscriptions, type Subscription } from "../db/schema";
+import { subscriptions, type Subscription } from "../db/schema";
 import type { Env } from "../types";
 import { requireAuth, requireAuthWithCquToken, type LightUser, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
