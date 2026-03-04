@@ -1,7 +1,6 @@
 import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
 import { bufferToBase64 } from "../utils/encoding";
-
-const CHINA_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+import { CHINA_TZ_OFFSET_MS } from "../utils/time";
 
 const ICS_HEADER = [
   "BEGIN:VCALENDAR",
