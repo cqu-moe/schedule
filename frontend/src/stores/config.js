@@ -29,10 +29,10 @@ export const useConfigStore = defineStore('config', {
         const config = await api.getCaptchaConfig()
         this.captchaEnabled = config.enabled
         this.captchaSitekey = config.sitekey
+        this.captchaLoaded = true
       } catch {
         // Proceed without captcha — graceful degradation
-      } finally {
-        this.captchaLoaded = true
+        // Don't set captchaLoaded so it can be retried
       }
     },
   },
