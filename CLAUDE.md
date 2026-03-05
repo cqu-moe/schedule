@@ -40,7 +40,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
 - `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试用 `npx vitest run --exclude 'frontend/**'`（`npx vitest run src/` 仍会拾取 frontend 测试）
-- 错误响应格式: `{ detail: { error: { code, message } } }` 或 `{ detail: "string" }`
+- 错误响应格式: 统一为 `{ detail: { error: { code, message } } }`，使用 `errorResponse(code, message, status)` (from `src/utils/error.ts`)
+- CaptchaError.message 就是 error code 字符串 (如 "CAPTCHA_REQUIRED")，`errorResponse(e.message, e.message, 403)`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
 - `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
@@ -89,7 +90,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)
-- `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化)
+- `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化, error.ts: `errorResponse()` + `handleCquApiError()`)
 - `frontend/` — Vue 前端 (独立 npm 项目)
 - `frontend/vitest.config.ts` — 前端测试配置 (jsdom, @/ alias)
 - `frontend/src/test-setup.ts` — 全局 mock (clipboard, hCaptcha, shadcn stubs)
