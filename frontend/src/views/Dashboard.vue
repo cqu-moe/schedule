@@ -280,6 +280,7 @@ const hasPendingSubs = computed(() =>
   subStore.subscriptions.some(s => !s.last_synced_at)
 )
 
+/** @type {ReturnType<typeof setInterval> | null} */
 let pollTimer = null
 
 // Button feedback
@@ -383,9 +384,13 @@ async function handleSyncAll() {
   try {
     await syncFeedback.run(async () => {
       const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
-      await Promise.all(
+      const results = await Promise.allSettled(
         personalSubs.map(sub => api.refreshSubscription(authStore.token, sub.calendar_token))
       )
+      const failures = results.filter(r => r.status === 'rejected')
+      if (failures.length > 0) {
+        throw failures.length === 1 ? failures[0].reason : new Error(`${failures.length} 个订阅同步失败`)
+      }
       await subStore.load().catch(() => {})
       await authStore.fetchUserInfo()
     })

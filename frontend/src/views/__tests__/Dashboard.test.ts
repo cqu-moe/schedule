@@ -364,7 +364,7 @@ describe('Dashboard view', () => {
     })
 
     const syncBtn = wrapper.findAll('button').find(
-      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('所有') && !b.text().includes('中')),
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人') && !b.text().includes('中')),
     )
     await syncBtn!.trigger('click')
     await flushPromises()
