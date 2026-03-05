@@ -34,7 +34,7 @@
   </AlertDialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -50,23 +50,22 @@ import {
 
 const router = useRouter()
 
-defineProps({
-  modelValue: {
-    type: Boolean,
-    required: true,
-  },
-})
+defineProps<{
+  modelValue: boolean
+}>()
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+}>()
 
 const agreed = ref(false)
 
-function handleCancel() {
+function handleCancel(): void {
   emit('update:modelValue', false)
   router.push('/')
 }
 
-function handleConfirm() {
+function handleConfirm(): void {
   localStorage.setItem('risk_warning_acknowledged', 'true')
   emit('update:modelValue', false)
 }

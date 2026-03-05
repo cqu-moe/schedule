@@ -98,7 +98,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Copy, Check, X, Loader2, Circle, CircleCheck } from 'lucide-vue-next'
@@ -129,7 +129,7 @@ const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCapt
 const { showRiskWarning } = useRiskWarning()
 
 const registerFeedback = useButtonFeedback()
-const phase = ref('form')
+const phase = ref<'form' | 'progress'>('form')
 const currentStep = ref(0)
 const steps = ['验证凭据', '连接教务系统', '获取 Token']
 
@@ -139,7 +139,7 @@ const showTokenDialog = ref(false)
 const displayToken = ref('')
 const copied = ref(false)
 const opSaveValue = ref('')
-let stepTimers = []
+let stepTimers: ReturnType<typeof setTimeout>[] = []
 
 onBeforeUnmount(() => {
   stepTimers.forEach(clearTimeout)

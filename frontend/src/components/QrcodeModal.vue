@@ -13,7 +13,7 @@
   </Dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import QrcodeVue from 'qrcode.vue'
 import {
   Dialog,
@@ -23,16 +23,12 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 
-defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false
-  },
-  url: {
-    type: String,
-    required: true
-  }
-})
+defineProps<{
+  modelValue?: boolean
+  url: string
+}>()
 
-defineEmits(['update:modelValue'])
+defineEmits<{
+  'update:modelValue': [value: boolean]
+}>()
 </script>

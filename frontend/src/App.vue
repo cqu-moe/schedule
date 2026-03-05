@@ -9,7 +9,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Sonner as Toaster } from '@/components/ui/sonner'

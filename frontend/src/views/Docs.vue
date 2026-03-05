@@ -151,7 +151,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import Navbar from '@/components/Navbar.vue'

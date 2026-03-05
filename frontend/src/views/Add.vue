@@ -143,7 +143,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
@@ -153,6 +153,7 @@ import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
 import { useAuthStore } from '@/stores/auth'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import api from '@/api'
+import type { SearchResult, SourceType } from '@/types/api'
 import Navbar from '@/components/Navbar.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -170,19 +171,19 @@ const authStore = useAuthStore()
 const subStore = useSubscriptionsStore()
 const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
 
-const sourceType = ref('instructor')
+const sourceType = ref<SourceType>('instructor')
 const keyword = ref('')
 const selectedDepartment = ref('')
 const selectedGrade = ref('all')
-const departments = ref([])
-const searchResults = ref([])
+const departments = ref<SearchResult[]>([])
+const searchResults = ref<SearchResult[]>([])
 const searching = ref(false)
 const searched = ref(false)
 const subscribeFeedback = useButtonFeedback()
 const errorMessage = ref('')
 const isTokenExpired = ref(false)
 
-let debounceTimer = null
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const searchPlaceholder = computed(() => {
   const map = {
@@ -195,15 +196,15 @@ const searchPlaceholder = computed(() => {
   return map[sourceType.value] || '搜索...'
 })
 
-function isSubscribed(sourceId) {
+function isSubscribed(sourceId: string) {
   return subStore.subscriptions.some(
     s => s.source_id === sourceId && s.source_type === sourceType.value
   )
 }
 
-function handleApiError(err, fallbackMessage) {
+function handleApiError(err: unknown, fallbackMessage: string) {
   const msg = parseApiError(err, fallbackMessage)
-  const resp = err?.response
+  const resp = (err as { response?: { status?: number } })?.response
   if (resp?.status === 401 || /token expired/i.test(msg)) {
     errorMessage.value = msg
     isTokenExpired.value = true
@@ -243,7 +244,7 @@ async function loadDepartments() {
   try {
     const data = await api.getDepartments(authStore.token)
     departments.value = data.departments
-  } catch (err) {
+  } catch (err: unknown) {
     handleApiError(err, '加载院系列表失败')
   }
 }
@@ -258,7 +259,7 @@ function debouncedSearch() {
   debounceTimer = setTimeout(() => doSearch(), 300)
 }
 
-async function handleDepartmentChange(deptId) {
+async function handleDepartmentChange(deptId: string) {
   selectedDepartment.value = deptId
   await doSearch()
 }
@@ -278,7 +279,7 @@ async function doSearch() {
       gradeParam,
     )
     searchResults.value = data.results
-  } catch (err) {
+  } catch (err: unknown) {
     handleApiError(err, '搜索失败')
     searchResults.value = []
   } finally {
@@ -287,7 +288,7 @@ async function doSearch() {
   }
 }
 
-async function handleSubscribe(item) {
+async function handleSubscribe(item: SearchResult) {
   clearError()
 
   let captchaToken = null
@@ -305,7 +306,7 @@ async function handleSubscribe(item) {
       )
       await subStore.load().catch(() => {})
     }, item.id)
-  } catch (err) {
+  } catch (err: unknown) {
     handleApiError(err, '订阅失败')
   } finally {
     hcaptchaRef.value?.reset()

@@ -56,7 +56,7 @@
   </Popover>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Check, ChevronsUpDown } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
@@ -65,25 +65,33 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from '@/components/ui/command'
 
-const props = defineProps({
-  departments: { type: Array, default: () => [] },
-  modelValue: { type: String, default: '' },
-})
-const emit = defineEmits(['update:modelValue'])
+export interface Department {
+  id: string
+  name: string
+  children?: Department[]
+}
+
+const props = defineProps<{
+  departments?: Department[]
+  modelValue?: string
+}>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+}>()
 
 const open = ref(false)
 const selected = ref('')
 
 // Build flat lookup for label display
-const allDepts = computed(() => {
-  const result = []
-  function walk(list) {
+const allDepts = computed<Department[]>(() => {
+  const result: Department[] = []
+  function walk(list: Department[]): void {
     for (const d of list) {
       result.push(d)
       if (d.children) walk(d.children)
     }
   }
-  walk(props.departments)
+  walk(props.departments ?? [])
   return result
 })
 
@@ -91,7 +99,7 @@ const selectedLabel = computed(() =>
   allDepts.value.find(d => d.id === props.modelValue)?.name || ''
 )
 
-function selectDept(dept) {
+function selectDept(dept: Department): void {
   emit('update:modelValue', dept.id)
   open.value = false
 }
