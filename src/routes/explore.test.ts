@@ -26,20 +26,20 @@ describe("GET /search keyword validation", () => {
     const res = await get("/search?source_type=instructor&keyword=");
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.detail).toContain("keyword");
+    expect(body.detail.error.message).toContain("keyword");
   });
 
   it("rejects missing keyword param with 400", async () => {
     const res = await get("/search?source_type=instructor");
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.detail).toContain("keyword");
+    expect(body.detail.error.message).toContain("keyword");
   });
 
   it("rejects whitespace-only keyword with 400", async () => {
     const res = await get("/search?source_type=instructor&keyword=%20%20%20");
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.detail).toContain("keyword");
+    expect(body.detail.error.message).toContain("keyword");
   });
 });
