@@ -233,7 +233,7 @@ import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lu
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useRiskWarning } from '@/composables/useRiskWarning'
 import { useAuthStore } from '@/stores/auth'
-import { useConfigStore } from '@/stores/config.js'
+import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions.js'
 import { toast } from 'vue-sonner'
 import api from '@/api'

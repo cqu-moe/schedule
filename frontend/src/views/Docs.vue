@@ -153,7 +153,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { useConfigStore } from '@/stores/config.js'
+import { useConfigStore } from '@/stores/config'
 import Navbar from '@/components/Navbar.vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
