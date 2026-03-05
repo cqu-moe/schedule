@@ -69,7 +69,7 @@ async function handleLogin() {
 
   const result = await authStore.loginWithToken(tokenInput.value)
   if (result.success) {
-    const redirect = route.query.redirect || '/dashboard'
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     router.push(redirect)
   } else {
     errorMessage.value = result.error
