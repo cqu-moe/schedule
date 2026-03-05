@@ -1,12 +1,12 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { subscriptions, type Subscription } from "../db/schema";
+import { subscriptions, type Subscription, PERSONAL_SOURCE_TYPES, EXPLORE_SOURCE_TYPES, type SourceType, type ExploreSourceType } from "../db/schema";
 import type { Env } from "../types";
 import { requireAuth, requireAuthWithCquToken, type LightUser, type AuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
-import { CQUAPIClient } from "../services/cqu-api";
+import { CQUAPIClient, type CourseEntry, type ExamEntry } from "../services/cqu-api";
 import {
   semesterShortName,
   generateFormattedEvents,
@@ -16,7 +16,6 @@ import { decrypt } from "../services/crypto";
 import { generateToken } from "../utils/token";
 import { handleCquApiError, errorResponse } from "../utils/error";
 import {
-  PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
   fetchPersonalScheduleCached,
   buildPersonalSyncResult,
@@ -94,14 +93,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     return errorResponse("BAD_REQUEST", "source_name must not exceed 200 characters", 400);
   }
 
-  const validTypes = [
-    "instructor",
-    "room",
-    "laboratory",
-    "course",
-    "admin_class",
-  ];
-  if (!validTypes.includes(body.source_type)) {
+  if (!EXPLORE_SOURCE_TYPES.has(body.source_type as SourceType)) {
     return errorResponse("BAD_REQUEST", "Invalid source_type", 400);
   }
 
@@ -145,7 +137,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
 
     const result = await buildExploreSyncResult(
       api,
-      body.source_type,
+      body.source_type as ExploreSourceType,
       body.source_id,
       user.studentId,
       ctx,
@@ -248,13 +240,14 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
     const ctx = await fetchSessionContextCached(api, c.env.CACHE);
     let result;
 
-    if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
+    const st = sub.sourceType as SourceType;
+    if (PERSONAL_SOURCE_TYPES.has(st)) {
       const data = await fetchPersonalScheduleCached(api, user.studentId, ctx, c.env.CACHE);
-      result = await buildPersonalSyncResult(sub.sourceType, data, user.studentId);
+      result = await buildPersonalSyncResult(st, data, user.studentId);
     } else {
       result = await buildExploreSyncResult(
         api,
-        sub.sourceType,
+        st as ExploreSourceType,
         sub.sourceId,
         user.studentId,
         ctx,
@@ -369,7 +362,7 @@ app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
 type ExportSub = Pick<Subscription, 'coursesJson' | 'examsJson' | 'semesterStart' | 'sessionName'>;
 
-function parseSubJson(sub: ExportSub): { courses: any[] | null; exams: any[] | null } | null {
+function parseSubJson(sub: ExportSub): { courses: CourseEntry[] | null; exams: ExamEntry[] | null } | null {
   try {
     return {
       courses: sub.coursesJson ? JSON.parse(sub.coursesJson) : null,
@@ -380,7 +373,7 @@ function parseSubJson(sub: ExportSub): { courses: any[] | null; exams: any[] | n
   }
 }
 
-async function getSubForExport(c: any): Promise<ExportSub | Response> {
+async function getSubForExport(c: Context<AuthEnv>): Promise<ExportSub | Response> {
   const subToken = c.req.param("sub_token");
   const db = drizzle(c.env.DB);
 
