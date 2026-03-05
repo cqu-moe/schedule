@@ -57,6 +57,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `git log --format` 中 `%d` 是 ref names 不是日期；获取日期用 `--format=%cd --date=short`
 - `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
 - `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
+- Git commit 签名依赖 1Password SSH agent；若 1Password 未解锁会报 "failed to fill whole buffer"，此时用 `-c commit.gpgsign=false` 暂时跳过，待 1Password 可用后用 `git rebase --exec 'git commit --amend --no-edit -S' HEAD~N` 补签
 - D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
 - 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
