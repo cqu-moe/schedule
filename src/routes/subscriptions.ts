@@ -275,8 +275,11 @@ app.get("/:sub_token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .where(eq(subscriptions.calendarToken, subToken))
     .limit(1);
 
-  if (!sub || !sub.icsContent) {
-    return errorResponse("NOT_FOUND", "Subscription not found or no data", 404);
+  if (!sub) {
+    return errorResponse("NOT_FOUND", "Subscription not found", 404);
+  }
+  if (!sub.icsContent) {
+    return errorResponse("NOT_SYNCED", "Subscription data not yet available", 202);
   }
 
   return new Response(sub.icsContent, {
@@ -387,8 +390,11 @@ async function getSubForExport(c: Context<AuthEnv>): Promise<ExportSub | Respons
     .where(eq(subscriptions.calendarToken, subToken))
     .limit(1);
 
-  if (!sub || (sub.coursesJson === null && sub.examsJson === null)) {
-    return errorResponse("NOT_FOUND", "Subscription not found or no data", 404);
+  if (!sub) {
+    return errorResponse("NOT_FOUND", "Subscription not found", 404);
+  }
+  if (sub.coursesJson === null && sub.examsJson === null) {
+    return errorResponse("NOT_SYNCED", "Subscription data not yet available", 202);
   }
 
   return sub;
