@@ -240,14 +240,13 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
     const ctx = await fetchSessionContextCached(api, c.env.CACHE);
     let result;
 
-    const st = sub.sourceType as SourceType;
-    if (PERSONAL_SOURCE_TYPES.has(st)) {
+    if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
       const data = await fetchPersonalScheduleCached(api, user.studentId, ctx, c.env.CACHE);
-      result = await buildPersonalSyncResult(st, data, user.studentId);
+      result = await buildPersonalSyncResult(sub.sourceType, data, user.studentId);
     } else {
       result = await buildExploreSyncResult(
         api,
-        st as ExploreSourceType,
+        sub.sourceType as ExploreSourceType,
         sub.sourceId,
         user.studentId,
         ctx,
