@@ -10,6 +10,7 @@ import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
 import { requireAuth } from "../middleware/auth";
 import { generateToken } from "../utils/token";
+import { errorResponse } from "../utils/error";
 import { CQUAPIClient } from "../services/cqu-api";
 import {
   fetchSessionContextCached,
@@ -21,13 +22,6 @@ import {
 const STUDENT_ID_PATTERN = /^\d{8}$|^\d{17}[\dX]$/;
 
 const app = new Hono<{ Bindings: Env }>();
-
-function errorResponse(code: string, message: string, status: number): Response {
-  return Response.json(
-    { detail: { error: { code, message } } },
-    { status },
-  );
-}
 
 function handleAuthError(e: AuthError): Response {
   if (e.code === "INVALID_CREDENTIALS") {
@@ -43,7 +37,7 @@ async function requireCaptcha(c: Context<{ Bindings: Env }>): Promise<Response |
     return null;
   } catch (e) {
     if (e instanceof CaptchaError) {
-      return c.json({ detail: e.message }, 403);
+      return errorResponse(e.message, e.message, 403);
     }
     throw e;
   }
@@ -56,22 +50,16 @@ async function parseCredentials(
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ detail: "Invalid JSON body" }, 400);
+    return errorResponse("BAD_REQUEST", "Invalid JSON body", 400);
   }
   if (!body.student_id || !body.password) {
-    return c.json({ detail: "student_id and password required" }, 400);
+    return errorResponse("BAD_REQUEST", "student_id and password required", 400);
   }
   if (!STUDENT_ID_PATTERN.test(body.student_id)) {
-    return c.json(
-      { detail: "student_id must be 8-digit number or 18-digit ID card number" },
-      400,
-    );
+    return errorResponse("BAD_REQUEST", "student_id must be 8-digit number or 18-digit ID card number", 400);
   }
   if (body.password.length > 256) {
-    return c.json(
-      { detail: "password must not exceed 256 characters" },
-      400,
-    );
+    return errorResponse("BAD_REQUEST", "password must not exceed 256 characters", 400);
   }
   return body;
 }

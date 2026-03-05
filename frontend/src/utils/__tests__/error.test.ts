@@ -2,24 +2,24 @@ import { describe, it, expect } from 'vitest'
 import { parseApiError } from '@/utils/error'
 
 describe('parseApiError', () => {
-  it('returns string detail directly', () => {
-    const error = { response: { data: { detail: '自定义错误' } } }
+  it('returns error message from structured error', () => {
+    const error = { response: { data: { detail: { error: { code: 'BAD_REQUEST', message: '自定义错误' } } } } }
     expect(parseApiError(error)).toBe('自定义错误')
   })
 
-  it('maps CAPTCHA_REQUIRED string detail to message', () => {
-    const error = { response: { data: { detail: 'CAPTCHA_REQUIRED' } } }
+  it('maps CAPTCHA_REQUIRED code to message', () => {
+    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA_REQUIRED' } } } } }
     expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
   })
 
-  it('maps CAPTCHA_FAILED string detail to message', () => {
-    const error = { response: { data: { detail: 'CAPTCHA_FAILED' } } }
+  it('maps CAPTCHA_FAILED code to message', () => {
+    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_FAILED', message: 'CAPTCHA_FAILED' } } } } }
     expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
   })
 
-  it('returns error.message from structured error', () => {
-    const error = { response: { data: { detail: { error: { message: '具体错误信息' } } } } }
-    expect(parseApiError(error)).toBe('具体错误信息')
+  it('maps RATE_LIMITED code to message', () => {
+    const error = { response: { data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } } } }
+    expect(parseApiError(error)).toBe('操作过于频繁，请稍后再试')
   })
 
   it('returns fallback when no response', () => {

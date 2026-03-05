@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { users, type User } from "../db/schema";
 import type { Env } from "../types";
+import { errorResponse } from "../utils/error";
 
 /** Light user: no encrypted fields, for routes that don't need CQU tokens */
 export type LightUser = Pick<User, 'id' | 'studentId' | 'calendarToken' | 'createdAt' | 'lastRefreshAt'>;
@@ -13,7 +14,7 @@ export type AuthUser = LightUser & Pick<User, 'accessToken'>;
 function parseToken(c: any): string | Response {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return c.json({ detail: "Invalid authorization header" }, 401);
+    return errorResponse("UNAUTHORIZED", "Invalid authorization header", 401);
   }
   return authHeader.slice(7);
 }
@@ -39,7 +40,7 @@ export const requireAuth = createMiddleware<{
     .limit(1);
 
   if (!user) {
-    return c.json({ detail: "Invalid token" }, 401);
+    return errorResponse("UNAUTHORIZED", "Invalid token", 401);
   }
 
   c.set("user", user);
@@ -68,11 +69,11 @@ export const requireAuthWithCquToken = createMiddleware<{
     .limit(1);
 
   if (!user) {
-    return c.json({ detail: "Invalid token" }, 401);
+    return errorResponse("UNAUTHORIZED", "Invalid token", 401);
   }
 
   if (!user.accessToken) {
-    return c.json({ detail: "CQU token expired, please re-login" }, 401);
+    return errorResponse("TOKEN_EXPIRED", "CQU token expired, please re-login", 401);
   }
 
   c.set("user", user);

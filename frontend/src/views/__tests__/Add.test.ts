@@ -274,7 +274,7 @@ describe('Add view', () => {
   it('shows error message on API failure', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
-      response: { data: { detail: '搜索失败' } },
+      response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '搜索失败' } } } },
     })
 
     const { wrapper } = await mountAdd()
@@ -293,7 +293,7 @@ describe('Add view', () => {
   it('shows "重新登录" link on 401 error', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
-      response: { status: 401, data: { detail: '认证已过期' } },
+      response: { status: 401, data: { detail: { error: { code: 'UNAUTHORIZED', message: '认证已过期' } } } },
     })
 
     const { wrapper } = await mountAdd()
@@ -312,7 +312,7 @@ describe('Add view', () => {
   it('shows "重新登录" link when error contains "token expired"', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
-      response: { data: { detail: 'token expired' } },
+      response: { data: { detail: { error: { code: 'UNAUTHORIZED', message: 'token expired' } } } },
     })
 
     const { wrapper } = await mountAdd()
@@ -350,7 +350,7 @@ describe('Add view', () => {
   // Error feedback: load departments failure
   it('shows toast error when department load fails', async () => {
     mockApi.getDepartments.mockRejectedValue({
-      response: { data: { detail: '加载院系列表失败' } },
+      response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '加载院系列表失败' } } } },
     })
 
     const { wrapper } = await mountAdd()

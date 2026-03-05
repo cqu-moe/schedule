@@ -52,14 +52,14 @@ function describeValidation(endpointName: string, path: string) {
       const res = await post(path, { password: "test123" });
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.detail).toContain("student_id");
+      expect(body.detail.error.message).toContain("student_id");
     });
 
     it("rejects missing password", async () => {
       const res = await post(path, { student_id: "20210001" });
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.detail).toContain("password");
+      expect(body.detail.error.message).toContain("password");
     });
 
     it("rejects empty body", async () => {
@@ -72,7 +72,7 @@ function describeValidation(endpointName: string, path: string) {
       const res = await post(path, { student_id: "abcdefgh", password: "test123" });
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.detail).toContain("student_id");
+      expect(body.detail.error.message).toContain("student_id");
     });
 
     it("rejects student_id that is too short (7 digits)", async () => {
@@ -129,7 +129,7 @@ function describeValidation(endpointName: string, path: string) {
       });
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.detail).toContain("256");
+      expect(body.detail.error.message).toContain("256");
     });
 
     it("accepts password of exactly 256 characters (does not return 400)", async () => {
@@ -161,7 +161,7 @@ describe("validation edge cases", () => {
     );
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.detail).toContain("JSON");
+    expect(body.detail.error.message).toContain("JSON");
   });
 
   it("rejects student_id with lowercase x (only uppercase X allowed)", async () => {

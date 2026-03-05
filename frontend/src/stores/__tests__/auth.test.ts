@@ -74,7 +74,7 @@ describe('auth store', () => {
 
     it('returns rate limit message on 429 error', async () => {
       mockApi.register.mockRejectedValue({
-        response: { status: 429, data: { detail: '操作过于频繁，请稍后再试' } },
+        response: { status: 429, data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } } },
       })
 
       const { useAuthStore } = await import('@/stores/auth.js')
@@ -86,7 +86,7 @@ describe('auth store', () => {
 
     it('returns captcha error on CAPTCHA_REQUIRED', async () => {
       mockApi.register.mockRejectedValue({
-        response: { status: 400, data: { detail: 'CAPTCHA_REQUIRED' } },
+        response: { status: 400, data: { detail: { error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA_REQUIRED' } } } },
       })
 
       const { useAuthStore } = await import('@/stores/auth.js')

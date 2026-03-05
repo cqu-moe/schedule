@@ -54,24 +54,42 @@ describe('API module', () => {
   // ── Response interceptor ──
 
   describe('response interceptor', () => {
-    it('replaces data on 429 error', async () => {
+    it('provides fallback data on 429 error with no body', async () => {
       expect(interceptorErrorHandler).toBeDefined()
 
       const error = {
-        response: { status: 429, data: { detail: 'Rate limit exceeded' } },
+        response: { status: 429, data: {} },
       }
 
       await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
-      expect(error.response.data).toEqual({ detail: '操作过于频繁，请稍后再试' })
+      expect(error.response.data).toEqual({
+        detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } },
+      })
+    })
+
+    it('preserves existing body on 429 error', async () => {
+      const error = {
+        response: {
+          status: 429,
+          data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } },
+        },
+      }
+
+      await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
+      expect(error.response.data).toEqual({
+        detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } },
+      })
     })
 
     it('passes through non-429 errors unchanged', async () => {
       const error = {
-        response: { status: 500, data: { detail: 'Server error' } },
+        response: { status: 500, data: { detail: { error: { code: 'INTERNAL_ERROR', message: 'Server error' } } } },
       }
 
       await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
-      expect(error.response.data).toEqual({ detail: 'Server error' })
+      expect(error.response.data).toEqual({
+        detail: { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
+      })
     })
   })
 

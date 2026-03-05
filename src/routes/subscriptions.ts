@@ -14,7 +14,7 @@ import {
 } from "../services/export";
 import { decrypt } from "../services/crypto";
 import { generateToken } from "../utils/token";
-import { handleCquApiError } from "../utils/error";
+import { handleCquApiError, errorResponse } from "../utils/error";
 import {
   PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
@@ -74,7 +74,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   try {
     await verifyCaptcha(c.env, captchaToken);
   } catch (e) {
-    if (e instanceof CaptchaError) return c.json({ detail: e.message }, 403);
+    if (e instanceof CaptchaError) return errorResponse(e.message, e.message, 403);
     throw e;
   }
 
@@ -82,22 +82,16 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ detail: "Invalid JSON body" }, 400);
+    return errorResponse("BAD_REQUEST", "Invalid JSON body", 400);
   }
   if (!body.source_id || !body.source_name) {
-    return c.json({ detail: "source_id and source_name required" }, 400);
+    return errorResponse("BAD_REQUEST", "source_id and source_name required", 400);
   }
   if (body.source_id.length > 100) {
-    return c.json(
-      { detail: "source_id must not exceed 100 characters" },
-      400,
-    );
+    return errorResponse("BAD_REQUEST", "source_id must not exceed 100 characters", 400);
   }
   if (body.source_name.length > 200) {
-    return c.json(
-      { detail: "source_name must not exceed 200 characters" },
-      400,
-    );
+    return errorResponse("BAD_REQUEST", "source_name must not exceed 200 characters", 400);
   }
 
   const validTypes = [
@@ -108,7 +102,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     "admin_class",
   ];
   if (!validTypes.includes(body.source_type)) {
-    return c.json({ detail: "Invalid source_type" }, 400);
+    return errorResponse("BAD_REQUEST", "Invalid source_type", 400);
   }
 
   const user = c.get("user") as AuthUser;
@@ -126,10 +120,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     .where(eq(subscriptions.userId, user.id));
 
   if (existingSubs.length >= maxSubs) {
-    return c.json(
-      { detail: `Maximum subscriptions (${maxSubs}) reached` },
-      409,
-    );
+    return errorResponse("MAX_SUBSCRIPTIONS", `Maximum subscriptions (${maxSubs}) reached`, 409);
   }
 
   // Fetch target schedule and generate ICS
@@ -148,10 +139,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
         s.sourceId === body.source_id &&
         s.sessionId === sessionId
       ) {
-        return c.json(
-          { detail: "Subscription already exists for this session" },
-          409,
-        );
+        return errorResponse("SUBSCRIPTION_DUPLICATE", "Subscription already exists for this session", 409);
       }
     }
 
@@ -220,9 +208,9 @@ app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
     )
     .limit(1);
 
-  if (!sub) return c.json({ detail: "Subscription not found" }, 404);
+  if (!sub) return errorResponse("NOT_FOUND", "Subscription not found", 404);
   if (sub.isPersonal)
-    return c.json({ detail: "Cannot delete personal subscriptions" }, 403);
+    return errorResponse("FORBIDDEN", "Cannot delete personal subscriptions", 403);
 
   await db.delete(subscriptions).where(eq(subscriptions.id, sub.id));
   return c.body(null, 204);
@@ -251,7 +239,7 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
     )
     .limit(1);
 
-  if (!sub) return c.json({ detail: "Subscription not found" }, 404);
+  if (!sub) return errorResponse("NOT_FOUND", "Subscription not found", 404);
 
   const accessToken = await decrypt(user.accessToken!, c.env.ENCRYPTION_KEY);
   const api = new CQUAPIClient(accessToken);
@@ -296,7 +284,7 @@ app.get("/:sub_token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .limit(1);
 
   if (!sub || !sub.icsContent) {
-    return c.json({ detail: "Subscription not found or no data" }, 404);
+    return errorResponse("NOT_FOUND", "Subscription not found or no data", 404);
   }
 
   return new Response(sub.icsContent, {
@@ -314,7 +302,7 @@ app.get("/:sub_token/origin.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   if (sub instanceof Response) return sub;
 
   const parsed = parseSubJson(sub);
-  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
+  if (!parsed) return errorResponse("DATA_CORRUPTED", "Stored data is corrupted", 500);
 
   return new Response(JSON.stringify({
     courses: parsed.courses ?? [],
@@ -334,7 +322,7 @@ app.get("/:sub_token/data.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
   if (sub instanceof Response) return sub;
 
   const parsed = parseSubJson(sub);
-  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
+  if (!parsed) return errorResponse("DATA_CORRUPTED", "Stored data is corrupted", 500);
 
   const events = generateFormattedEvents(
     parsed.courses,
@@ -362,7 +350,7 @@ app.get("/:sub_token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
   if (sub instanceof Response) return sub;
 
   const parsed = parseSubJson(sub);
-  if (!parsed) return c.json({ detail: "Stored data is corrupted" }, 500);
+  if (!parsed) return errorResponse("DATA_CORRUPTED", "Stored data is corrupted", 500);
 
   const events = generateFormattedEvents(
     parsed.courses,
@@ -408,7 +396,7 @@ async function getSubForExport(c: any): Promise<ExportSub | Response> {
     .limit(1);
 
   if (!sub || (sub.coursesJson === null && sub.examsJson === null)) {
-    return c.json({ detail: "Subscription not found or no data" }, 404);
+    return errorResponse("NOT_FOUND", "Subscription not found or no data", 404);
   }
 
   return sub;
