@@ -80,6 +80,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Captcha 配置加载失败应静默降级（captcha 可选），不要弹 toast 报错
 - Mutation 成功后调用 loadSubscriptions() 刷新列表时，成功 toast 须在 loadSubscriptions() 之前发出，reload 用 `.catch(() => {})` 忽略失败
 - 429 限频由 axios interceptor (`frontend/src/api/index.ts`) 统一转为 `{ detail: "操作过于频繁，请稍后再试" }`，`parseApiError` 自动处理
+- 前端 API 类型定义: `frontend/src/types/api.ts` (UserInfo, Subscription, SearchResult 等)
+- 路由名称常量: `RouteNames` 从 `@/router` 导出，用于 `router.push({ name: RouteNames.Dashboard })`
+- Pinia Composition API store 不自带 `$reset()`，需手动实现（Options API 自带）
+- `vi.hoisted()` 回调中不能 import 其他模块，mock API 对象须内联 `vi.fn()` 创建
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
