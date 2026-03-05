@@ -1,12 +1,11 @@
 import { drizzle } from "drizzle-orm/d1";
 import { isNotNull, eq } from "drizzle-orm";
-import { users, subscriptions } from "../db/schema";
+import { users, subscriptions, PERSONAL_SOURCE_TYPES, type SourceType, type ExploreSourceType } from "../db/schema";
 import type { Env } from "../types";
 import { decrypt } from "../services/crypto";
 import { CQUAPIClient } from "../services/cqu-api";
 import { spreadEnqueue } from "../utils/queue";
 import {
-  PERSONAL_SOURCE_TYPES,
   fetchSessionContextCached,
   fetchPersonalScheduleCached,
   buildPersonalSyncResult,
@@ -134,7 +133,7 @@ export async function processScheduleSyncBatch(
         const exploreResults = await Promise.allSettled(
           exploreSubs.map(async (sub) => {
             const result = await buildExploreSyncResult(
-              api, sub.sourceType, sub.sourceId, user.studentId, ctx,
+              api, sub.sourceType as ExploreSourceType, sub.sourceId, user.studentId, ctx,
             );
             await applySyncResult(db, sub.id, result, ctx, {
               sessionId: sub.sessionId,

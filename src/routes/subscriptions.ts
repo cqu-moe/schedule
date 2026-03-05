@@ -151,7 +151,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
       .insert(subscriptions)
       .values({
         userId: user.id,
-        sourceType: body.source_type,
+        sourceType: body.source_type as ExploreSourceType,
         sourceId: body.source_id,
         sourceName: body.source_name,
         calendarToken: subToken,

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { users, subscriptions } from "../db/schema";
+import { users, subscriptions, type SourceType } from "../db/schema";
 import type { Env } from "../types";
 import { encrypt, verifyPassword } from "../services/crypto";
 import { login, AuthError } from "../services/auth";
@@ -132,11 +132,11 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .returning();
 
   // Create 3 personal subscriptions
-  const personalSubValues = [
-    { sourceType: "personal_all", sourceName: "全部课表" },
-    { sourceType: "personal_courses", sourceName: "仅课程" },
-    { sourceType: "personal_exams", sourceName: "仅考试" },
-  ].map(({ sourceType, sourceName }) => ({
+  const personalSubValues = ([
+    { sourceType: "personal_all" as const, sourceName: "全部课表" },
+    { sourceType: "personal_courses" as const, sourceName: "仅课程" },
+    { sourceType: "personal_exams" as const, sourceName: "仅考试" },
+  ]).map(({ sourceType, sourceName }) => ({
     userId: newUser.id,
     sourceType,
     sourceId: student_id,
@@ -273,7 +273,7 @@ export async function syncNewUserSubscriptions(
   userId: string,
   studentId: string,
   accessToken: string,
-  subIds: { id: string; sourceType: string }[],
+  subIds: { id: string; sourceType: SourceType }[],
 ): Promise<void> {
   try {
     const db = drizzle(env.DB);

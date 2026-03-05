@@ -52,7 +52,7 @@ export const subscriptions = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
 
     /** Source type: see SourceType union */
-    sourceType: text("source_type").notNull(),
+    sourceType: text("source_type").notNull().$type<SourceType>(),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
 
