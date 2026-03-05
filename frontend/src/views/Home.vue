@@ -54,7 +54,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'

@@ -37,7 +37,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
@@ -72,7 +72,7 @@ async function handleLogin() {
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     router.push(redirect)
   } else {
-    errorMessage.value = result.error
+    errorMessage.value = result.error ?? '登录失败'
   }
 }
 </script>

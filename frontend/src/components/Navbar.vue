@@ -73,7 +73,7 @@
   </header>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useColorMode } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import { Monitor, Sun, Moon } from 'lucide-vue-next'
@@ -85,14 +85,14 @@ const authStore = useAuthStore()
 const colorMode = useColorMode()
 const storedMode = colorMode.store
 
-function handleLogout() {
+function handleLogout(): void {
   authStore.logout()
   router.push('/')
 }
 
-function cycleTheme() {
-  const modes = ['auto', 'light', 'dark']
-  const currentIndex = modes.indexOf(storedMode.value)
+function cycleTheme(): void {
+  const modes: Array<'auto' | 'light' | 'dark'> = ['auto', 'light', 'dark']
+  const currentIndex = modes.indexOf(storedMode.value as 'auto' | 'light' | 'dark')
   const nextIndex = (currentIndex + 1) % modes.length
   storedMode.value = modes[nextIndex]
 }

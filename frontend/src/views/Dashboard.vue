@@ -226,7 +226,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lucide-vue-next'
@@ -236,6 +236,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { toast } from 'vue-sonner'
+import type { SourceType } from '@/types/api'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
@@ -280,15 +281,14 @@ const hasPendingSubs = computed(() =>
   subStore.subscriptions.some(s => !s.last_synced_at)
 )
 
-/** @type {ReturnType<typeof setInterval> | null} */
-let pollTimer = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // Button feedback
 const copyFeedback = useButtonFeedback()
 const refreshFeedback = useButtonFeedback()
 const syncFeedback = useButtonFeedback()
 
-const SOURCE_TYPE_LABELS = {
+const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   personal_all: '全部',
   personal_courses: '课程',
   personal_exams: '考试',
@@ -299,21 +299,21 @@ const SOURCE_TYPE_LABELS = {
   admin_class: '行政班',
 }
 
-function sourceTypeLabel(type) {
+function sourceTypeLabel(type: SourceType) {
   return SOURCE_TYPE_LABELS[type] || type
 }
 
-function handleShowQrcode(url) {
+function handleShowQrcode(url: string) {
   qrcodeUrl.value = url
   showQrcode.value = true
 }
 
-function downloadExport(calendarToken, filename) {
+function downloadExport(calendarToken: string, filename: string) {
   const url = `${configStore.publicUrl}/api/v1/subscriptions/${calendarToken}/${filename}`
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-function formatDate(isoString) {
+function formatDate(isoString: string) {
   const date = new Date(isoString)
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -349,7 +349,7 @@ function startSyncPolling() {
   }, POLL_INTERVAL)
 }
 
-async function copyUrl(url, token) {
+async function copyUrl(url: string, token: string) {
   try {
     await copyFeedback.run(async () => {
       await navigator.clipboard.writeText(url)
@@ -359,7 +359,7 @@ async function copyUrl(url, token) {
   }
 }
 
-async function handleRefreshSub(subToken) {
+async function handleRefreshSub(subToken: string) {
   try {
     await refreshFeedback.run(async () => {
       await api.refreshSubscription(authStore.token, subToken)
@@ -371,7 +371,7 @@ async function handleRefreshSub(subToken) {
   }
 }
 
-async function handleDeleteSub(subToken) {
+async function handleDeleteSub(subToken: string) {
   try {
     await api.deleteSubscription(authStore.token, subToken)
     await subStore.load().catch(() => {})

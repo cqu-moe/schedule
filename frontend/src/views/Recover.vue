@@ -100,7 +100,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2, Copy, Check, X } from 'lucide-vue-next'
@@ -128,7 +128,7 @@ const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCapt
 const { showRiskWarning } = useRiskWarning()
 
 const recoverFeedback = useButtonFeedback()
-const step = ref('form')
+const step = ref<'form' | 'mismatch' | 'success'>('form')
 const form = reactive({ studentId: '', password: '' })
 const errorMessage = ref('')
 const recoveredToken = ref('')
@@ -157,8 +157,9 @@ async function handleRecover() {
       step.value = 'success'
       nextTick(() => activateOPButton())
     }, 'recover')
-  } catch (error) {
-    const detail = error.response?.data?.detail
+  } catch (error: unknown) {
+    const axiosErr = error as { response?: { data?: { detail?: { error?: { code?: string } } } } }
+    const detail = axiosErr.response?.data?.detail
     const code = detail?.error?.code
     if (code === 'PASSWORD_MISMATCH') {
       step.value = 'mismatch'
@@ -189,7 +190,7 @@ async function handleVerify() {
       step.value = 'success'
       nextTick(() => activateOPButton())
     }, 'verify')
-  } catch (error) {
+  } catch (error: unknown) {
     errorMessage.value = parseApiError(error, '验证失败')
     hcaptchaRef.value?.reset()
   }
