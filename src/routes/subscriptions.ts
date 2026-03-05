@@ -13,6 +13,7 @@ import {
   generateCsv,
 } from "../services/export";
 import { decrypt } from "../services/crypto";
+import { EMPTY_ICS } from "../services/ics";
 import { generateToken } from "../utils/token";
 import { handleCquApiError, errorResponse } from "../utils/error";
 import {
@@ -278,11 +279,7 @@ app.get("/:sub_token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
   if (!sub) {
     return errorResponse("NOT_FOUND", "Subscription not found", 404);
   }
-  if (!sub.icsContent) {
-    return errorResponse("NOT_SYNCED", "Subscription data not yet available", 202);
-  }
-
-  return new Response(sub.icsContent, {
+  return new Response(sub.icsContent ?? EMPTY_ICS, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": 'attachment; filename="schedule.ics"',
