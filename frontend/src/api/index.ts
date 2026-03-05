@@ -1,4 +1,13 @@
-import axios from 'axios'
+import axios, { type AxiosError } from 'axios'
+import type {
+  UserInfo,
+  SubscriptionList,
+  SearchResult,
+  CaptchaConfig,
+  AppConfig,
+  HealthStatus,
+  Subscription,
+} from '@/types/api'
 
 const client = axios.create({
   baseURL: '/api/v1',
@@ -8,19 +17,19 @@ const client = axios.create({
   }
 })
 
-client.interceptors.response.use(undefined, (error) => {
-  if (error.response?.status === 429 && !error.response?.data?.detail) {
+client.interceptors.response.use(undefined, (error: AxiosError) => {
+  if (error.response?.status === 429 && !(error.response?.data as Record<string, unknown>)?.detail) {
     error.response.data = { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } }
   }
   return Promise.reject(error)
 })
 
-const authHeaders = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
+const authHeaders = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } })
 
 export default {
   // 用户相关
-  async register(studentId, password, captchaToken = null) {
-    const headers = {}
+  async register(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
+    const headers: Record<string, string> = {}
     if (captchaToken) headers['X-Captcha-Token'] = captchaToken
     const response = await client.post('/users', {
       student_id: studentId,
@@ -29,8 +38,8 @@ export default {
     return response.data
   },
 
-  async recoverToken(studentId, password, captchaToken = null) {
-    const headers = {}
+  async recoverToken(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
+    const headers: Record<string, string> = {}
     if (captchaToken) headers['X-Captcha-Token'] = captchaToken
     const response = await client.post('/users/recover', {
       student_id: studentId,
@@ -39,8 +48,8 @@ export default {
     return response.data
   },
 
-  async recoverTokenVerify(studentId, password, captchaToken = null) {
-    const headers = {}
+  async recoverTokenVerify(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
+    const headers: Record<string, string> = {}
     if (captchaToken) headers['X-Captcha-Token'] = captchaToken
     const response = await client.post('/users/recover/verify', {
       student_id: studentId,
@@ -49,22 +58,22 @@ export default {
     return response.data
   },
 
-  async getCaptchaConfig() {
+  async getCaptchaConfig(): Promise<CaptchaConfig> {
     const response = await client.get('/captcha/config')
     return response.data
   },
 
-  async getUserInfo(token) {
+  async getUserInfo(token: string): Promise<UserInfo> {
     const response = await client.get('/users/me', authHeaders(token))
     return response.data
   },
 
-  async deleteUser(token) {
+  async deleteUser(token: string): Promise<void> {
     await client.delete('/users/me', authHeaders(token))
   },
 
   // 搜索相关
-  async searchSchedule(token, sourceType, keyword, departmentId = '', grade = '') {
+  async searchSchedule(token: string, sourceType: string, keyword: string, departmentId = '', grade = ''): Promise<SearchResult[]> {
     const params = new URLSearchParams({ source_type: sourceType, keyword })
     if (departmentId) params.append('department_id', departmentId)
     if (grade) params.append('grade', grade)
@@ -72,14 +81,14 @@ export default {
     return response.data
   },
 
-  async getDepartments(token) {
+  async getDepartments(token: string): Promise<SearchResult[]> {
     const response = await client.get('/departments', authHeaders(token))
     return response.data
   },
 
   // 订阅管理
-  async createSubscription(token, sourceType, sourceId, sourceName, captchaToken = null) {
-    const headers = { Authorization: `Bearer ${token}` }
+  async createSubscription(token: string, sourceType: string, sourceId: string, sourceName: string, captchaToken: string | null = null): Promise<Subscription> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
     if (captchaToken) headers['X-Captcha-Token'] = captchaToken
     const body = {
       source_type: sourceType,
@@ -90,26 +99,26 @@ export default {
     return response.data
   },
 
-  async getSubscriptions(token) {
+  async getSubscriptions(token: string): Promise<SubscriptionList> {
     const response = await client.get('/subscriptions', authHeaders(token))
     return response.data
   },
 
-  async deleteSubscription(token, subToken) {
+  async deleteSubscription(token: string, subToken: string): Promise<void> {
     await client.delete(`/subscriptions/${subToken}`, authHeaders(token))
   },
 
-  async refreshSubscription(token, subToken) {
+  async refreshSubscription(token: string, subToken: string): Promise<Subscription> {
     const response = await client.post(`/subscriptions/${subToken}/refresh`, null, { ...authHeaders(token), timeout: 120000 })
     return response.data
   },
 
-  async getHealth() {
+  async getHealth(): Promise<HealthStatus> {
     const response = await client.get('/health')
     return response.data
   },
 
-  async getConfig() {
+  async getConfig(): Promise<AppConfig> {
     const response = await client.get('/config')
     return response.data
   },

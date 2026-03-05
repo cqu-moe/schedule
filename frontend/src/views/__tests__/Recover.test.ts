@@ -24,7 +24,7 @@ const { mockApi, mockToast } = vi.hoisted(() => {
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('@/api/index', () => ({ default: mockApi }))
 vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Recover } = await import('@/views/Recover.vue')

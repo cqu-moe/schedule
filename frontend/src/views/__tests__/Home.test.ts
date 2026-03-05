@@ -22,7 +22,7 @@ const { mockApi } = vi.hoisted(() => {
 })
 
 vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('@/api/index', () => ({ default: mockApi }))
 
 const { default: Home } = await import('@/views/Home.vue')
 

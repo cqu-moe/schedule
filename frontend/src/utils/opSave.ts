@@ -1,5 +1,5 @@
 import { encodeOPSaveRequest } from '@1password/save-button'
-import { useConfigStore } from '@/stores/config.js'
+import { useConfigStore } from '@/stores/config'
 
 export function buildOPSaveValue(token: string): string {
   const configStore = useConfigStore()

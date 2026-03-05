@@ -1,17 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '../api'
+import api from '@/api'
 import { parseApiError } from '@/utils/error'
-import { useSubscriptionsStore } from '@/stores/subscriptions.js'
+import { useSubscriptionsStore } from '@/stores/subscriptions'
+import type { UserInfo, AuthResult } from '@/types/api'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('calendar_token') || '')
-  const userInfo = ref(null)
+  const userInfo = ref<UserInfo | null>(null)
   const loading = ref(false)
 
   const isAuthenticated = computed(() => !!token.value)
 
-  async function register(studentId, password, captchaToken = null) {
+  async function register(studentId: string, password: string, captchaToken: string | null = null): Promise<AuthResult> {
     loading.value = true
     try {
       const response = await api.register(studentId, password, captchaToken)
@@ -25,7 +26,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function loginWithToken(calendarToken) {
+  async function loginWithToken(calendarToken: string): Promise<AuthResult> {
     loading.value = true
     try {
       const response = await api.getUserInfo(calendarToken)
@@ -44,7 +45,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       userInfo.value = await api.getUserInfo(token.value)
-    } catch (error) {
+    } catch {
       logout()
     }
   }

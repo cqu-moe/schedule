@@ -3,10 +3,12 @@ import { createTestingPinia, type TestingOptions } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { vi } from 'vitest'
 import type { Component } from 'vue'
+import type { UserInfo, Subscription, SubscriptionList, SearchResult } from '@/types/api'
+import { RouteNames } from '@/router'
 
 // ---- Mock data factories ----
 
-export function mockUserInfo(overrides = {}) {
+export function mockUserInfo(overrides: Partial<UserInfo> = {}): UserInfo {
   return {
     student_id: '20210001',
     calendar_token: 'test-token-abc123',
@@ -16,7 +18,7 @@ export function mockUserInfo(overrides = {}) {
   }
 }
 
-export function mockSubscription(overrides = {}) {
+export function mockSubscription(overrides: Partial<Subscription> = {}): Subscription {
   return {
     calendar_token: 'sub-token-123',
     source_type: 'personal_all',
@@ -30,11 +32,11 @@ export function mockSubscription(overrides = {}) {
   }
 }
 
-export function mockSubscriptionList(subs = [mockSubscription()], max = 5) {
+export function mockSubscriptionList(subs: Subscription[] = [mockSubscription()], max: number = 5): SubscriptionList {
   return { subscriptions: subs, max }
 }
 
-export function mockSearchResult(overrides = {}) {
+export function mockSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
   return {
     id: 'result-1',
     name: '高等数学',
@@ -67,13 +69,13 @@ export function createMockApi() {
 // ---- Router for tests ----
 
 const routes = [
-  { path: '/', name: 'Home', component: { template: '<div>Home</div>' } },
-  { path: '/login', name: 'Login', component: { template: '<div>Login</div>' } },
-  { path: '/register', name: 'Register', component: { template: '<div>Register</div>' } },
-  { path: '/recover', name: 'Recover', component: { template: '<div>Recover</div>' } },
-  { path: '/dashboard', name: 'Dashboard', component: { template: '<div>Dashboard</div>' }, meta: { requiresAuth: true } },
-  { path: '/add', name: 'Add', component: { template: '<div>Add</div>' }, meta: { requiresAuth: true } },
-  { path: '/api-docs', name: 'ApiDocs', component: { template: '<div>Docs</div>' } },
+  { path: '/', name: RouteNames.Home, component: { template: '<div>Home</div>' } },
+  { path: '/login', name: RouteNames.Login, component: { template: '<div>Login</div>' } },
+  { path: '/register', name: RouteNames.Register, component: { template: '<div>Register</div>' } },
+  { path: '/recover', name: RouteNames.Recover, component: { template: '<div>Recover</div>' } },
+  { path: '/dashboard', name: RouteNames.Dashboard, component: { template: '<div>Dashboard</div>' }, meta: { requiresAuth: true } },
+  { path: '/add', name: RouteNames.Add, component: { template: '<div>Add</div>' }, meta: { requiresAuth: true } },
+  { path: '/api-docs', name: RouteNames.ApiDocs, component: { template: '<div>Docs</div>' } },
 ]
 
 export function createTestRouter() {

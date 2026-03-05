@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { useConfigStore } from '@/stores/config.js'
+import { useConfigStore } from '@/stores/config'
 
 export function useCaptcha() {
   const configStore = useConfigStore()

@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { createMockApi } from '@/test-utils'
 
-const mockApi = createMockApi()
+const mockApi = vi.hoisted(() => ({
+  register: vi.fn(),
+  recoverToken: vi.fn(),
+  recoverTokenVerify: vi.fn(),
+  getCaptchaConfig: vi.fn(),
+  getUserInfo: vi.fn(),
+  deleteUser: vi.fn(),
+  searchSchedule: vi.fn(),
+  getDepartments: vi.fn(),
+  createSubscription: vi.fn(),
+  getSubscriptions: vi.fn(),
+  deleteSubscription: vi.fn(),
+  refreshSubscription: vi.fn(),
+  getHealth: vi.fn(),
+  getConfig: vi.fn(),
+}))
 
-// config.js imports from '@/api/index.js' (with extension), so mock both paths
 vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index.js', () => ({ default: mockApi }))
 
 describe('config store', () => {
   beforeEach(() => {
@@ -16,7 +28,7 @@ describe('config store', () => {
   })
 
   it('defaults publicUrl to window.location.origin', async () => {
-    const { useConfigStore } = await import('@/stores/config.js')
+    const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
 
     expect(store.publicUrl).toBe(window.location.origin)
@@ -26,7 +38,7 @@ describe('config store', () => {
   it('load() fetches and sets publicUrl', async () => {
     mockApi.getConfig.mockResolvedValue({ public_url: 'https://schedule.cqu.moe' })
 
-    const { useConfigStore } = await import('@/stores/config.js')
+    const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
 
     await store.load()
@@ -39,7 +51,7 @@ describe('config store', () => {
   it('load() keeps default publicUrl on error', async () => {
     mockApi.getConfig.mockRejectedValue(new Error('Network error'))
 
-    const { useConfigStore } = await import('@/stores/config.js')
+    const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
     const originalUrl = store.publicUrl
 
@@ -52,7 +64,7 @@ describe('config store', () => {
   it('load() only calls API once', async () => {
     mockApi.getConfig.mockResolvedValue({ public_url: 'https://schedule.cqu.moe' })
 
-    const { useConfigStore } = await import('@/stores/config.js')
+    const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
 
     await store.load()
