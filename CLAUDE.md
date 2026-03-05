@@ -61,6 +61,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
 - 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
+- ICS `UID` 字段决定日历客户端的事件追踪，修改 UID 生成算法会导致所有订阅者事件重复/丢失自定义
 - Workers placement 只影响 fetch handler，不影响 cron scheduled handler
 - Cron handler 只做入队 (`sendBatch`)，实际处理在 Queue consumer 中
 - `sendBatch` 最多 100 条/次，>100 用户需分批调用；支持 per-message `delaySeconds`（0-43200 秒）分散投递
@@ -76,6 +77,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
 ## 前端开发注意事项
+- 所有自定义 Vue SFC 已迁移到 `<script setup lang="ts">` (PR #62)，新建组件须保持一致
 - 前端测试运行: `npm run test:frontend`（cd frontend && npm test），构建验证: `cd frontend && npm run build`
 - `vue-tsc --noEmit` 有预存的 tsconfig.node.json 错误，不影响构建
 - Toast 通知用 vue-sonner（`<Toaster />` 在 App.vue），错误解析用 `frontend/src/utils/error.ts` 的 `parseApiError()`
