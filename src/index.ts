@@ -8,6 +8,7 @@ import exploreRoutes from "./routes/explore";
 import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
+import { errorResponse } from "./utils/error";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -42,7 +43,7 @@ app.route("/api/v1", exploreRoutes);
 // Global error handler
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "http.unhandled_error", error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined, message: "Unhandled error" }));
-  return c.json({ detail: "Internal server error" }, 500);
+  return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
 });
 
 export default {

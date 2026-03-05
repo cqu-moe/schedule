@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import type { Env } from "../types";
+import { errorResponse } from "../utils/error";
 
 type RateLimitEnv = { Bindings: Env };
 
@@ -9,7 +10,7 @@ export function rateLimit(limiterName: "UNAUTH_LIMITER" | "AUTH_LIMITER" | "EXPL
     const key = c.req.header("CF-Connecting-IP") ?? "unknown";
     const { success } = await limiter.limit({ key });
     if (!success) {
-      return c.json({ detail: "Rate limit exceeded" }, 429);
+      return errorResponse("RATE_LIMITED", "Rate limit exceeded", 429);
     }
     await next();
   });
