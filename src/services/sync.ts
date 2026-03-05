@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { subscriptions } from "../db/schema";
+import {
+  subscriptions,
+  PERSONAL_SOURCE_TYPES,
+  type SourceType,
+  type ExploreSourceType,
+} from "../db/schema";
 import {
   CQUAPIClient,
   type CourseEntry,
@@ -13,12 +18,6 @@ import {
   mergeIcs,
   EMPTY_ICS,
 } from "./ics";
-
-export const PERSONAL_SOURCE_TYPES = new Set([
-  "personal_all",
-  "personal_courses",
-  "personal_exams",
-]);
 
 export interface SessionContext {
   sessionId: string;
@@ -103,7 +102,7 @@ export async function fetchPersonalSchedule(
 
 /** Generate ICS + JSON for a personal subscription based on sourceType */
 export async function buildPersonalSyncResult(
-  sourceType: string,
+  sourceType: SourceType,
   data: PersonalScheduleData,
   studentId: string,
 ): Promise<SyncResult> {
@@ -141,7 +140,7 @@ export async function buildPersonalSyncResult(
 /** Fetch target schedule and generate ICS for an explore subscription */
 export async function buildExploreSyncResult(
   api: CQUAPIClient,
-  sourceType: string,
+  sourceType: ExploreSourceType,
   sourceId: string,
   studentId: string,
   ctx: SessionContext,

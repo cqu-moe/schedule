@@ -43,11 +43,13 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 错误响应格式: 统一为 `{ detail: { error: { code, message } } }`，使用 `errorResponse(code, message, status)` (from `src/utils/error.ts`)
 - CaptchaError.message 就是 error code 字符串 (如 "CAPTCHA_REQUIRED")，`errorResponse(e.message, e.message, 403)`
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
+- Hono Context 类型不协变：接受 `c` 参数的 helper 函数须匹配 app 的完整 env 类型（如 `AuthEnv`），不能用更窄的 `{ Bindings: Env }`
 - Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
 - `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
 - workerd 中 `createCipheriv` 不接受 `null` 作为 IV，ECB 模式须传 `""` (空字符串)
 - `node:crypto` 需要 `nodejs_compat` flag 和 `@types/node` devDep + tsconfig types
 - CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
+- `CQUAPIClient.request<T>()` 是泛型方法，CQU API 响应接口定义在 cqu-api.ts 内部（不导出），只覆盖代码实际访问的字段
 - CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
 - Workers fetch 默认 UA 会被 SSO 识别为机器人，login 请求须带浏览器 User-Agent
 - Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
@@ -88,7 +90,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
 - `src/types.ts` — Env 接口定义
-- `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)
+- `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)；还导出 `SourceType` union、`PERSONAL_SOURCE_TYPES`/`EXPLORE_SOURCE_TYPES` 集合；`sourceType` 列用 `.$type<SourceType>()` 让 Drizzle 推断正确类型
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)

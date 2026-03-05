@@ -1,4 +1,4 @@
-import { TIME_SLOTS } from "./cqu-api";
+import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
 import { calculateCourseEventTime, formatChinaIso } from "../utils/time";
 
 const SEMESTER_RE = /^(\d{4})-(\d{4})学年第(一|二)学期$/;
@@ -34,9 +34,9 @@ export function semesterShortName(sessionName: string | null): string {
 }
 
 export function generateFormattedEvents(
-  coursesJson: any[] | null,
+  coursesJson: CourseEntry[] | null,
   semesterStart: string,
-  examsJson?: any[] | null,
+  examsJson?: ExamEntry[] | null,
 ): FormattedEvent[] {
   const events: FormattedEvent[] = [];
 

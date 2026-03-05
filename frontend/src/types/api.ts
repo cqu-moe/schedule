@@ -5,9 +5,19 @@ export interface UserInfo {
   last_synced_at: string | null
 }
 
+export type SourceType =
+  | "personal_all"
+  | "personal_courses"
+  | "personal_exams"
+  | "instructor"
+  | "room"
+  | "laboratory"
+  | "course"
+  | "admin_class";
+
 export interface Subscription {
   calendar_token: string
-  source_type: string
+  source_type: SourceType
   source_id: string
   source_name: string
   is_personal: boolean

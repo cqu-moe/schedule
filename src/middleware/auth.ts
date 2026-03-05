@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
@@ -11,7 +12,7 @@ export type LightUser = Pick<User, 'id' | 'studentId' | 'calendarToken' | 'creat
 /** Auth user: adds accessToken for routes that call CQU API */
 export type AuthUser = LightUser & Pick<User, 'accessToken'>;
 
-function parseToken(c: any): string | Response {
+function parseToken(c: Context): string | Response {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return errorResponse("UNAUTHORIZED", "Invalid authorization header", 401);
