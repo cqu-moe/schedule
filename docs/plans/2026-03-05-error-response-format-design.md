@@ -44,6 +44,7 @@ Extract `errorResponse(code, message, status)` from `src/routes/users.ts` to `sr
 |------|--------|---------|
 | `BAD_REQUEST` | 400 | Input validation errors |
 | `UNAUTHORIZED` | 401 | Missing/invalid auth header |
+| `FORBIDDEN` | 403 | Forbidden action |
 | `NOT_FOUND` | 404 | Resource not found |
 | `RATE_LIMITED` | 429 | Rate limit exceeded |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
