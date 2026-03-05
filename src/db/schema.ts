@@ -51,11 +51,7 @@ export const subscriptions = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
 
-    /**
-     * Source type enum (enforced at app level):
-     * personal_all | personal_courses | personal_exams |
-     * instructor | room | laboratory | course | admin_class
-     */
+    /** Source type: see SourceType union */
     sourceType: text("source_type").notNull(),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
@@ -101,6 +97,38 @@ export const subscriptions = sqliteTable(
     ),
   ],
 );
+
+// ── Source type constants ────────────────────────────────────────────────────
+
+export const SOURCE_TYPES = [
+  "personal_all",
+  "personal_courses",
+  "personal_exams",
+  "instructor",
+  "room",
+  "laboratory",
+  "course",
+  "admin_class",
+] as const;
+
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+export type PersonalSourceType = Extract<SourceType, "personal_all" | "personal_courses" | "personal_exams">;
+export type ExploreSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
+
+export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSourceType>([
+  "personal_all",
+  "personal_courses",
+  "personal_exams",
+]);
+
+export const EXPLORE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExploreSourceType>([
+  "instructor",
+  "room",
+  "laboratory",
+  "course",
+  "admin_class",
+]);
 
 // ── Type exports ─────────────────────────────────────────────────────────────
 
