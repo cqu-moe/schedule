@@ -50,7 +50,7 @@ import {
 
 const router = useRouter()
 
-const props = defineProps({
+defineProps({
   modelValue: {
     type: Boolean,
     required: true,
