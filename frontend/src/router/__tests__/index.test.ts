@@ -21,7 +21,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import router from '@/router/index.js'
+import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
 
 describe('Router', () => {
