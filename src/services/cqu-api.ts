@@ -1,3 +1,4 @@
+import type { ExploreSourceType } from "../db/schema";
 import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
 
 // CQU API endpoints
@@ -26,7 +27,7 @@ const ADMIN_CLASS_SEARCH_URL =
 const DEPARTMENT_LIST_URL =
   "https://my.cqu.edu.cn/api/resourceapi/department/list";
 
-const TABLE_DETAIL_URLS: Record<string, string> = {
+const TABLE_DETAIL_URLS: Record<ExploreSourceType, string> = {
   instructor:
     "https://my.cqu.edu.cn/api/timetable/class/timetable/instructor/table-detail?sessionId={}",
   room: "https://my.cqu.edu.cn/api/timetable/class/timetable/room/table-detail?sessionId={}",
@@ -115,6 +116,95 @@ function formatUrl(template: string, value: string): string {
 
 const LECTURER_REGEX = /^(.*?)-\d/;
 
+// ── CQU API response interfaces (key-path only) ────────────────────────────
+
+interface SessionListResponse {
+  curSessionId?: string;
+  sessionFinder?: Array<{ id?: string; name?: string }>;
+}
+
+interface SessionDetailResponse {
+  data?: {
+    id?: string;
+    year?: string;
+    term?: string;
+    beginDate?: string;
+    endDate?: string;
+  };
+}
+
+interface ScheduleResponse {
+  classTimetableVOList?: Array<{
+    courseName?: string;
+    instructorName?: string;
+    roomName?: string;
+    position?: string;
+    campusName?: string;
+    weekDay?: string | number;
+    teachingWeek?: string;
+    period?: string;
+  }>;
+}
+
+interface ExamListResponse {
+  status?: string;
+  data?: {
+    content?: Array<{
+      courseName?: string;
+      examDate?: string;
+      startTime?: string;
+      endTime?: string;
+      roomName?: string;
+      seatNum?: string | number;
+    }>;
+  };
+}
+
+interface InstructorItem {
+  id: string;
+  name: string;
+  departmentName?: string;
+  code?: string;
+}
+
+interface RoomItem {
+  id: string | number;
+  name: string;
+  capacity?: number | string;
+}
+
+interface LabItem {
+  id: string | number;
+  roomName?: string;
+  campusName?: string;
+  buildingName?: string;
+}
+
+interface CourseItem {
+  id: string;
+  name: string;
+  number?: string;
+  credit?: string | number;
+}
+
+interface CourseClassItem {
+  id: string | number;
+  classNbr?: string;
+}
+
+interface AdminClassItem {
+  id: string | number;
+  className?: string;
+  grade?: string;
+  personNumber?: number | string;
+}
+
+interface DepartmentRawItem {
+  id: string | number;
+  name: string;
+  subDepartmentVOList?: DepartmentRawItem[];
+}
+
 export class CQUAPIClient {
   private accessToken: string;
 
@@ -122,11 +212,11 @@ export class CQUAPIClient {
     this.accessToken = accessToken;
   }
 
-  private async request(
+  private async request<T = unknown>(
     method: string,
     url: string,
     options?: { json?: unknown; params?: Record<string, string | number>; timeout?: number },
-  ): Promise<any> {
+  ): Promise<T> {
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${this.accessToken}`,
@@ -188,17 +278,17 @@ export class CQUAPIClient {
       );
     }
 
-    return response.json();
+    return (await response.json()) as T;
   }
 
   async getSessionList(): Promise<{
     current_session_id: string;
     sessions: Record<string, SessionInfo>;
   }> {
-    const data = await this.request("GET", SESSION_LIST_URL);
+    const data = await this.request<SessionListResponse>("GET", SESSION_LIST_URL);
 
     const curSessionId: string = data.curSessionId ?? "";
-    const sessionFinder: any[] = data.sessionFinder ?? [];
+    const sessionFinder = data.sessionFinder ?? [];
 
     const sessions: Record<string, SessionInfo> = {};
     for (const item of sessionFinder) {
@@ -212,7 +302,7 @@ export class CQUAPIClient {
 
   async getSemesterInfo(termId: string): Promise<SemesterInfo> {
     const url = formatUrl(SESSION_DETAIL_URL_TEMPLATE, termId);
-    const jsonData = await this.request("GET", url);
+    const jsonData = await this.request<SessionDetailResponse>("GET", url);
 
     const data = jsonData.data ?? {};
     const beginDate: string = data.beginDate ?? "";
@@ -231,13 +321,13 @@ export class CQUAPIClient {
     termId: string,
   ): Promise<CourseEntry[]> {
     const url = formatUrl(SCHEDULE_URL_TEMPLATE, termId);
-    const data = await this.request("POST", url, { json: [studentId] });
+    const data = await this.request<ScheduleResponse>("POST", url, { json: [studentId] });
     return this.parseCourses(data);
   }
 
-  private parseCourses(data: any): CourseEntry[] {
+  private parseCourses(data: ScheduleResponse): CourseEntry[] {
     const courses: CourseEntry[] = [];
-    const timetableList: any[] = data.classTimetableVOList ?? [];
+    const timetableList = data.classTimetableVOList ?? [];
 
     for (const item of timetableList) {
       const teachingWeek: string = item.teachingWeek ?? "";
@@ -279,16 +369,16 @@ export class CQUAPIClient {
   }
 
   async getExams(): Promise<ExamEntry[]> {
-    const data = await this.request("GET", EXAM_URL);
+    const data = await this.request<ExamListResponse>("GET", EXAM_URL);
     return this.parseExams(data);
   }
 
-  private parseExams(data: any): ExamEntry[] {
+  private parseExams(data: ExamListResponse): ExamEntry[] {
     const exams: ExamEntry[] = [];
 
     if (data.status !== "success") return [];
 
-    const examList: any[] = data.data?.content ?? [];
+    const examList = data.data?.content ?? [];
 
     for (const item of examList) {
       try {
@@ -339,10 +429,10 @@ export class CQUAPIClient {
   // ── Search methods ──
 
   async searchInstructor(keyword: string): Promise<SearchResult[]> {
-    const data = await this.request("GET", INSTRUCTOR_SEARCH_URL, {
+    const data = await this.request<InstructorItem[]>("GET", INSTRUCTOR_SEARCH_URL, {
       params: { nameOrCode: keyword, limitNum: 50 },
     });
-    return (data as any[]).map((item) => ({
+    return data.map((item) => ({
       id: item.id,
       name: item.name,
       extra: `${item.departmentName ?? ""} / ${item.code ?? ""}`,
@@ -350,10 +440,10 @@ export class CQUAPIClient {
   }
 
   async searchRoom(keyword: string): Promise<SearchResult[]> {
-    const data = await this.request("GET", ROOM_SEARCH_URL, {
+    const data = await this.request<RoomItem[]>("GET", ROOM_SEARCH_URL, {
       params: { roomName: keyword, limitNum: 200 },
     });
-    return (data as any[]).map((item) => ({
+    return data.map((item) => ({
       id: String(item.id),
       name: item.name,
       extra: `容量: ${item.capacity ?? "未知"}`,
@@ -361,10 +451,10 @@ export class CQUAPIClient {
   }
 
   async searchLaboratory(keyword: string): Promise<SearchResult[]> {
-    const data = await this.request("GET", LAB_SEARCH_URL, {
+    const data = await this.request<LabItem[]>("GET", LAB_SEARCH_URL, {
       params: { roomName: keyword, limitNum: 200 },
     });
-    return (data as any[]).map((item) => ({
+    return data.map((item) => ({
       id: String(item.id),
       name: item.roomName ?? "",
       extra: `${item.campusName ?? ""} / ${item.buildingName ?? ""}`,
@@ -375,11 +465,11 @@ export class CQUAPIClient {
     keyword: string,
     sessionId: string,
   ): Promise<SearchResult[]> {
-    const courseData = await this.request("GET", COURSE_SEARCH_URL, {
+    const courseData = await this.request<CourseItem[] | { data?: CourseItem[] }>("GET", COURSE_SEARCH_URL, {
       params: { nameOrCode: keyword, pageSize: 50, sessionId },
     });
 
-    const courses: any[] = (
+    const courses: CourseItem[] = (
       typeof courseData === "object" && !Array.isArray(courseData)
         ? courseData.data ?? []
         : courseData
@@ -390,10 +480,10 @@ export class CQUAPIClient {
     // Fetch classes for each course in parallel
     const classPromises = courses.map(async (course) => {
       try {
-        const classes = await this.request("GET", COURSE_CLASS_SEARCH_URL, {
+        const classes = await this.request<CourseClassItem[]>("GET", COURSE_CLASS_SEARCH_URL, {
           params: { courseId: course.id, sessionId },
         });
-        return (classes as any[]).map((cls: any) => ({
+        return classes.map((cls) => ({
           id: String(cls.id),
           name: `${course.name} (${cls.classNbr ?? ""})`,
           extra: `课程代码: ${course.number ?? ""} / 学分: ${course.credit ?? ""}`,
@@ -420,12 +510,12 @@ export class CQUAPIClient {
     if (grade) params.grade = grade;
     if (className) params.className = className;
 
-    const data = await this.request("POST", ADMIN_CLASS_SEARCH_URL, {
+    const data = await this.request<AdminClassItem[]>("POST", ADMIN_CLASS_SEARCH_URL, {
       params,
       json: [departmentId],
     });
 
-    return (data as any[]).map((item) => ({
+    return data.map((item) => ({
       id: String(item.id),
       name: item.className ?? "",
       extra: `${item.grade ?? ""}级 / ${item.personNumber ?? ""}人`,
@@ -433,8 +523,8 @@ export class CQUAPIClient {
   }
 
   async getDepartments(): Promise<DepartmentNode[]> {
-    const data = await this.request("GET", DEPARTMENT_LIST_URL);
-    const items: any[] =
+    const data = await this.request<DepartmentRawItem[] | { data?: DepartmentRawItem[] }>("GET", DEPARTMENT_LIST_URL);
+    const items: DepartmentRawItem[] =
       typeof data === "object" && !Array.isArray(data)
         ? data.data ?? []
         : data;
@@ -442,7 +532,7 @@ export class CQUAPIClient {
   }
 
   async fetchTargetSchedule(
-    sourceType: string,
+    sourceType: ExploreSourceType,
     sourceId: string,
     sessionId: string,
   ): Promise<CourseEntry[]> {
@@ -451,17 +541,17 @@ export class CQUAPIClient {
       throw new CQUAPIError(`Unknown source_type: ${sourceType}`, 400);
     }
     const url = formatUrl(urlTemplate, sessionId);
-    const data = await this.request("POST", url, { json: [sourceId], timeout: 60000 });
+    const data = await this.request<ScheduleResponse>("POST", url, { json: [sourceId], timeout: 60000 });
     return this.parseCourses(data);
   }
 }
 
-function formatDepartment(item: any): DepartmentNode {
+function formatDepartment(item: DepartmentRawItem): DepartmentNode {
   const result: DepartmentNode = {
     id: String(item.id),
     name: item.name,
   };
-  const subs: any[] = item.subDepartmentVOList ?? [];
+  const subs = item.subDepartmentVOList ?? [];
   if (subs.length > 0) {
     result.children = subs.map(formatDepartment);
   }
