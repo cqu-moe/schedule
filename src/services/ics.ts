@@ -38,7 +38,9 @@ function generateUid(
   end: string,
 ): string {
   const source = `${username},${summary},${start},${end}`;
-  // FNV-1a 64-bit hash (split into two 32-bit halves for JS)
+  // Two FNV-1a 32-bit hashes with different seeds, concatenated for adequate uniqueness.
+  // NOTE: This replaced SHA-256 for performance. UIDs differ from previous versions,
+  // causing a one-time calendar event re-creation for existing subscribers.
   let h1 = 0x811c9dc5;
   let h2 = 0xcbf29ce4;
   for (let i = 0; i < source.length; i++) {
