@@ -293,7 +293,7 @@ describe('Add view', () => {
   it('shows "重新登录" link on 401 error', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
-      response: { status: 401, data: { detail: '认证已过期' } },
+      response: { status: 401, data: { detail: { error: { code: 'UNAUTHORIZED', message: '认证已过期' } } } },
     })
 
     const { wrapper } = await mountAdd()
@@ -312,7 +312,7 @@ describe('Add view', () => {
   it('shows "重新登录" link when error contains "token expired"', async () => {
     vi.useFakeTimers()
     mockApi.searchSchedule.mockRejectedValue({
-      response: { data: { detail: 'token expired' } },
+      response: { data: { detail: { error: { code: 'UNAUTHORIZED', message: 'token expired' } } } },
     })
 
     const { wrapper } = await mountAdd()

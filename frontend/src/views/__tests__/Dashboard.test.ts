@@ -360,7 +360,7 @@ describe('Dashboard view', () => {
   it('shows toast error when refresh subscription fails', async () => {
     const { wrapper } = await mountDashboard()
     mockApi.refreshSubscription.mockRejectedValue({
-      response: { data: { detail: '刷新超时' } },
+      response: { data: { detail: { error: { code: 'SYNC_TIMEOUT', message: '刷新超时' } } } },
     })
 
     const syncBtn = wrapper.findAll('button').find(
@@ -376,7 +376,7 @@ describe('Dashboard view', () => {
   it('shows toast error when sync all fails', async () => {
     const { wrapper } = await mountDashboard()
     mockApi.refreshSubscription.mockRejectedValue({
-      response: { data: { detail: '同步超时' } },
+      response: { data: { detail: { error: { code: 'SYNC_TIMEOUT', message: '同步超时' } } } },
     })
 
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
@@ -395,7 +395,7 @@ describe('Dashboard view', () => {
       source_name: '李四',
     })
     mockApi.deleteSubscription.mockRejectedValue({
-      response: { data: { detail: '删除失败' } },
+      response: { data: { detail: { error: { code: 'DELETE_FAILED', message: '删除失败' } } } },
     })
     const { wrapper } = await mountDashboard([exploreSub])
 

@@ -1,6 +1,8 @@
 const CODE_MESSAGES: Record<string, string> = {
   CAPTCHA_REQUIRED: '验证码验证失败，请刷新页面重试',
   CAPTCHA_FAILED: '验证码验证失败，请刷新页面重试',
+  CAPTCHA_SERVICE_UNAVAILABLE: '验证码验证失败，请刷新页面重试',
+  RATE_LIMITED: '操作过于频繁，请稍后再试',
 }
 
 export function parseApiError(error: unknown, fallback = '操作失败'): string {
@@ -10,21 +12,10 @@ export function parseApiError(error: unknown, fallback = '操作失败'): string
   const detail = resp.data.detail
   if (!detail) return fallback
 
-  // detail is string (including 429 interceptor result)
-  if (typeof detail === 'string') {
-    return CODE_MESSAGES[detail] || detail
-  }
-
-  // detail.error.code special mapping
   const code = detail?.error?.code
   if (code && CODE_MESSAGES[code]) {
     return CODE_MESSAGES[code]
   }
 
-  // detail.error.message
-  if (detail?.error?.message) {
-    return detail.error.message
-  }
-
-  return fallback
+  return detail?.error?.message ?? fallback
 }

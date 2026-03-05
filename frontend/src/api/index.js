@@ -9,8 +9,8 @@ const client = axios.create({
 })
 
 client.interceptors.response.use(undefined, (error) => {
-  if (error.response?.status === 429) {
-    error.response.data = { detail: '操作过于频繁，请稍后再试' }
+  if (error.response?.status === 429 && !error.response?.data?.detail) {
+    error.response.data = { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } }
   }
   return Promise.reject(error)
 })

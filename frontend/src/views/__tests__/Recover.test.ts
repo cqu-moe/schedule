@@ -178,7 +178,7 @@ describe('Recover view', () => {
     mockApi.recoverToken.mockRejectedValue({
       response: {
         status: 429,
-        data: { detail: '操作过于频繁' },
+        data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } },
       },
     })
 
