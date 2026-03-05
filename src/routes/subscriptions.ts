@@ -22,6 +22,7 @@ import {
   buildPersonalSyncResult,
   buildExploreSyncResult,
   applySyncResult,
+  preGenerateIcs,
 } from "../services/sync";
 
 type AuthEnv = { Bindings: Env; Variables: { user: LightUser } };
@@ -243,7 +244,8 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
 
     if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
       const data = await fetchPersonalScheduleCached(api, user.studentId, ctx, c.env.CACHE);
-      result = await buildPersonalSyncResult(sub.sourceType, data, user.studentId);
+      const ics = preGenerateIcs(data, user.studentId);
+      result = buildPersonalSyncResult(sub.sourceType, data, ics);
     } else {
       result = await buildExploreSyncResult(
         api,

@@ -100,36 +100,42 @@ export async function fetchPersonalSchedule(
   };
 }
 
-/** Generate ICS + JSON for a personal subscription based on sourceType */
-export async function buildPersonalSyncResult(
-  sourceType: SourceType,
+export interface PreGeneratedIcs {
+  coursesIcs: string;
+  examsIcs: string | null;
+}
+
+/** Pre-generate ICS content once for reuse across multiple subscription types */
+export function preGenerateIcs(
   data: PersonalScheduleData,
   studentId: string,
-): Promise<SyncResult> {
-  const coursesIcs = await generateCoursesIcs(
-    data.courses,
-    data.semesterStart,
-    studentId,
-  );
-  const examsIcs =
-    data.exams.length > 0
-      ? await generateExamsIcs(data.exams, studentId)
-      : null;
+): PreGeneratedIcs {
+  return {
+    coursesIcs: generateCoursesIcs(data.courses, data.semesterStart, studentId),
+    examsIcs: data.exams.length > 0 ? generateExamsIcs(data.exams, studentId) : null,
+  };
+}
 
+/** Generate ICS + JSON for a personal subscription based on sourceType */
+export function buildPersonalSyncResult(
+  sourceType: SourceType,
+  data: PersonalScheduleData,
+  ics: PreGeneratedIcs,
+): SyncResult {
   let icsContent: string | null;
   let coursesJson: string | null;
   let examsJson: string | null;
 
   if (sourceType === "personal_all") {
-    icsContent = examsIcs ? mergeIcs(coursesIcs, examsIcs) : coursesIcs;
+    icsContent = ics.examsIcs ? mergeIcs(ics.coursesIcs, ics.examsIcs) : ics.coursesIcs;
     coursesJson = JSON.stringify(data.courses);
     examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
   } else if (sourceType === "personal_courses") {
-    icsContent = coursesIcs;
+    icsContent = ics.coursesIcs;
     coursesJson = JSON.stringify(data.courses);
     examsJson = null;
   } else {
-    icsContent = examsIcs ?? EMPTY_ICS;
+    icsContent = ics.examsIcs ?? EMPTY_ICS;
     coursesJson = null;
     examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
   }
@@ -151,7 +157,7 @@ export async function buildExploreSyncResult(
     ctx.sessionId,
   );
   const semesterStart = ctx.semesterInfo.begin_date ?? "";
-  const icsContent = await generateCoursesIcs(courses, semesterStart, studentId);
+  const icsContent = generateCoursesIcs(courses, semesterStart, studentId);
 
   return {
     icsContent,

@@ -1,5 +1,4 @@
 import { TIME_SLOTS, type CourseEntry, type ExamEntry } from "./cqu-api";
-import { bufferToBase64 } from "../utils/encoding";
 import { calculateCourseEventTime } from "../utils/time";
 
 const ICS_HEADER = [
@@ -32,23 +31,33 @@ function formatIcsTime(date: Date): string {
   return `${y}${mo}${d}T${h}${mi}${s}Z`;
 }
 
-async function generateUid(
+function generateUid(
   username: string,
   summary: string,
   start: string,
   end: string,
-): Promise<string> {
+): string {
   const source = `${username},${summary},${start},${end}`;
-  const encoded = new TextEncoder().encode(source);
-  const hash = await crypto.subtle.digest("SHA-256", encoded);
-  return bufferToBase64(hash);
+  // Two FNV-1a 32-bit hashes with different seeds, concatenated for adequate uniqueness.
+  // NOTE: This replaced SHA-256 for performance. UIDs differ from previous versions,
+  // causing a one-time calendar event re-creation for existing subscribers.
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  for (let i = 0; i < source.length; i++) {
+    const c = source.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= c;
+    h2 = Math.imul(h2, 0x01000193);
+  }
+  return ((h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0"));
 }
 
-export async function generateCoursesIcs(
+export function generateCoursesIcs(
   courses: CourseEntry[],
   semesterStart: string,
   username: string,
-): Promise<string> {
+): string {
   const termStart = new Date(semesterStart);
   if (isNaN(termStart.getTime())) {
     return [ICS_HEADER, ICS_FOOTER].join("\r\n");
@@ -76,7 +85,7 @@ export async function generateCoursesIcs(
 
       const startStr = formatIcsTime(startTime);
       const endStr = formatIcsTime(endTime);
-      const uid = await generateUid(username, course.name, startStr, endStr);
+      const uid = generateUid(username, course.name, startStr, endStr);
       const location = course.room || course.position;
 
       lines.push(
@@ -101,10 +110,10 @@ export async function generateCoursesIcs(
   return lines.join("\r\n");
 }
 
-export async function generateExamsIcs(
+export function generateExamsIcs(
   exams: ExamEntry[],
   username: string,
-): Promise<string> {
+): string {
   const lines: string[] = [ICS_HEADER];
 
   for (const exam of exams) {
@@ -113,7 +122,7 @@ export async function generateExamsIcs(
 
     const startStr = formatIcsTime(startTime);
     const endStr = formatIcsTime(endTime);
-    const uid = await generateUid(username, exam.name, startStr, endStr);
+    const uid = generateUid(username, exam.name, startStr, endStr);
     const description = exam.seat > 0 ? `座位: ${exam.seat}` : "";
     const location = exam.seat > 0 ? `${exam.room}@${exam.seat}` : exam.room;
 
