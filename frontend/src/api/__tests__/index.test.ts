@@ -21,7 +21,7 @@ vi.mock('axios', () => ({
 
 // Import after mock is set up — this triggers axios.create() and interceptors.response.use()
 import axios from 'axios'
-import api from '../index.js'
+import api from '../index'
 
 // Capture setup-time calls before any test's beforeEach can clear them
 const createCallArgs = (axios.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]

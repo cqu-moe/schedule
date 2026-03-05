@@ -4,9 +4,9 @@ import { createMockApi } from '@/test-utils'
 
 const mockApi = createMockApi()
 
-// config.js imports from '@/api/index.js' (with extension), so mock both paths
+// config.js imports from '@/api/index' (with extension), so mock both paths
 vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index.js', () => ({ default: mockApi }))
+vi.mock('@/api/index', () => ({ default: mockApi }))
 
 describe('config store', () => {
   beforeEach(() => {
