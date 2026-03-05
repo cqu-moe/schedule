@@ -122,7 +122,7 @@ describe('Navbar', () => {
     await flushPromises()
 
     // Auth store token should be cleared (logout was called)
-    const { useAuthStore } = await import('@/stores/auth.js')
+    const { useAuthStore } = await import('@/stores/auth')
     const authStore = useAuthStore()
     expect(authStore.token).toBe('')
 
