@@ -28,7 +28,7 @@
               <Check v-else-if="syncFeedback.stateOf() === 'success'" class="h-4 w-4 mr-1.5" />
               <X v-else-if="syncFeedback.stateOf() === 'error'" class="h-4 w-4 mr-1.5" />
               <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-              {{ { loading: '同步中', success: '已同步', error: '失败' }[syncFeedback.stateOf()] || '同步所有' }}
+              {{ { loading: '同步中', success: '已同步', error: '失败' }[syncFeedback.stateOf()] || '同步个人课表' }}
             </Button>
             <router-link to="/add">
               <Button variant="outline" size="sm" class="cursor-pointer">添加订阅</Button>
@@ -285,7 +285,6 @@ let pollTimer = null
 // Button feedback
 const copyFeedback = useButtonFeedback()
 const refreshFeedback = useButtonFeedback()
-const deleteFeedback = useButtonFeedback()
 const syncFeedback = useButtonFeedback()
 
 const SOURCE_TYPE_LABELS = {
@@ -373,10 +372,8 @@ async function handleRefreshSub(subToken) {
 
 async function handleDeleteSub(subToken) {
   try {
-    await deleteFeedback.run(async () => {
-      await api.deleteSubscription(authStore.token, subToken)
-      await subStore.load().catch(() => {})
-    }, subToken)
+    await api.deleteSubscription(authStore.token, subToken)
+    await subStore.load().catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
   }

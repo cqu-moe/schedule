@@ -153,9 +153,9 @@ describe('Dashboard view', () => {
   it('calls api.refreshSubscription when sync button is clicked', async () => {
     const { wrapper } = await mountDashboard()
 
-    // Find the "同步" button (not "同步所有")
+    // Find the per-subscription "同步" button (not "同步个人课表")
     const syncBtn = wrapper.findAll('button').find(
-      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('所有')),
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
     )
     expect(syncBtn).toBeDefined()
     await syncBtn!.trigger('click')
@@ -175,7 +175,7 @@ describe('Dashboard view', () => {
     })
     const { wrapper } = await mountDashboard([personalSub, exploreSub])
 
-    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     expect(syncAllBtn).toBeDefined()
     await syncAllBtn!.trigger('click')
     await flushPromises()
@@ -189,7 +189,7 @@ describe('Dashboard view', () => {
   it('shows "已同步" after sync all', async () => {
     const { wrapper } = await mountDashboard()
 
-    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
@@ -379,7 +379,7 @@ describe('Dashboard view', () => {
       response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '同步超时' } } } },
     })
 
-    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
@@ -425,7 +425,7 @@ describe('Dashboard view', () => {
       return {}
     })
 
-    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步所有'))
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
