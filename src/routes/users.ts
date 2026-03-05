@@ -16,6 +16,7 @@ import {
   fetchSessionContextCached,
   fetchPersonalSchedule,
   buildPersonalSyncResult,
+  preGenerateIcs,
   applySyncResult,
 } from "../services/sync";
 
@@ -280,9 +281,10 @@ export async function syncNewUserSubscriptions(
     const api = new CQUAPIClient(accessToken);
     const ctx = await fetchSessionContextCached(api, env.CACHE);
     const personalData = await fetchPersonalSchedule(api, studentId, ctx);
+    const ics = preGenerateIcs(personalData, studentId);
 
     for (const sub of subIds) {
-      const result = await buildPersonalSyncResult(sub.sourceType, personalData, studentId);
+      const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
       await applySyncResult(db, sub.id, result, ctx, {
         sessionId: null,
         sessionName: null,

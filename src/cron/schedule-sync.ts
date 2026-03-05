@@ -11,6 +11,7 @@ import {
   buildPersonalSyncResult,
   buildExploreSyncResult,
   applySyncResult,
+  preGenerateIcs,
   type PersonalScheduleData,
 } from "../services/sync";
 
@@ -112,9 +113,10 @@ export async function processScheduleSyncBatch(
         }
 
         if (personalData) {
+          const ics = preGenerateIcs(personalData, user.studentId);
           const personalResults = await Promise.allSettled(
             personalSubs.map(async (sub) => {
-              const result = await buildPersonalSyncResult(sub.sourceType, personalData!, user.studentId);
+              const result = buildPersonalSyncResult(sub.sourceType, personalData!, ics);
               await applySyncResult(db, sub.id, result, ctx, {
                 sessionId: sub.sessionId,
                 sessionName: sub.sessionName,

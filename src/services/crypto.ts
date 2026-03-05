@@ -11,12 +11,19 @@ function base64ToBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+let cachedKeyBase64: string | null = null;
+let cachedKey: CryptoKey | null = null;
+
 async function importKey(keyBase64: string): Promise<CryptoKey> {
+  if (cachedKey && cachedKeyBase64 === keyBase64) return cachedKey;
   const rawKey = base64ToBuffer(keyBase64);
-  return crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, [
+  const key = await crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, [
     "encrypt",
     "decrypt",
   ]);
+  cachedKeyBase64 = keyBase64;
+  cachedKey = key;
+  return key;
 }
 
 export async function encrypt(
