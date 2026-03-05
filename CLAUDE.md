@@ -79,7 +79,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 表单错误用 shadcn-vue Alert 内联组件，后台操作用 Toast
 - Captcha 配置加载失败应静默降级（captcha 可选），不要弹 toast 报错
 - Mutation 成功后调用 loadSubscriptions() 刷新列表时，成功 toast 须在 loadSubscriptions() 之前发出，reload 用 `.catch(() => {})` 忽略失败
-- 429 限频由 axios interceptor (`frontend/src/api/index.js`) 统一转为 `{ detail: "操作过于频繁，请稍后再试" }`，`parseApiError` 自动处理
+- 429 限频由 axios interceptor (`frontend/src/api/index.ts`) 统一转为 `{ detail: "操作过于频繁，请稍后再试" }`，`parseApiError` 自动处理
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
