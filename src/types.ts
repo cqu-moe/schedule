@@ -1,3 +1,6 @@
+import type { TokenRefreshMessage } from "./cron/token-refresh";
+import type { ScheduleSyncMessage } from "./cron/schedule-sync";
+
 export interface Env {
   // Static Assets
   ASSETS: Fetcher;
@@ -14,8 +17,8 @@ export interface Env {
   EXPLORE_LIMITER: RateLimit;
 
   // Queues
-  TOKEN_REFRESH_QUEUE: Queue;
-  SCHEDULE_SYNC_QUEUE: Queue;
+  TOKEN_REFRESH_QUEUE: Queue<TokenRefreshMessage>;
+  SCHEDULE_SYNC_QUEUE: Queue<ScheduleSyncMessage>;
 
   // Secrets
   ENCRYPTION_KEY: string;
