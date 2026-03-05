@@ -26,6 +26,18 @@ export interface TokenResult {
   expiresAt: string; // ISO 8601
 }
 
+interface OAuthTokenResponse {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+}
+
+interface CaptchaCountResponse {
+  data?: number;
+}
+
 // ── AES-ECB encryption helper ────────────────────────────────────
 export function encryptAesEcb(plaintext: string, keyBase64: string): string {
   const key = Buffer.from(keyBase64, "base64");
@@ -97,8 +109,8 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
       }),
       signal: controller.signal,
     });
-  } catch (e: any) {
-    if (e?.name === "AbortError") {
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
       throw new AuthError("UPSTREAM_TIMEOUT", "Token refresh timeout");
     }
     throw new AuthError("UPSTREAM_UNREACHABLE", `Network error: ${e}`);
@@ -110,7 +122,7 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
     let code = "UPSTREAM_UNREACHABLE";
     let detail = `HTTP ${response.status}`;
     try {
-      const body: any = await response.json();
+      const body = (await response.json()) as OAuthTokenResponse;
       detail = body.error_description ?? body.error ?? detail;
       if (response.status === 401 || body.error === "invalid_grant") {
         code = "TOKEN_EXPIRED";
@@ -121,7 +133,7 @@ export async function refreshToken(refreshTokenStr: string): Promise<TokenResult
     throw new AuthError(code, `Token refresh failed: ${detail}`);
   }
 
-  const data: any = await response.json();
+  const data = (await response.json()) as OAuthTokenResponse;
   const accessToken = data.access_token;
   if (!accessToken) {
     throw new AuthError("UPSTREAM_UNREACHABLE", "No access_token in refresh response");
@@ -211,7 +223,7 @@ export async function login(
           { headers: { "User-Agent": USER_AGENT }, signal: controller.signal },
         );
         if (captchaCountRes.ok) {
-          const captchaData: any = await captchaCountRes.json();
+          const captchaData = (await captchaCountRes.json()) as CaptchaCountResponse;
           if (captchaData.data === 0) {
             throw new AuthError(
               "CAPTCHA_REQUIRED",
@@ -309,7 +321,7 @@ export async function login(
     if (!tokenRes.ok) {
       let detail = `HTTP ${tokenRes.status}`;
       try {
-        const errBody: any = await tokenRes.json();
+        const errBody = (await tokenRes.json()) as OAuthTokenResponse;
         detail = errBody.error_description ?? errBody.error ?? detail;
       } catch {
         // non-JSON error response, keep defaults
@@ -320,7 +332,7 @@ export async function login(
       );
     }
 
-    const data: any = await tokenRes.json();
+    const data = (await tokenRes.json()) as OAuthTokenResponse;
     if (!data.access_token) {
       throw new AuthError(
         "UPSTREAM_UNREACHABLE",
@@ -334,9 +346,9 @@ export async function login(
       refreshToken: data.refresh_token ?? "",
       expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     };
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) throw e;
-    if (e?.name === "AbortError") {
+    if (e instanceof Error && e.name === "AbortError") {
       throw new AuthError("UPSTREAM_TIMEOUT", "Login timeout");
     }
     throw new AuthError("UPSTREAM_UNREACHABLE", `Login failed: ${e}`);
