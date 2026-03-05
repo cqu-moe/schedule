@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '../api'
 import { parseApiError } from '@/utils/error'
-import { useSubscriptionsStore } from '@/stores/subscriptions.js'
+import { useSubscriptionsStore } from '@/stores/subscriptions'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('calendar_token') || '')
