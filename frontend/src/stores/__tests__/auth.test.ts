@@ -1,8 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { createMockApi, mockUserInfo } from '@/test-utils'
+import { mockUserInfo } from '@/test-utils'
 
-const mockApi = createMockApi()
+const mockApi = vi.hoisted(() => ({
+  register: vi.fn(),
+  recoverToken: vi.fn(),
+  recoverTokenVerify: vi.fn(),
+  getCaptchaConfig: vi.fn(),
+  getUserInfo: vi.fn(),
+  deleteUser: vi.fn(),
+  searchSchedule: vi.fn(),
+  getDepartments: vi.fn(),
+  createSubscription: vi.fn(),
+  getSubscriptions: vi.fn(),
+  deleteSubscription: vi.fn(),
+  refreshSubscription: vi.fn(),
+  getHealth: vi.fn(),
+  getConfig: vi.fn(),
+}))
 
 vi.mock('@/api', () => ({ default: mockApi }))
 
@@ -20,7 +35,7 @@ describe('auth store', () => {
 
   describe('initial state', () => {
     it('has empty token when localStorage is empty', async () => {
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       expect(store.token).toBe('')
       expect(store.isAuthenticated).toBe(false)
@@ -31,7 +46,7 @@ describe('auth store', () => {
       // getUserInfo must be mocked so the auto-fetchUserInfo call does not fail unhandled
       mockApi.getUserInfo.mockResolvedValue(mockUserInfo())
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       expect(store.token).toBe('stored-token')
       expect(store.isAuthenticated).toBe(true)
@@ -41,7 +56,7 @@ describe('auth store', () => {
       localStorage.setItem('calendar_token', 'existing-token')
       mockApi.getUserInfo.mockResolvedValue(mockUserInfo())
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       useAuthStore()
 
       // The store auto-calls fetchUserInfo on creation when token exists
@@ -53,7 +68,7 @@ describe('auth store', () => {
     it('sets token and localStorage on success', async () => {
       mockApi.register.mockResolvedValue({ calendar_token: 'new-token-123' })
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       const result = await store.register('20210001', 'password123')
 
@@ -65,7 +80,7 @@ describe('auth store', () => {
     it('passes captcha token to API', async () => {
       mockApi.register.mockResolvedValue({ calendar_token: 'token-with-captcha' })
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       await store.register('20210001', 'password123', 'captcha-token-abc')
 
@@ -77,7 +92,7 @@ describe('auth store', () => {
         response: { status: 429, data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } } },
       })
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       const result = await store.register('20210001', 'password123')
 
@@ -89,7 +104,7 @@ describe('auth store', () => {
         response: { status: 400, data: { detail: { error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA_REQUIRED' } } } },
       })
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       const result = await store.register('20210001', 'password123')
 
@@ -104,7 +119,7 @@ describe('auth store', () => {
         }),
       )
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
 
       expect(store.loading).toBe(false)
@@ -123,7 +138,7 @@ describe('auth store', () => {
       const info = mockUserInfo()
       mockApi.getUserInfo.mockResolvedValue(info)
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       const result = await store.loginWithToken('my-calendar-token')
 
@@ -136,7 +151,7 @@ describe('auth store', () => {
     it('returns error on failure', async () => {
       mockApi.getUserInfo.mockRejectedValue(new Error('Network error'))
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       const result = await store.loginWithToken('bad-token')
 
@@ -149,7 +164,7 @@ describe('auth store', () => {
       const info = mockUserInfo()
       mockApi.getUserInfo.mockResolvedValue(info)
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
 
       // Manually set token first (without triggering auto-fetch which already happened)
@@ -162,7 +177,7 @@ describe('auth store', () => {
     })
 
     it('is a no-op when no token', async () => {
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
 
       // token is '' by default (no localStorage)
@@ -174,7 +189,7 @@ describe('auth store', () => {
     it('calls logout on error', async () => {
       mockApi.getUserInfo.mockRejectedValue(new Error('Unauthorized'))
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
       store.token = 'expired-token'
       localStorage.setItem('calendar_token', 'expired-token')
@@ -192,7 +207,7 @@ describe('auth store', () => {
       mockApi.getUserInfo.mockResolvedValue(mockUserInfo())
       localStorage.setItem('calendar_token', 'some-token')
 
-      const { useAuthStore } = await import('@/stores/auth.js')
+      const { useAuthStore } = await import('@/stores/auth')
       const store = useAuthStore()
 
       // Ensure there is some state

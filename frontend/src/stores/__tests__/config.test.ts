@@ -1,8 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { createMockApi } from '@/test-utils'
 
-const mockApi = createMockApi()
+const mockApi = vi.hoisted(() => ({
+  register: vi.fn(),
+  recoverToken: vi.fn(),
+  recoverTokenVerify: vi.fn(),
+  getCaptchaConfig: vi.fn(),
+  getUserInfo: vi.fn(),
+  deleteUser: vi.fn(),
+  searchSchedule: vi.fn(),
+  getDepartments: vi.fn(),
+  createSubscription: vi.fn(),
+  getSubscriptions: vi.fn(),
+  deleteSubscription: vi.fn(),
+  refreshSubscription: vi.fn(),
+  getHealth: vi.fn(),
+  getConfig: vi.fn(),
+}))
 
 vi.mock('@/api', () => ({ default: mockApi }))
 
