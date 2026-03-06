@@ -155,7 +155,7 @@
 .fc .fc-daygrid-event {
   border-left: 3px solid var(--event-color, var(--fc-course-1));
   background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 12%, var(--background));
-  padding: 1px 4px;
+  padding: 1px 4px 1px 1px;
   margin-bottom: 1px;
   overflow: hidden;
   text-overflow: ellipsis;

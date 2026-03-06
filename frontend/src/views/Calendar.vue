@@ -138,10 +138,10 @@ function handleEventMount(info: EventMountArg) {
   const isTimegrid = el.closest('.fc-timegrid') !== null
   const mainEl = el.querySelector('.fc-event-title')
   if (isTimegrid && mainEl && location) {
-    const locSpan = document.createElement('div')
-    locSpan.style.cssText = 'font-size:0.625rem;opacity:0.6;margin-top:1px;font-weight:400;'
-    locSpan.textContent = location
-    mainEl.after(locSpan)
+    const locDiv = document.createElement('div')
+    locDiv.style.cssText = 'font-size:0.625rem;opacity:0.6;margin-top:1px;font-weight:400;'
+    locDiv.textContent = location
+    mainEl.after(locDiv)
   }
 }
 
