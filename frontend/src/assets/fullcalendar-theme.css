@@ -1,0 +1,86 @@
+/* FullCalendar theme overrides for shadcn-vue / Tailwind v4 */
+
+/* Base variables */
+.fc {
+  --fc-border-color: var(--border);
+  --fc-button-bg-color: var(--secondary);
+  --fc-button-border-color: var(--border);
+  --fc-button-text-color: var(--secondary-foreground);
+  --fc-button-hover-bg-color: var(--accent);
+  --fc-button-hover-border-color: var(--border);
+  --fc-button-active-bg-color: var(--primary);
+  --fc-button-active-border-color: var(--primary);
+  --fc-button-active-text-color: var(--primary-foreground);
+  --fc-page-bg-color: var(--background);
+  --fc-neutral-bg-color: var(--muted);
+  --fc-today-bg-color: color-mix(in srgb, var(--primary) 8%, transparent);
+  --fc-event-bg-color: var(--primary);
+  --fc-event-border-color: var(--primary);
+  --fc-event-text-color: var(--primary-foreground);
+  --fc-now-indicator-color: var(--destructive);
+}
+
+/* Font consistency */
+.fc {
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+/* Button styling to match shadcn */
+.fc .fc-button {
+  border-radius: calc(var(--radius) - 2px);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  padding: 0.375rem 0.75rem;
+  box-shadow: none !important;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.fc .fc-button:focus {
+  box-shadow: 0 0 0 2px var(--ring) !important;
+}
+
+/* Today button */
+.fc .fc-today-button:disabled {
+  opacity: 0.5;
+}
+
+/* Toolbar spacing */
+.fc .fc-toolbar {
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.fc .fc-toolbar-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+/* Event styling */
+.fc .fc-event {
+  border-radius: calc(var(--radius) - 4px);
+  border: none;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.fc .fc-timegrid-event .fc-event-main {
+  padding: 2px 4px;
+}
+
+/* Time grid slots */
+.fc .fc-timegrid-slot {
+  height: 2.5rem;
+}
+
+/* Day header */
+.fc .fc-col-header-cell {
+  padding: 0.5rem 0;
+  font-weight: 500;
+}
+
+/* Scrollbar consistency */
+.fc .fc-scroller {
+  scrollbar-width: thin;
+}
