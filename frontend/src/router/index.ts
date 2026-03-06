@@ -11,6 +11,7 @@ export const RouteNames = {
   Dashboard: 'Dashboard',
   Add: 'Add',
   ApiDocs: 'ApiDocs',
+  Changelog: 'Changelog',
 } as const
 
 const routes = [
@@ -55,6 +56,12 @@ const routes = [
     name: RouteNames.ApiDocs,
     component: () => import('@/views/Docs.vue'),
     meta: { title: `API 文档 | ${SITE_NAME}` }
+  },
+  {
+    path: '/changelog',
+    name: RouteNames.Changelog,
+    component: () => import('@/views/Changelog.vue'),
+    meta: { title: `更新日志 | ${SITE_NAME}` }
   }
 ]
 
