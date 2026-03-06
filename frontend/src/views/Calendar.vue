@@ -62,8 +62,26 @@ import { Loader2, User, MapPin, Clock } from 'lucide-vue-next'
 import FullCalendar from '@fullcalendar/vue3'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
-import type { CalendarOptions, EventClickArg, EventInput } from '@fullcalendar/core'
+import type { CalendarOptions, EventClickArg, EventInput, EventMountArg } from '@fullcalendar/core'
 import type { FormattedEvent } from '@/types/api'
+
+// 9 distinct course colors matching CSS palette
+const COURSE_COLORS = [
+  '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b',
+  '#ec4899', '#6366f1', '#14b8a6', '#f97316',
+]
+
+function hashString(str: string): number {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash)
+}
+
+function getCourseColor(name: string): string {
+  return COURSE_COLORS[hashString(name) % COURSE_COLORS.length]
+}
 import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
@@ -88,6 +106,7 @@ const showDetail = ref(false)
 const selectedEvent = ref<{ title: string; extendedProps: Record<string, string>; start: Date | null; end: Date | null } | null>(null)
 
 function toCalendarEvent(e: FormattedEvent): EventInput {
+  const color = e.type === 'exam' ? '#ef4444' : getCourseColor(e.name)
   return {
     title: e.name,
     start: e.start_time,
@@ -96,8 +115,32 @@ function toCalendarEvent(e: FormattedEvent): EventInput {
       location: e.location,
       instructor: e.instructor ?? '',
       type: e.type,
+      color,
     },
-    backgroundColor: e.type === 'exam' ? 'var(--destructive)' : undefined,
+  }
+}
+
+function handleEventMount(info: EventMountArg) {
+  const color = info.event.extendedProps.color as string
+  const type = info.event.extendedProps.type as string
+  const location = info.event.extendedProps.location as string
+  const el = info.el
+
+  // Set CSS custom property for per-event coloring
+  el.style.setProperty('--event-color', color)
+
+  // Data attribute for exam-specific CSS
+  if (type === 'exam') {
+    el.setAttribute('data-event-type', 'exam')
+  }
+
+  // Append location info to timegrid events
+  const mainEl = el.querySelector('.fc-event-title')
+  if (mainEl && location) {
+    const locSpan = document.createElement('div')
+    locSpan.style.cssText = 'font-size:0.625rem;opacity:0.6;margin-top:1px;font-weight:400;'
+    locSpan.textContent = location
+    mainEl.after(locSpan)
   }
 }
 
@@ -149,6 +192,7 @@ const calendarOptions = computed<CalendarOptions>(() => ({
   },
   events: events.value,
   eventClick: handleEventClick,
+  eventDidMount: handleEventMount,
   height: 'auto',
 }))
 
