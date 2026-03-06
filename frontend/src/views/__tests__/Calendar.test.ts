@@ -90,6 +90,29 @@ describe('Calendar View', () => {
     expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
   })
 
+  it('shows NOT_SYNCED error for unsynced subscriptions', async () => {
+    mockApi.getCalendarData.mockRejectedValue({
+      response: { status: 202, data: { detail: { error: { code: 'NOT_SYNCED', message: 'Not synced' } } } },
+    })
+    const { wrapper } = await mountWithContext(CalendarView, {
+      initialRoute: '/calendar/new-token',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('课表数据尚未同步')
+    expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
+  })
+
+  it('shows fallback error for network failures', async () => {
+    mockApi.getCalendarData.mockRejectedValue(new Error('Network Error'))
+    const { wrapper } = await mountWithContext(CalendarView, {
+      initialRoute: '/calendar/test-token',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('加载课表数据失败')
+  })
+
   it('calls API with correct sub_token from route', async () => {
     mockApi.getCalendarData.mockResolvedValue({
       semester: '2025秋',

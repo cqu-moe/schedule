@@ -119,9 +119,7 @@ export default {
   },
 
   async getCalendarData(subToken: string): Promise<CalendarData> {
-    const response = await client.get(`/subscriptions/${encodeURIComponent(subToken)}/data.json`, {
-      validateStatus: (status) => status === 200,
-    })
+    const response = await client.get(`/subscriptions/${encodeURIComponent(subToken)}/data.json`)
     return response.data
   },
 }

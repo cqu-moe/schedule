@@ -64,8 +64,20 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import type { CalendarOptions, EventClickArg, EventInput, EventMountArg } from '@fullcalendar/core'
 import type { FormattedEvent } from '@/types/api'
+import { RouteNames } from '@/router'
+import api from '@/api'
+import { parseApiError } from '@/utils/error'
+import Navbar from '@/components/Navbar.vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import '@/assets/fullcalendar-theme.css'
 
-// 15 distinct course colors — assigned in order of first appearance to avoid collisions
 const COURSE_COLORS = [
   '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b',
   '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#a855f7',
@@ -81,19 +93,13 @@ function getCourseColor(name: string): string {
   courseColorMap.set(name, color)
   return color
 }
-import { RouteNames } from '@/router'
-import api from '@/api'
-import { parseApiError } from '@/utils/error'
-import Navbar from '@/components/Navbar.vue'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import '@/assets/fullcalendar-theme.css'
+
+interface SelectedEvent {
+  title: string
+  extendedProps: Record<string, string>
+  start: Date | null
+  end: Date | null
+}
 
 const route = useRoute()
 
@@ -102,7 +108,7 @@ const error = ref<string | null>(null)
 const semester = ref('')
 const events = ref<EventInput[]>([])
 const showDetail = ref(false)
-const selectedEvent = ref<{ title: string; extendedProps: Record<string, string>; start: Date | null; end: Date | null } | null>(null)
+const selectedEvent = ref<SelectedEvent | null>(null)
 
 function toCalendarEvent(e: FormattedEvent): EventInput {
   const color = e.type === 'exam' ? '#ef4444' : getCourseColor(e.name)

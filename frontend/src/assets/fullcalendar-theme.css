@@ -1,22 +1,8 @@
 /* FullCalendar theme overrides for shadcn-vue / Tailwind v4 */
 
-/* ── Color palette for course events ── */
+/* ── Default event color (used as CSS fallback when --event-color is not set) ── */
 .fc {
-  --fc-course-1: #3b82f6; /* blue */
-  --fc-course-2: #8b5cf6; /* violet */
-  --fc-course-3: #06b6d4; /* cyan */
-  --fc-course-4: #10b981; /* emerald */
-  --fc-course-5: #f59e0b; /* amber */
-  --fc-course-6: #ec4899; /* pink */
-  --fc-course-7: #6366f1; /* indigo */
-  --fc-course-8: #14b8a6; /* teal */
-  --fc-course-9: #f97316; /* orange */
-  --fc-course-10: #a855f7; /* purple */
-  --fc-course-11: #84cc16; /* lime */
-  --fc-course-12: #e11d48; /* rose */
-  --fc-course-13: #0891b2; /* cyan-dark */
-  --fc-course-14: #ea580c; /* orange-dark */
-  --fc-course-15: #2563eb; /* blue-dark */
+  --fc-default-event-color: #3b82f6;
 }
 
 /* ── Base variables ── */
@@ -32,8 +18,8 @@
   --fc-button-active-text-color: var(--foreground);
   --fc-page-bg-color: var(--background);
   --fc-neutral-bg-color: var(--muted);
-  --fc-today-bg-color: color-mix(in srgb, var(--fc-course-1) 5%, transparent);
-  --fc-event-bg-color: var(--fc-course-1);
+  --fc-today-bg-color: color-mix(in srgb, var(--fc-default-event-color) 5%, transparent);
+  --fc-event-bg-color: var(--fc-default-event-color);
   --fc-event-border-color: transparent;
   --fc-event-text-color: var(--foreground);
   --fc-now-indicator-color: #ef4444;
@@ -140,8 +126,8 @@
 
 /* ── Timegrid event (week/day view) ── */
 .fc .fc-timegrid-event {
-  border-left: 3px solid var(--event-color, var(--fc-course-1));
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 12%, var(--background));
+  border-left: 3px solid var(--event-color, var(--fc-default-event-color));
+  background: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 12%, var(--background));
 }
 
 .fc .fc-timegrid-event .fc-event-main {
@@ -164,8 +150,8 @@
 
 /* ── Daygrid event (month view) ── */
 .fc .fc-daygrid-event {
-  border-left: 3px solid var(--event-color, var(--fc-course-1));
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 12%, var(--background));
+  border-left: 3px solid var(--event-color, var(--fc-default-event-color));
+  background: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 12%, var(--background));
   padding: 1px 4px 1px 4px;
   margin-bottom: 1px;
   overflow: hidden;
@@ -222,12 +208,11 @@
 }
 
 .dark .fc .fc-timegrid-event {
-  border-left: 3px solid var(--event-color, var(--fc-course-1));
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 22%, oklch(0.22 0.005 280));
+  background: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 22%, oklch(0.22 0.005 280));
 }
 
 .dark .fc .fc-timegrid-event .fc-event-main {
-  color: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 15%, rgba(255, 255, 255, 0.92));
+  color: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 15%, rgba(255, 255, 255, 0.92));
 }
 
 .dark .fc .fc-timegrid-event .fc-event-time {
@@ -235,8 +220,7 @@
 }
 
 .dark .fc .fc-daygrid-event {
-  border-left: 3px solid var(--event-color, var(--fc-course-1));
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 22%, oklch(0.22 0.005 280));
+  background: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 22%, oklch(0.22 0.005 280));
 }
 
 .dark .fc .fc-event {
