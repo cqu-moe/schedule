@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { subscriptions, type Subscription, PERSONAL_SOURCE_TYPES, EXPLORE_SOURCE_TYPES, type SourceType, type ExploreSourceType } from "../db/schema";
 import type { Env } from "../types";
 import { requireAuth, requireAuthWithCquToken, type LightUser, type AuthUser } from "../middleware/auth";
@@ -103,17 +103,13 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   const db = drizzle(c.env.DB);
   const maxSubs = Number(c.env.MAX_SUBSCRIPTIONS ?? "10");
 
-  // Count all existing subscriptions
-  const existingSubs = await db
-    .select({
-      sourceType: subscriptions.sourceType,
-      sourceId: subscriptions.sourceId,
-      sessionId: subscriptions.sessionId,
-    })
+  // Count existing subscriptions
+  const countResult = await db
+    .select({ count: sql<number>`count(*)` })
     .from(subscriptions)
     .where(eq(subscriptions.userId, user.id));
 
-  if (existingSubs.length >= maxSubs) {
+  if (countResult[0].count >= maxSubs) {
     return errorResponse("MAX_SUBSCRIPTIONS", `Maximum subscriptions (${maxSubs}) reached`, 409);
   }
 
@@ -126,15 +122,22 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     const sessionId = ctx.semesterInfo.id ? String(ctx.semesterInfo.id) : "";
     const sessionName = ctx.semesterInfo.name;
 
-    // Check for duplicate
-    for (const s of existingSubs) {
-      if (
-        s.sourceType === body.source_type &&
-        s.sourceId === body.source_id &&
-        s.sessionId === sessionId
-      ) {
-        return errorResponse("SUBSCRIPTION_DUPLICATE", "Subscription already exists for this session", 409);
-      }
+    // Check for duplicate with direct query (hits UNIQUE index)
+    const duplicate = await db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.userId, user.id),
+          eq(subscriptions.sourceType, body.source_type as SourceType),
+          eq(subscriptions.sourceId, body.source_id),
+          eq(subscriptions.sessionId, sessionId),
+        ),
+      )
+      .limit(1);
+
+    if (duplicate.length > 0) {
+      return errorResponse("SUBSCRIPTION_DUPLICATE", "Subscription already exists for this session", 409);
     }
 
     const result = await buildExploreSyncResult(
