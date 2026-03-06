@@ -199,3 +199,10 @@
 .dark .fc .fc-event[data-event-type="exam"] {
   background: color-mix(in srgb, #ef4444 15%, var(--background));
 }
+
+/* Dark mode: soften active button from pure white to subtle gray */
+.dark .fc .fc-button-active {
+  background: oklch(0.45 0.005 50) !important;
+  border-color: oklch(0.45 0.005 50) !important;
+  color: var(--foreground) !important;
+}
