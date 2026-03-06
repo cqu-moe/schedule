@@ -80,3 +80,16 @@ vi.mock('@vueuse/core', async (importOriginal) => {
     useColorMode: vi.fn(() => ({ store })),
   }
 })
+
+// Mock @fullcalendar/vue3
+vi.mock('@fullcalendar/vue3', () => ({
+  default: {
+    name: 'FullCalendar',
+    template: '<div data-testid="fullcalendar" />',
+    props: ['options'],
+  },
+}))
+
+// Mock FullCalendar plugins (they export plugin objects)
+vi.mock('@fullcalendar/daygrid', () => ({ default: {} }))
+vi.mock('@fullcalendar/timegrid', () => ({ default: {} }))
