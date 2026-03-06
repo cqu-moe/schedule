@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-02-25",
   "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": true,
+  "workers_dev": false,
 
   // Place Worker near CQU API server to reduce latency
   "placement": {
