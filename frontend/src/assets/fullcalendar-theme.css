@@ -207,11 +207,21 @@
 
 /* ── Dark mode adjustments ── */
 .dark .fc .fc-timegrid-event {
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 18%, var(--background));
+  border-left: 3px solid var(--event-color, var(--fc-course-1));
+  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 22%, oklch(0.22 0.005 280));
+}
+
+.dark .fc .fc-timegrid-event .fc-event-main {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.dark .fc .fc-timegrid-event .fc-event-time {
+  opacity: 0.7;
 }
 
 .dark .fc .fc-daygrid-event {
-  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 18%, var(--background));
+  border-left: 3px solid var(--event-color, var(--fc-course-1));
+  background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 22%, oklch(0.22 0.005 280));
 }
 
 .dark .fc .fc-event {
