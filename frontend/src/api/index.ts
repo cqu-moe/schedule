@@ -6,6 +6,7 @@ import type {
   AppConfig,
   HealthStatus,
   Subscription,
+  CalendarData,
 } from '@/types/api'
 
 const client = axios.create({
@@ -114,6 +115,11 @@ export default {
 
   async getConfig(): Promise<AppConfig> {
     const response = await client.get('/config')
+    return response.data
+  },
+
+  async getCalendarData(subToken: string): Promise<CalendarData> {
+    const response = await client.get(`/subscriptions/${encodeURIComponent(subToken)}/data.json`)
     return response.data
   },
 }

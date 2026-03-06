@@ -54,3 +54,21 @@ export interface AuthResult {
   token?: string
   error?: string
 }
+
+export interface FormattedEvent {
+  name: string
+  type: 'course' | 'exam'
+  instructor: string | null
+  location: string
+  day_of_week: number | null
+  start_time: string
+  end_time: string
+  week: number | null
+}
+
+export interface CalendarData {
+  semester: string
+  semester_start: string
+  generated_at: string
+  events: FormattedEvent[]
+}

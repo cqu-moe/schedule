@@ -62,6 +62,7 @@ export function createMockApi() {
     refreshSubscription: vi.fn(),
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
+    getCalendarData: vi.fn().mockResolvedValue({ semester: '2025秋', semester_start: '2025-09-01', generated_at: new Date().toISOString(), events: [] }),
   }
 }
 
@@ -75,6 +76,7 @@ const routes = [
   { path: '/dashboard', name: RouteNames.Dashboard, component: { template: '<div>Dashboard</div>' }, meta: { requiresAuth: true } },
   { path: '/add', name: RouteNames.Add, component: { template: '<div>Add</div>' }, meta: { requiresAuth: true } },
   { path: '/api-docs', name: RouteNames.ApiDocs, component: { template: '<div>Docs</div>' } },
+  { path: '/calendar/:sub_token', name: RouteNames.Calendar, component: { template: '<div>Calendar</div>' } },
 ]
 
 export function createTestRouter() {

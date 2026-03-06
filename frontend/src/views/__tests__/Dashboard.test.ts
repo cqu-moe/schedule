@@ -18,6 +18,7 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     refreshSubscription: vi.fn(),
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
+    getCalendarData: vi.fn(),
   }
   return { mockApi, mockToast }
 })
@@ -134,7 +135,19 @@ describe('Dashboard view', () => {
     expect(wrapper.text()).toContain('尚未同步')
   })
 
-  // 6. Copy URL calls navigator.clipboard.writeText
+  // 6. Calendar button links to correct route
+  it('shows calendar button linking to /calendar/:sub_token', async () => {
+    const { wrapper } = await mountDashboard()
+
+    const calendarBtn = wrapper.findAll('button').find(b => b.text().includes('日历'))
+    expect(calendarBtn).toBeDefined()
+
+    const link = calendarBtn!.element.closest('a')
+    expect(link).toBeDefined()
+    expect(link!.getAttribute('href')).toBe('/calendar/sub-token-123')
+  })
+
+  // 7. Copy URL calls navigator.clipboard.writeText
   it('copies URL to clipboard when copy button is clicked', async () => {
     const { wrapper } = await mountDashboard()
 
@@ -402,7 +415,7 @@ describe('Dashboard view', () => {
     await deleteButtons[deleteButtons.length - 1].trigger('click')
     await flushPromises()
 
-    expect(mockToast.error).toHaveBeenCalledWith('删除失败')
+    expect(mockToast.error).toHaveBeenCalledWith('订阅不存在或链接已失效')
   })
 
   // Sync all calls refreshSubscription in parallel

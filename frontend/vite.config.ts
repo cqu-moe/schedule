@@ -38,6 +38,7 @@ export default defineConfig(async () => {
           manualChunks: {
             vendor: ['vue', 'vue-router', 'pinia', 'axios'],
             ui: ['reka-ui', 'lucide-vue-next', 'class-variance-authority', 'clsx', 'tailwind-merge'],
+            fullcalendar: ['@fullcalendar/core', '@fullcalendar/vue3', '@fullcalendar/daygrid', '@fullcalendar/timegrid'],
           },
         },
       },

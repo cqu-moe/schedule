@@ -7,7 +7,7 @@ const SECURITY_HEADERS: Record<string, string> = {
     "default-src 'self'",
     "script-src 'self' https://static.cloudflareinsights.com https://*.hcaptcha.com https://hcaptcha.com",
     "style-src 'self' 'unsafe-inline'",
-    "font-src 'self'",
+    "font-src 'self' data:",
     "frame-src https://*.hcaptcha.com https://hcaptcha.com",
     "connect-src 'self' https://*.hcaptcha.com https://hcaptcha.com",
     "img-src 'self' data:",

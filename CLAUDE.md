@@ -85,6 +85,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
 - `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
 - `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
+- CSP 安全头定义在 `src/middleware/security-headers.ts`；添加使用 `data:` URL 内联字体的库时，须在 `font-src` 加 `data:`（如 FullCalendar 的 fcicons）
 
 ### Git & 工作流
 - frontend/dist 和 frontend/node_modules 已 gitignore
@@ -109,6 +110,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Bundle 分析: `ANALYZE=true npm run build:frontend` 生成 `frontend/dist/stats.html`
 - Vite manualChunks: vendor (vue/router/pinia/axios) + ui (reka-ui/lucide/cva/clsx/tailwind-merge)，其余依赖走 Vite 默认分割
 - `rollup-plugin-visualizer` 用动态 import + `process.env.ANALYZE` 门控，不影响正常构建
+- FullCalendar 主题样式在 `frontend/src/assets/fullcalendar-theme.css`；`.fc { font-family: inherit }` 会覆盖图标字体，须用 `.fc .fc-icon { font-family: fcicons !important }` 恢复
+- FullCalendar timegrid 事件的 `::after` 伪元素有 `rgba(0,0,0,0.25)` 遮罩，已用 `.fc .fc-event::after { display: none !important }` 全局禁用
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
