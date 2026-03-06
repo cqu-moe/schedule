@@ -45,38 +45,24 @@
     <!-- Footer -->
     <footer class="border-t border-border py-8">
       <p class="text-center text-sm text-muted-foreground">
-        CQU Schedule
-        <template v-if="version">
-          · {{ version }}
-        </template>
+        CQU Schedule ·
+        <router-link to="/changelog" class="hover:text-foreground transition-colors">
+          v{{ appVersion }}
+        </router-link>
       </p>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
-import api from '@/api'
 
 const authStore = useAuthStore()
 const ctaLink = computed(() => authStore.isAuthenticated ? '/dashboard' : '/register')
 
-const version = ref('')
-
-onMounted(async () => {
-  try {
-    const data = await api.getHealth()
-    if (data.commit && data.commit !== 'dev') {
-      version.value = data.date && data.date !== 'unknown'
-        ? `${data.commit} (${data.date})`
-        : data.commit
-    }
-  } catch {
-    // ignore — version display is non-critical
-  }
-})
+const appVersion = __APP_VERSION__
 </script>

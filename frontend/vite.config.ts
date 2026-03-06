@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, type PluginOption } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
+import { marked } from 'marked'
 
 export default defineConfig(async () => {
   const plugins: PluginOption[] = [vue(), tailwindcss()]
@@ -13,6 +16,14 @@ export default defineConfig(async () => {
 
   return {
     plugins,
+    define: {
+      __APP_VERSION__: JSON.stringify(
+        JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf-8')).version
+      ),
+      __CHANGELOG_HTML__: JSON.stringify(
+        marked.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8'), { async: false })
+      ),
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))
