@@ -8,6 +8,7 @@ import exploreRoutes from "./routes/explore";
 import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
+import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -54,6 +55,7 @@ export default {
       response = await app.fetch(request, env, ctx);
     } else {
       response = await env.ASSETS.fetch(request);
+      response = rewriteHtmlMeta(response, url.pathname);
     }
     return addSecurityHeaders(response);
   },
