@@ -223,6 +223,10 @@
   background: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 22%, oklch(0.22 0.005 280));
 }
 
+.dark .fc .fc-daygrid-event .fc-event-title {
+  color: color-mix(in srgb, var(--event-color, var(--fc-default-event-color)) 15%, rgba(255, 255, 255, 0.92));
+}
+
 .dark .fc .fc-event {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
 }
