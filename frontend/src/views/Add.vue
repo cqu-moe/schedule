@@ -114,7 +114,7 @@
           </p>
 
           <VueHcaptcha
-            v-if="captchaEnabled"
+            v-if="captchaEnabled && captchaMounted"
             ref="hcaptchaRef"
             :sitekey="captchaSitekey"
             size="invisible"
@@ -144,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useCaptcha } from '@/composables/useCaptcha'
@@ -180,6 +180,7 @@ const searchResults = ref<SearchResult[]>([])
 const searching = ref(false)
 const searched = ref(false)
 const subscribeFeedback = useButtonFeedback()
+const captchaMounted = ref(false)
 const errorMessage = ref('')
 const isTokenExpired = ref(false)
 
@@ -290,6 +291,12 @@ async function doSearch() {
 
 async function handleSubscribe(item: SearchResult) {
   clearError()
+
+  // Mount hCaptcha on first subscribe attempt
+  if (captchaEnabled.value && !captchaMounted.value) {
+    captchaMounted.value = true
+    await nextTick()
+  }
 
   let captchaToken = null
   try {
