@@ -39,6 +39,11 @@
   font-size: 0.875rem;
 }
 
+/* Preserve FullCalendar icon font (overridden by font-family:inherit above) */
+.fc .fc-icon {
+  font-family: fcicons !important;
+}
+
 /* ── Toolbar ── */
 .fc .fc-toolbar {
   gap: 0.5rem;
