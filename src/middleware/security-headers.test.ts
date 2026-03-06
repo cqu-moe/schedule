@@ -29,9 +29,6 @@ describe("addSecurityHeaders", () => {
     const result = addSecurityHeaders(new Response(""));
     const csp = result.headers.get("Content-Security-Policy")!;
 
-    // Google Fonts
-    expect(csp).toContain("https://fonts.googleapis.com");
-    expect(csp).toContain("https://fonts.gstatic.com");
     // hCaptcha
     expect(csp).toContain("https://*.hcaptcha.com");
     expect(csp).toContain("https://hcaptcha.com");
