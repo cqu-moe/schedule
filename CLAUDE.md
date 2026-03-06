@@ -74,6 +74,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
+- SQLite 组合索引可服务最左前缀查询，但独立单列索引对单列过滤更高效（B-tree 更窄）
+- Drizzle `sql<number>` 是纯 TypeScript 类型断言，不做运行时类型转换；对 D1 返回值用 `?.` 防御
+- 移除 API 端点时应保留兼容端点至少一个版本，避免浏览器缓存的旧前端 404
+- 前端 config store 中 captcha 加载失败不应阻止重试（分离 loaded 和 captchaLoaded 状态）
 - 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
 ## 前端开发注意事项
@@ -89,6 +93,9 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 路由名称常量: `RouteNames` 从 `@/router` 导出，用于 `router.push({ name: RouteNames.Dashboard })`
 - Pinia Composition API store 不自带 `$reset()`，需手动实现（Options API 自带）
 - `vi.hoisted()` 回调中不能 import 其他模块，mock API 对象须内联 `vi.fn()` 创建
+- Bundle 分析: `ANALYZE=true npm run build:frontend` 生成 `frontend/dist/stats.html`
+- Vite manualChunks: vendor (vue/router/pinia/axios) + ui (reka-ui/lucide/cva/clsx/tailwind-merge)，其余依赖走 Vite 默认分割
+- `rollup-plugin-visualizer` 用动态 import + `process.env.ANALYZE` 门控，不影响正常构建
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
@@ -97,6 +104,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
+- `src/routes/config.test.ts` — config 路由测试 (health, merged config, captcha compat)
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)
 - `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化, error.ts: `errorResponse()` + `handleCquApiError()`)
