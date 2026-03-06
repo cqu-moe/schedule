@@ -52,7 +52,6 @@ export function createMockApi() {
     register: vi.fn(),
     recoverToken: vi.fn(),
     recoverTokenVerify: vi.fn(),
-    getCaptchaConfig: vi.fn().mockResolvedValue({ enabled: false, sitekey: '' }),
     getUserInfo: vi.fn(),
     deleteUser: vi.fn(),
     searchSchedule: vi.fn(),

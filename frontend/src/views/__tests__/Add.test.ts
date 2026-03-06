@@ -8,7 +8,6 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     register: vi.fn(),
     recoverToken: vi.fn(),
     recoverTokenVerify: vi.fn(),
-    getCaptchaConfig: vi.fn().mockResolvedValue({ enabled: false, sitekey: '' }),
     getUserInfo: vi.fn(),
     deleteUser: vi.fn(),
     searchSchedule: vi.fn(),
@@ -81,7 +80,6 @@ async function mountAdd(existingSubs: any[] = []) {
 describe('Add view', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockApi.getCaptchaConfig.mockResolvedValue({ enabled: false, sitekey: '' })
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], max: 5 })
   })
 

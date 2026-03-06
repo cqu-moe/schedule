@@ -12,17 +12,16 @@ app.get("/health", (c) => {
 });
 
 app.get("/config", (c) => {
-  return c.json({
+  const captchaEnabled = c.env.HCAPTCHA_ENABLED === "true";
+  const response = c.json({
     public_url: c.env.PUBLIC_URL?.replace(/\/$/, "") ?? "",
+    captcha: {
+      enabled: captchaEnabled,
+      sitekey: captchaEnabled ? (c.env.HCAPTCHA_SITEKEY ?? "") : "",
+    },
   });
-});
-
-app.get("/captcha/config", (c) => {
-  const enabled = c.env.HCAPTCHA_ENABLED === "true";
-  return c.json({
-    enabled,
-    sitekey: enabled ? (c.env.HCAPTCHA_SITEKEY ?? "") : "",
-  });
+  response.headers.set("Cache-Control", "public, max-age=300");
+  return response;
 });
 
 export default app;

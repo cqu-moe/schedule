@@ -3,7 +3,6 @@ import type {
   UserInfo,
   SubscriptionList,
   SearchResult,
-  CaptchaConfig,
   AppConfig,
   HealthStatus,
   Subscription,
@@ -55,11 +54,6 @@ export default {
       student_id: studentId,
       password: password
     }, { headers, timeout: 120000 })
-    return response.data
-  },
-
-  async getCaptchaConfig(): Promise<CaptchaConfig> {
-    const response = await client.get('/captcha/config')
     return response.data
   },
 

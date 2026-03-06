@@ -22,7 +22,6 @@ useColorMode({ attribute: 'class', modes: { dark: 'dark', light: '' } })
 const configStore = useConfigStore()
 onMounted(() => {
   configStore.load()
-  configStore.loadCaptchaConfig()
 })
 </script>
 

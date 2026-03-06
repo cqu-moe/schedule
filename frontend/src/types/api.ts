@@ -37,13 +37,12 @@ export interface SearchResult {
   extra: string
 }
 
-export interface CaptchaConfig {
-  enabled: boolean
-  sitekey: string
-}
-
 export interface AppConfig {
   public_url: string
+  captcha: {
+    enabled: boolean
+    sitekey: string
+  }
 }
 
 export interface HealthStatus {

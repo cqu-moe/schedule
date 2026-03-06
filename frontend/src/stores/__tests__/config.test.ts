@@ -5,7 +5,6 @@ const mockApi = vi.hoisted(() => ({
   register: vi.fn(),
   recoverToken: vi.fn(),
   recoverTokenVerify: vi.fn(),
-  getCaptchaConfig: vi.fn(),
   getUserInfo: vi.fn(),
   deleteUser: vi.fn(),
   searchSchedule: vi.fn(),
@@ -36,7 +35,10 @@ describe('config store', () => {
   })
 
   it('load() fetches and sets publicUrl', async () => {
-    mockApi.getConfig.mockResolvedValue({ public_url: 'https://schedule.cqu.moe' })
+    mockApi.getConfig.mockResolvedValue({
+      public_url: 'https://schedule.cqu.moe',
+      captcha: { enabled: false, sitekey: '' },
+    })
 
     const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
@@ -46,6 +48,21 @@ describe('config store', () => {
     expect(mockApi.getConfig).toHaveBeenCalledOnce()
     expect(store.publicUrl).toBe('https://schedule.cqu.moe')
     expect(store.loaded).toBe(true)
+  })
+
+  it('load() fetches and sets captcha config', async () => {
+    mockApi.getConfig.mockResolvedValue({
+      public_url: 'https://schedule.cqu.moe',
+      captcha: { enabled: true, sitekey: 'test-key' },
+    })
+
+    const { useConfigStore } = await import('@/stores/config')
+    const store = useConfigStore()
+
+    await store.load()
+
+    expect(store.captchaEnabled).toBe(true)
+    expect(store.captchaSitekey).toBe('test-key')
   })
 
   it('load() keeps default publicUrl on error', async () => {
@@ -59,10 +76,15 @@ describe('config store', () => {
 
     expect(store.publicUrl).toBe(originalUrl)
     expect(store.loaded).toBe(true)
+    expect(store.captchaEnabled).toBe(false)
+    expect(store.captchaSitekey).toBe('')
   })
 
   it('load() only calls API once', async () => {
-    mockApi.getConfig.mockResolvedValue({ public_url: 'https://schedule.cqu.moe' })
+    mockApi.getConfig.mockResolvedValue({
+      public_url: 'https://schedule.cqu.moe',
+      captcha: { enabled: false, sitekey: '' },
+    })
 
     const { useConfigStore } = await import('@/stores/config')
     const store = useConfigStore()
