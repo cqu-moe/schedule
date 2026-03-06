@@ -12,6 +12,7 @@ export const RouteNames = {
   Add: 'Add',
   ApiDocs: 'ApiDocs',
   Changelog: 'Changelog',
+  Calendar: 'Calendar',
 } as const
 
 const routes = [
@@ -62,6 +63,12 @@ const routes = [
     name: RouteNames.Changelog,
     component: () => import('@/views/Changelog.vue'),
     meta: { title: `更新日志 | ${SITE_NAME}` }
+  },
+  {
+    path: '/calendar/:sub_token',
+    name: RouteNames.Calendar,
+    component: () => import('@/views/Calendar.vue'),
+    meta: { title: `课表日历 | ${SITE_NAME}` }
   }
 ]
 
