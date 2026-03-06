@@ -90,7 +90,7 @@
                 <QrCode class="h-4 w-4 mr-1.5" />
                 二维码
               </Button>
-              <router-link :to="{ name: 'Calendar', params: { sub_token: sub.calendar_token } }">
+              <router-link :to="{ name: RouteNames.Calendar, params: { sub_token: sub.calendar_token } }">
                 <Button variant="outline" size="sm" class="cursor-pointer">
                   <Calendar class="h-4 w-4 mr-1.5" />
                   日历
@@ -243,6 +243,7 @@ import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { toast } from 'vue-sonner'
 import type { SourceType } from '@/types/api'
+import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'

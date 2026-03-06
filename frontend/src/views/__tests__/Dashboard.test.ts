@@ -402,7 +402,7 @@ describe('Dashboard view', () => {
     await deleteButtons[deleteButtons.length - 1].trigger('click')
     await flushPromises()
 
-    expect(mockToast.error).toHaveBeenCalledWith('删除失败')
+    expect(mockToast.error).toHaveBeenCalledWith('订阅不存在或链接已失效')
   })
 
   // Sync all calls refreshSubscription in parallel

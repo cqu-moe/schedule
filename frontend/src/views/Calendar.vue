@@ -11,7 +11,7 @@
       <!-- Error state -->
       <div v-else-if="error" class="text-center py-20">
         <p class="text-muted-foreground mb-4">{{ error }}</p>
-        <router-link to="/">
+        <router-link :to="{ name: RouteNames.Home }">
           <Button variant="outline" class="cursor-pointer">返回首页</Button>
         </router-link>
       </div>
@@ -64,6 +64,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import type { CalendarOptions, EventClickArg, EventInput } from '@fullcalendar/core'
 import type { FormattedEvent } from '@/types/api'
+import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
