@@ -11,6 +11,12 @@
   --fc-course-7: #6366f1; /* indigo */
   --fc-course-8: #14b8a6; /* teal */
   --fc-course-9: #f97316; /* orange */
+  --fc-course-10: #a855f7; /* purple */
+  --fc-course-11: #84cc16; /* lime */
+  --fc-course-12: #e11d48; /* rose */
+  --fc-course-13: #0891b2; /* cyan-dark */
+  --fc-course-14: #ea580c; /* orange-dark */
+  --fc-course-15: #2563eb; /* blue-dark */
 }
 
 /* ── Base variables ── */
@@ -127,6 +133,11 @@
   transform: scale(1.01);
 }
 
+/* Remove FullCalendar's default overlay on events (gray shade on click/select) */
+.fc .fc-event::after {
+  display: none !important;
+}
+
 /* ── Timegrid event (week/day view) ── */
 .fc .fc-timegrid-event {
   border-left: 3px solid var(--event-color, var(--fc-course-1));
@@ -206,13 +217,17 @@
 }
 
 /* ── Dark mode adjustments ── */
+.dark .fc {
+  --fc-today-bg-color: rgba(255, 255, 255, 0.03);
+}
+
 .dark .fc .fc-timegrid-event {
   border-left: 3px solid var(--event-color, var(--fc-course-1));
   background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 22%, oklch(0.22 0.005 280));
 }
 
 .dark .fc .fc-timegrid-event .fc-event-main {
-  color: rgba(255, 255, 255, 0.9);
+  color: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 15%, rgba(255, 255, 255, 0.92));
 }
 
 .dark .fc .fc-timegrid-event .fc-event-time {

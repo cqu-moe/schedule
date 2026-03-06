@@ -65,22 +65,21 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import type { CalendarOptions, EventClickArg, EventInput, EventMountArg } from '@fullcalendar/core'
 import type { FormattedEvent } from '@/types/api'
 
-// 9 distinct course colors matching CSS palette
+// 15 distinct course colors — assigned in order of first appearance to avoid collisions
 const COURSE_COLORS = [
   '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b',
-  '#ec4899', '#6366f1', '#14b8a6', '#f97316',
+  '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#a855f7',
+  '#84cc16', '#e11d48', '#0891b2', '#ea580c', '#2563eb',
 ]
 
-function hashString(str: string): number {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
-  }
-  return Math.abs(hash)
-}
+const courseColorMap = new Map<string, string>()
 
 function getCourseColor(name: string): string {
-  return COURSE_COLORS[hashString(name) % COURSE_COLORS.length]
+  const existing = courseColorMap.get(name)
+  if (existing) return existing
+  const color = COURSE_COLORS[courseColorMap.size % COURSE_COLORS.length]
+  courseColorMap.set(name, color)
+  return color
 }
 import { RouteNames } from '@/router'
 import api from '@/api'
