@@ -157,11 +157,21 @@
   background: color-mix(in srgb, var(--event-color, var(--fc-course-1)) 12%, var(--background));
   padding: 1px 4px;
   margin-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc .fc-daygrid-event .fc-event-main-frame {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fc .fc-daygrid-event .fc-event-title {
   font-weight: 500;
   color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fc .fc-daygrid-event .fc-event-time {
