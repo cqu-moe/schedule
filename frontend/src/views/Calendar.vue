@@ -178,6 +178,7 @@ const calendarOptions = computed<CalendarOptions>(() => ({
   slotMinTime: '08:00:00',
   slotMaxTime: '22:00:00',
   slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+  eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
   allDaySlot: false,
   nowIndicator: true,
   headerToolbar: {
