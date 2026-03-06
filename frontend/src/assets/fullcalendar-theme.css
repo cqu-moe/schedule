@@ -21,9 +21,9 @@
   --fc-button-text-color: var(--secondary-foreground);
   --fc-button-hover-bg-color: var(--accent);
   --fc-button-hover-border-color: var(--border);
-  --fc-button-active-bg-color: oklch(0.45 0.005 50);
-  --fc-button-active-border-color: oklch(0.45 0.005 50);
-  --fc-button-active-text-color: white;
+  --fc-button-active-bg-color: var(--background);
+  --fc-button-active-border-color: var(--border);
+  --fc-button-active-text-color: var(--foreground);
   --fc-page-bg-color: var(--background);
   --fc-neutral-bg-color: var(--muted);
   --fc-today-bg-color: color-mix(in srgb, var(--fc-course-1) 5%, transparent);
@@ -72,6 +72,13 @@
 
 .fc .fc-button-active {
   font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1) !important;
+}
+
+.dark .fc .fc-button-active {
+  background: oklch(0.35 0.005 50) !important;
+  border-color: oklch(0.35 0.005 50) !important;
+  box-shadow: none !important;
 }
 
 .fc .fc-today-button:disabled {
