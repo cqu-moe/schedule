@@ -15,6 +15,12 @@ export type AuthUser = LightUser & Pick<User, 'accessToken'>;
 function parseToken(c: Context): string | Response {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
+    console.warn(JSON.stringify({
+      event: "auth.missing_header",
+      ip: c.req.header("CF-Connecting-IP") ?? "unknown",
+      path: c.req.path,
+      message: "Missing or malformed Authorization header",
+    }));
     return errorResponse("UNAUTHORIZED", "Invalid authorization header", 401);
   }
   return authHeader.slice(7);
@@ -41,6 +47,12 @@ export const requireAuth = createMiddleware<{
     .limit(1);
 
   if (!user) {
+    console.warn(JSON.stringify({
+      event: "auth.invalid_token",
+      ip: c.req.header("CF-Connecting-IP") ?? "unknown",
+      path: c.req.path,
+      message: "Invalid token",
+    }));
     return errorResponse("UNAUTHORIZED", "Invalid token", 401);
   }
 
@@ -70,6 +82,12 @@ export const requireAuthWithCquToken = createMiddleware<{
     .limit(1);
 
   if (!user) {
+    console.warn(JSON.stringify({
+      event: "auth.invalid_token",
+      ip: c.req.header("CF-Connecting-IP") ?? "unknown",
+      path: c.req.path,
+      message: "Invalid token",
+    }));
     return errorResponse("UNAUTHORIZED", "Invalid token", 401);
   }
 
