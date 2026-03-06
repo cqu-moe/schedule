@@ -1,0 +1,166 @@
+<template>
+  <div class="min-h-screen bg-background">
+    <Navbar />
+
+    <div class="max-w-5xl mx-auto px-4 pt-24 pb-12">
+      <!-- Loading state -->
+      <div v-if="loading" class="flex items-center justify-center py-20">
+        <Loader2 class="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+
+      <!-- Error state -->
+      <div v-else-if="error" class="text-center py-20">
+        <p class="text-muted-foreground mb-4">{{ error }}</p>
+        <router-link to="/">
+          <Button variant="outline" class="cursor-pointer">返回首页</Button>
+        </router-link>
+      </div>
+
+      <!-- Calendar -->
+      <div v-else>
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold">{{ semester || '课表日历' }}</h2>
+        </div>
+        <FullCalendar :options="calendarOptions" />
+      </div>
+    </div>
+
+    <!-- Event detail dialog -->
+    <Dialog v-model:open="showDetail">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ selectedEvent?.title }}</DialogTitle>
+        </DialogHeader>
+        <div class="space-y-2 text-sm">
+          <div v-if="selectedEvent?.extendedProps?.instructor" class="flex items-center gap-2">
+            <User class="h-4 w-4 text-muted-foreground" />
+            <span>{{ selectedEvent.extendedProps.instructor }}</span>
+          </div>
+          <div v-if="selectedEvent?.extendedProps?.location" class="flex items-center gap-2">
+            <MapPin class="h-4 w-4 text-muted-foreground" />
+            <span>{{ selectedEvent.extendedProps.location }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Clock class="h-4 w-4 text-muted-foreground" />
+            <span>{{ formatEventTime(selectedEvent) }}</span>
+          </div>
+          <div>
+            <Badge :variant="selectedEvent?.extendedProps?.type === 'exam' ? 'destructive' : 'secondary'">
+              {{ selectedEvent?.extendedProps?.type === 'exam' ? '考试' : '课程' }}
+            </Badge>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { Loader2, User, MapPin, Clock } from 'lucide-vue-next'
+import FullCalendar from '@fullcalendar/vue3'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import type { CalendarOptions, EventClickArg, EventInput } from '@fullcalendar/core'
+import type { FormattedEvent } from '@/types/api'
+import api from '@/api'
+import { parseApiError } from '@/utils/error'
+import Navbar from '@/components/Navbar.vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import '@/assets/fullcalendar-theme.css'
+
+const route = useRoute()
+
+const loading = ref(true)
+const error = ref<string | null>(null)
+const semester = ref('')
+const events = ref<EventInput[]>([])
+const showDetail = ref(false)
+const selectedEvent = ref<{ title: string; extendedProps: Record<string, string>; start: Date | null; end: Date | null } | null>(null)
+
+function toCalendarEvent(e: FormattedEvent): EventInput {
+  return {
+    title: e.name,
+    start: e.start_time,
+    end: e.end_time,
+    extendedProps: {
+      location: e.location,
+      instructor: e.instructor ?? '',
+      type: e.type,
+    },
+    backgroundColor: e.type === 'exam' ? 'var(--destructive)' : undefined,
+  }
+}
+
+function handleEventClick(info: EventClickArg) {
+  selectedEvent.value = {
+    title: info.event.title,
+    extendedProps: info.event.extendedProps as Record<string, string>,
+    start: info.event.start,
+    end: info.event.end,
+  }
+  showDetail.value = true
+}
+
+function formatEventTime(event: typeof selectedEvent.value): string {
+  if (!event?.start) return ''
+  const fmt = (d: Date) => d.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  })
+  const start = fmt(event.start)
+  if (!event.end) return start
+  if (event.start.toDateString() === event.end.toDateString()) {
+    const endTime = event.end.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return `${start} - ${endTime}`
+  }
+  return `${start} - ${fmt(event.end)}`
+}
+
+const calendarOptions = computed<CalendarOptions>(() => ({
+  plugins: [dayGridPlugin, timeGridPlugin],
+  initialView: window.innerWidth < 768 ? 'timeGridDay' : 'timeGridWeek',
+  locale: 'zh-cn',
+  timeZone: 'Asia/Chongqing',
+  firstDay: 1,
+  slotMinTime: '08:00:00',
+  slotMaxTime: '22:00:00',
+  allDaySlot: false,
+  nowIndicator: true,
+  headerToolbar: {
+    left: 'prev,next today',
+    center: 'title',
+    right: 'timeGridDay,timeGridWeek,dayGridMonth',
+  },
+  buttonText: {
+    today: '今天',
+    day: '日',
+    week: '周',
+    month: '月',
+  },
+  events: events.value,
+  eventClick: handleEventClick,
+  height: 'auto',
+}))
+
+onMounted(async () => {
+  const subToken = route.params.sub_token as string
+  try {
+    const data = await api.getCalendarData(subToken)
+    semester.value = data.semester ? `${data.semester} 课表` : '课表日历'
+    events.value = data.events.map(toCalendarEvent)
+  } catch (err) {
+    error.value = parseApiError(err, '加载课表数据失败')
+  } finally {
+    loading.value = false
+  }
+})
+</script>
