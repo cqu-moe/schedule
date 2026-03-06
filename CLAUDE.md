@@ -33,51 +33,64 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npx wrangler dev --remote --test-scheduled` — 用生产 D1 手动触发 cron (访问 `http://localhost:8787/__scheduled?cron=<url-encoded-cron>`)
 
 ## 开发注意事项
-- 后端 vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)；前端独立 npm 项目用 vitest v4 + jsdom
-- vitest.config.ts 中 miniflare.compatibilityDate 设为 "2025-01-01" (规避 future date 错误)
-- wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
-- frontend/dist 和 frontend/node_modules 已 gitignore
-- 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
-- Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
-- `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试用 `npx vitest run --exclude 'frontend/**'`（`npx vitest run src/` 仍会拾取 frontend 测试）
-- 错误响应格式: 统一为 `{ detail: { error: { code, message } } }`，使用 `errorResponse(code, message, status)` (from `src/utils/error.ts`)
-- CaptchaError.message 就是 error code 字符串 (如 "CAPTCHA_REQUIRED")，`errorResponse(e.message, e.message, 403)`
-- Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
-- Hono Context 类型不协变：接受 `c` 参数的 helper 函数须匹配 app 的完整 env 类型（如 `AuthEnv`），不能用更窄的 `{ Bindings: Env }`
-- Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
-- `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
+
+### Workers Runtime & Hono
 - workerd 中 `createCipheriv` 不接受 `null` 作为 IV，ECB 模式须传 `""` (空字符串)
 - `node:crypto` 需要 `nodejs_compat` flag 和 `@types/node` devDep + tsconfig types
-- CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
-- `CQUAPIClient.request<T>()` 是泛型方法，CQU API 响应接口定义在 cqu-api.ts 内部（不导出），只覆盖代码实际访问的字段
-- CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
+- `response.headers.getSetCookie()` 在 Workers runtime 可用但 `@cloudflare/workers-types` 默认不含类型声明，已在 `src/types/headers.d.ts` 补充
 - Workers fetch 默认 UA 会被 SSO 识别为机器人，login 请求须带浏览器 User-Agent
-- Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
-- Cloudflare Builds deploy command 须设为 `npm run deploy` (非 `npx wrangler deploy`)
-- `git log --format` 中 `%d` 是 ref names 不是日期；获取日期用 `--format=%cd --date=short`
-- `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
-- `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
-- Git commit 签名依赖 1Password SSH agent；若 1Password 未解锁会报 "failed to fill whole buffer"，此时用 `-c commit.gpgsign=false` 暂时跳过，待 1Password 可用后用 `git rebase --exec 'git commit --amend --no-edit -S' HEAD~N` 补签
-- D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
-- 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
-- CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
-- ICS `UID` 字段决定日历客户端的事件追踪，修改 UID 生成算法会导致所有订阅者事件重复/丢失自定义
 - Workers placement 只影响 fetch handler，不影响 cron scheduled handler
+- `run_worker_first: true` 确保 /api/* 请求先到 Worker 再到静态资源
+- Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
+- Hono Context 类型不协变：接受 `c` 参数的 helper 函数须匹配 app 的完整 env 类型（如 `AuthEnv`），不能用更窄的 `{ Bindings: Env }`
+- 日志格式: `console.log(JSON.stringify({ event: "context.subsystem.action", message: "...", ...fields }))` — 结构化 JSON，便于 Workers Observability 过滤
+
+### Cron & Queue
+- Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
 - Cron handler 只做入队 (`sendBatch`)，实际处理在 Queue consumer 中
 - `sendBatch` 最多 100 条/次，>100 用户需分批调用；支持 per-message `delaySeconds`（0-43200 秒）分散投递
 - Queue consumer 有独立的 subrequest (1000) 和墙钟 (15min) 限制
-- `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - Queue handler 的 `MessageBatch` 默认泛型为 `unknown`，须用 `batch as MessageBatch<T>` 类型断言
-- `response.headers.getSetCookie()` 在 Workers runtime 可用但 `@cloudflare/workers-types` 默认不含类型声明，已在 `src/types/headers.d.ts` 补充
-- 日志格式: `console.log(JSON.stringify({ event: "context.subsystem.action", message: "...", ...fields }))` — 结构化 JSON，便于 Workers Observability 过滤
+- CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
+
+### D1 & Drizzle
+- D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
+- Drizzle `sql<number>` 是纯 TypeScript 类型断言，不做运行时类型转换；对 D1 返回值用 `?.` 防御
+- wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
+
+### CQU API
+- CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
+- `CQUAPIClient.request<T>()` 是泛型方法，CQU API 响应接口定义在 cqu-api.ts 内部（不导出），只覆盖代码实际访问的字段
+- CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
+
+### API 设计
+- 错误响应格式: 统一为 `{ detail: { error: { code, message } } }`，使用 `errorResponse(code, message, status)` (from `src/utils/error.ts`)
+- CaptchaError.message 就是 error code 字符串 (如 "CAPTCHA_REQUIRED")，`errorResponse(e.message, e.message, 403)`
+- ICS `UID` 字段决定日历客户端的事件追踪，修改 UID 生成算法会导致所有订阅者事件重复/丢失自定义
+- 移除 API 端点时应保留兼容端点至少一个版本，避免浏览器缓存的旧前端 404
+
+### 测试
+- 后端 vitest 必须用 v3 (v4 与 @cloudflare/vitest-pool-workers 不兼容)；前端独立 npm 项目用 vitest v4 + jsdom
+- vitest.config.ts 中 miniflare.compatibilityDate 设为 "2025-01-01" (规避 future date 错误)
+- `npm test` (vitest run) 会拾取 frontend/ 下的测试文件，但 workerd pool 无法解析 `@/` alias 导致失败；只跑后端测试用 `npx vitest run --exclude 'frontend/**'`（`npx vitest run src/` 仍会拾取 frontend 测试）
+- `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - 前端测试: `frontend/src/test-utils.ts` 提供 `mountWithContext()` helper (Pinia + Router + 默认 stubs)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
-- SQLite 组合索引可服务最左前缀查询，但独立单列索引对单列过滤更高效（B-tree 更窄）
-- Drizzle `sql<number>` 是纯 TypeScript 类型断言，不做运行时类型转换；对 D1 返回值用 `?.` 防御
-- 移除 API 端点时应保留兼容端点至少一个版本，避免浏览器缓存的旧前端 404
-- 前端 config store 中 captcha 加载失败不应阻止重试（分离 loaded 和 captchaLoaded 状态）
+
+### 部署 & CI
+- Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
+- Cloudflare Builds deploy command 须设为 `npm run deploy` (非 `npx wrangler deploy`)
+- 有 Cloudflare Builds 自动部署，push 到 main 即触发，一般不需手动 `npm run deploy`
+- `wrangler dev --remote` 的 console.log 不显示在本地终端（代码在 edge 执行），调试需配合 `wrangler tail`
+- `npm run setup:secrets` 需要 1Password 桌面应用已打开并解锁
+
+### Git & 工作流
+- frontend/dist 和 frontend/node_modules 已 gitignore
+- 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
+- Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
+- Git commit 签名依赖 1Password SSH agent；若 1Password 未解锁会报 "failed to fill whole buffer"，此时用 `-c commit.gpgsign=false` 暂时跳过，待 1Password 可用后用 `git rebase --exec 'git commit --amend --no-edit -S' HEAD~N` 补签
 - 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
 ## 前端开发注意事项
@@ -104,10 +117,12 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
 - `src/routes/` — API 路由 (config, users, subscriptions, explore)
+- `src/routes/config.ts` — 配置路由 (health check, merged config, captcha)
 - `src/routes/config.test.ts` — config 路由测试 (health, merged config, captcha compat)
+- `src/routes/validation.test.ts` — 输入验证测试
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)
-- `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化, error.ts: `errorResponse()` + `handleCquApiError()`)
+- `src/utils/` — 共享工具 (token.ts: token 生成, time.ts: 中国时区格式化, error.ts: `errorResponse()` + `handleCquApiError()`, encoding.ts: Base64 编码, queue.ts: `spreadEnqueue` 分批入队)
 - `frontend/` — Vue 前端 (独立 npm 项目)
 - `frontend/vitest.config.ts` — 前端测试配置 (jsdom, @/ alias)
 - `frontend/src/test-setup.ts` — 全局 mock (clipboard, hCaptcha, shadcn stubs)
