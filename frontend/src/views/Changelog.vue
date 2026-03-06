@@ -19,6 +19,8 @@ const changelogHtml = __CHANGELOG_HTML__
 </script>
 
 <style scoped>
+@reference "@/assets/styles/globals.css";
+
 .changelog-content :deep(h2) {
   @apply text-xl font-heading font-semibold mt-8 mb-3;
 }
