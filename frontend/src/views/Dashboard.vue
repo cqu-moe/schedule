@@ -90,6 +90,12 @@
                 <QrCode class="h-4 w-4 mr-1.5" />
                 二维码
               </Button>
+              <router-link :to="{ name: 'Calendar', params: { sub_token: sub.calendar_token } }">
+                <Button variant="outline" size="sm" class="cursor-pointer">
+                  <Calendar class="h-4 w-4 mr-1.5" />
+                  日历
+                </Button>
+              </router-link>
               <Button
                 variant="outline"
                 size="sm"
@@ -229,7 +235,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download, Calendar } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useRiskWarning } from '@/composables/useRiskWarning'
 import { useAuthStore } from '@/stores/auth'
