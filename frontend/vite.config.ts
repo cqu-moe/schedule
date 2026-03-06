@@ -21,7 +21,7 @@ export default defineConfig(async () => {
         JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf-8')).version
       ),
       __CHANGELOG_HTML__: JSON.stringify(
-        marked.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8')) as string
+        marked.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8'), { async: false })
       ),
     },
     resolve: {

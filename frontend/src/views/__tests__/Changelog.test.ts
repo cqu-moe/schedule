@@ -8,10 +8,12 @@ describe('Changelog view', () => {
     expect(wrapper.text()).toContain('更新日志')
   })
 
-  it('renders changelog HTML content', async () => {
+  it('renders changelog HTML content with h1 stripped', async () => {
     const { wrapper } = await mountWithContext(Changelog)
     const content = wrapper.find('.changelog-content')
     expect(content.exists()).toBe(true)
-    expect(content.html()).toContain('Test')
+    expect(content.html()).not.toContain('Changelog</h1>')
+    expect(content.html()).toContain('v1.0.0')
+    expect(content.html()).toContain('Test content')
   })
 })
