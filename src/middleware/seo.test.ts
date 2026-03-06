@@ -44,6 +44,16 @@ describe("rewriteHtmlMeta", () => {
     expect(html).toContain(`<title>${meta.title}</title>`);
     expect(html).toContain(`content="${meta.description}"`);
     expect(html).toContain(`href="${BASE_URL}/api-docs"`);
+    expect(html).not.toContain('content="noindex');
+  });
+
+  it("sets noindex with correct title for /login", async () => {
+    const result = rewriteHtmlMeta(makeResponse(), "/login");
+    const html = await result.text();
+    const meta = getRouteMeta("/login");
+
+    expect(html).toContain(`<title>${meta.title}</title>`);
+    expect(html).toContain('content="noindex, nofollow"');
   });
 
   it("sets noindex for unknown routes", async () => {

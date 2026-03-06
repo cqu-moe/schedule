@@ -55,7 +55,16 @@ export default {
       response = await app.fetch(request, env, ctx);
     } else {
       response = await env.ASSETS.fetch(request);
-      response = rewriteHtmlMeta(response, url.pathname);
+      try {
+        response = rewriteHtmlMeta(response, url.pathname);
+      } catch (err) {
+        console.error(JSON.stringify({
+          event: "middleware.seo.rewrite_error",
+          pathname: url.pathname,
+          error: err instanceof Error ? err.message : String(err),
+          message: "HTMLRewriter failed, serving original response",
+        }));
+      }
     }
     return addSecurityHeaders(response);
   },

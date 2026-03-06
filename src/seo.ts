@@ -17,6 +17,21 @@ export const ROUTE_META: Record<string, RouteMeta> = {
     title: `API 文档 | ${SITE_NAME}`,
     description: "CQU Schedule REST API 文档，ICS 日历订阅接口说明",
   },
+  "/login": {
+    title: `登录 | ${SITE_NAME}`,
+    description: "登录 CQU Schedule 管理你的课表订阅",
+    noindex: true,
+  },
+  "/register": {
+    title: `注册 | ${SITE_NAME}`,
+    description: "注册 CQU Schedule 开始同步课表",
+    noindex: true,
+  },
+  "/recover": {
+    title: `找回 Token | ${SITE_NAME}`,
+    description: "找回你的 CQU Schedule 订阅 Token",
+    noindex: true,
+  },
 };
 
 export const DEFAULT_META: RouteMeta = {
