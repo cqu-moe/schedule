@@ -292,7 +292,10 @@ async function doSearch() {
 async function handleSubscribe(item: SearchResult) {
   clearError()
 
-  // Mount hCaptcha on first subscribe attempt
+  // Mount hCaptcha on first subscribe attempt.
+  // Note: nextTick ensures the component is in the DOM, but the hCaptcha SDK
+  // may not be fully loaded yet (especially on slow networks). If executeAsync
+  // fails, the catch block below shows an actionable error message.
   if (captchaEnabled.value && !captchaMounted.value) {
     captchaMounted.value = true
     await nextTick()

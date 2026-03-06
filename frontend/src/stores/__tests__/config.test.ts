@@ -65,7 +65,7 @@ describe('config store', () => {
     expect(store.captchaSitekey).toBe('test-key')
   })
 
-  it('load() keeps default publicUrl on error', async () => {
+  it('load() keeps default publicUrl on error but allows captcha retry', async () => {
     mockApi.getConfig.mockRejectedValue(new Error('Network error'))
 
     const { useConfigStore } = await import('@/stores/config')
@@ -76,11 +76,37 @@ describe('config store', () => {
 
     expect(store.publicUrl).toBe(originalUrl)
     expect(store.loaded).toBe(true)
+    expect(store.captchaLoaded).toBe(false)
     expect(store.captchaEnabled).toBe(false)
     expect(store.captchaSitekey).toBe('')
   })
 
-  it('load() only calls API once', async () => {
+  it('load() retries after failure and succeeds', async () => {
+    mockApi.getConfig
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce({
+        public_url: 'https://schedule.cqu.moe',
+        captcha: { enabled: true, sitekey: 'retry-key' },
+      })
+
+    const { useConfigStore } = await import('@/stores/config')
+    const store = useConfigStore()
+
+    // First call fails
+    await store.load()
+    expect(store.loaded).toBe(true)
+    expect(store.captchaLoaded).toBe(false)
+    expect(mockApi.getConfig).toHaveBeenCalledTimes(1)
+
+    // Second call retries because captchaLoaded is false
+    await store.load()
+    expect(store.captchaLoaded).toBe(true)
+    expect(store.captchaEnabled).toBe(true)
+    expect(store.captchaSitekey).toBe('retry-key')
+    expect(mockApi.getConfig).toHaveBeenCalledTimes(2)
+  })
+
+  it('load() only calls API once when fully loaded', async () => {
     mockApi.getConfig.mockResolvedValue({
       public_url: 'https://schedule.cqu.moe',
       captcha: { enabled: false, sitekey: '' },
@@ -94,5 +120,24 @@ describe('config store', () => {
     await store.load()
 
     expect(mockApi.getConfig).toHaveBeenCalledOnce()
+    expect(store.loaded).toBe(true)
+    expect(store.captchaLoaded).toBe(true)
+  })
+
+  it('$reset() resets captchaLoaded', async () => {
+    mockApi.getConfig.mockResolvedValue({
+      public_url: 'https://schedule.cqu.moe',
+      captcha: { enabled: true, sitekey: 'test-key' },
+    })
+
+    const { useConfigStore } = await import('@/stores/config')
+    const store = useConfigStore()
+
+    await store.load()
+    expect(store.captchaLoaded).toBe(true)
+
+    store.$reset()
+    expect(store.captchaLoaded).toBe(false)
+    expect(store.loaded).toBe(false)
   })
 })
