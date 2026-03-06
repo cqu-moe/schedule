@@ -51,7 +51,7 @@ app.get("/", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
     .where(eq(subscriptions.userId, user.id))
     .orderBy(desc(subscriptions.isPersonal), asc(subscriptions.createdAt));
 
-  return c.json({
+  const response = c.json({
     subscriptions: subs.map((sub) => ({
       calendar_token: sub.calendarToken,
       subscription_url: `${baseUrl}/api/v1/subscriptions/${sub.calendarToken}/calendar.ics`,
@@ -67,6 +67,8 @@ app.get("/", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
     count: subs.length,
     max: Number(c.env.MAX_SUBSCRIPTIONS ?? "10"),
   });
+  response.headers.set("Cache-Control", "private, max-age=10");
+  return response;
 });
 
 // POST /api/v1/subscriptions
