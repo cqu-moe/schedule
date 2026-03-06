@@ -134,9 +134,10 @@ function handleEventMount(info: EventMountArg) {
     el.setAttribute('data-event-type', 'exam')
   }
 
-  // Append location info to timegrid events
+  // Append location info only in timegrid (day/week) views
+  const isTimegrid = el.closest('.fc-timegrid') !== null
   const mainEl = el.querySelector('.fc-event-title')
-  if (mainEl && location) {
+  if (isTimegrid && mainEl && location) {
     const locSpan = document.createElement('div')
     locSpan.style.cssText = 'font-size:0.625rem;opacity:0.6;margin-top:1px;font-weight:400;'
     locSpan.textContent = location
