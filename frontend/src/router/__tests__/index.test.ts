@@ -8,7 +8,6 @@ vi.mock('@/api', () => ({
     getUserInfo: vi.fn(),
     recoverToken: vi.fn(),
     recoverTokenVerify: vi.fn(),
-    getCaptchaConfig: vi.fn(),
     deleteUser: vi.fn(),
     searchSchedule: vi.fn(),
     getDepartments: vi.fn(),

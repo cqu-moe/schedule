@@ -10,27 +10,18 @@ export const useConfigStore = defineStore('config', () => {
   const captchaLoaded = ref(false)
 
   async function load() {
-    if (loaded.value) return
+    if (loaded.value && captchaLoaded.value) return
     try {
       const data = await api.getConfig()
       publicUrl.value = data.public_url
-    } catch {
-      // fallback: keep window.location.origin
-    } finally {
+      captchaEnabled.value = data.captcha.enabled
+      captchaSitekey.value = data.captcha.sitekey
       loaded.value = true
-    }
-  }
-
-  async function loadCaptchaConfig() {
-    if (captchaLoaded.value) return
-    try {
-      const config = await api.getCaptchaConfig()
-      captchaEnabled.value = config.enabled
-      captchaSitekey.value = config.sitekey
       captchaLoaded.value = true
-    } catch {
-      // Proceed without captcha — graceful degradation
-      // Don't set captchaLoaded so it can be retried
+    } catch (e) {
+      console.warn('[config] Failed to load config:', e)
+      // Mark publicUrl as loaded (fallback to origin), but allow captcha retry
+      loaded.value = true
     }
   }
 
@@ -42,5 +33,5 @@ export const useConfigStore = defineStore('config', () => {
     captchaLoaded.value = false
   }
 
-  return { publicUrl, loaded, captchaEnabled, captchaSitekey, captchaLoaded, load, loadCaptchaConfig, $reset }
+  return { publicUrl, loaded, captchaEnabled, captchaSitekey, captchaLoaded, load, $reset }
 })

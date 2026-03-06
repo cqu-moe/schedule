@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ── Users table ──────────────────────────────────────────────────────────────
@@ -95,6 +95,7 @@ export const subscriptions = sqliteTable(
       table.sourceId,
       table.sessionId,
     ),
+    index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
 );
 

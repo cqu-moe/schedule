@@ -156,19 +156,6 @@ describe('API module', () => {
     })
   })
 
-  // ── getCaptchaConfig ──
-
-  describe('getCaptchaConfig', () => {
-    it('GET /captcha/config', async () => {
-      mockClient.get.mockResolvedValueOnce({ data: { enabled: true, siteKey: 'key' } })
-
-      const result = await api.getCaptchaConfig()
-
-      expect(mockClient.get).toHaveBeenCalledWith('/captcha/config')
-      expect(result).toEqual({ enabled: true, siteKey: 'key' })
-    })
-  })
-
   // ── getUserInfo ──
 
   describe('getUserInfo', () => {

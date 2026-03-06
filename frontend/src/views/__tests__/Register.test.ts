@@ -8,7 +8,6 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     register: vi.fn(),
     recoverToken: vi.fn(),
     recoverTokenVerify: vi.fn(),
-    getCaptchaConfig: vi.fn().mockResolvedValue({ enabled: false, sitekey: '' }),
     getUserInfo: vi.fn(),
     deleteUser: vi.fn(),
     searchSchedule: vi.fn(),
@@ -32,7 +31,6 @@ const { default: Register } = await import('@/views/Register.vue')
 describe('Register view', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockApi.getCaptchaConfig.mockResolvedValue({ enabled: false, sitekey: '' })
     localStorage.clear()
     localStorage.setItem('risk_warning_acknowledged', 'true')
   })

@@ -170,12 +170,14 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
 app.get("/me", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const user = c.get("user");
 
-  return c.json({
+  const response = c.json({
     student_id: user.studentId,
     calendar_token: user.calendarToken,
     created_at: user.createdAt,
     last_sync: user.lastRefreshAt,
   });
+  response.headers.set("Cache-Control", "private, max-age=60");
+  return response;
 });
 
 // DELETE /api/v1/users/me (delete current user)

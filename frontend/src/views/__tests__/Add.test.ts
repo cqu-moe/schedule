@@ -8,7 +8,6 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     register: vi.fn(),
     recoverToken: vi.fn(),
     recoverTokenVerify: vi.fn(),
-    getCaptchaConfig: vi.fn().mockResolvedValue({ enabled: false, sitekey: '' }),
     getUserInfo: vi.fn(),
     deleteUser: vi.fn(),
     searchSchedule: vi.fn(),
@@ -81,7 +80,6 @@ async function mountAdd(existingSubs: any[] = []) {
 describe('Add view', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockApi.getCaptchaConfig.mockResolvedValue({ enabled: false, sitekey: '' })
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], max: 5 })
   })
 
@@ -361,6 +359,53 @@ describe('Add view', () => {
     await flushPromises()
 
     expect(mockToast.error).toHaveBeenCalled()
+  })
+
+  // Deferred hCaptcha mounting: not rendered on mount, rendered after subscribe click
+  it('does not render VueHcaptcha on mount, mounts it after subscribe click when captcha enabled', async () => {
+    vi.useFakeTimers()
+    mockApi.searchSchedule.mockResolvedValue({
+      results: [{ id: 'teacher-1', name: '张三' }],
+    })
+    mockApi.createSubscription.mockResolvedValue({})
+    mockApi.getConfig.mockResolvedValue({
+      public_url: 'https://schedule.cqu.moe',
+      captcha: { enabled: true, sitekey: 'test-sitekey' },
+    })
+
+    // Mount with captcha enabled via config store
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], max: 5 })
+    const { wrapper } = await mountWithContext(Add, {
+      pinia: {
+        initialState: {
+          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
+          config: { loaded: true, captchaLoaded: true, captchaEnabled: true, captchaSitekey: 'test-sitekey', publicUrl: 'https://schedule.cqu.moe' },
+        },
+      },
+      global: {
+        stubs: componentStubs,
+      },
+    })
+    await flushPromises()
+
+    // hCaptcha should NOT be rendered on mount (deferred mounting)
+    expect(wrapper.find('[data-testid="hcaptcha"]').exists()).toBe(false)
+
+    // Trigger a search to get results
+    const input = wrapper.find('input')
+    await input.setValue('张三')
+    await input.trigger('input')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+
+    // Click subscribe to trigger captcha mount
+    const subscribeBtn = wrapper.findAll('button').find(b => b.text().includes('订阅') && !b.text().includes('已订阅'))
+    expect(subscribeBtn).toBeDefined()
+    await subscribeBtn!.trigger('click')
+    await flushPromises()
+
+    // hCaptcha should now be rendered
+    expect(wrapper.find('[data-testid="hcaptcha"]').exists()).toBe(true)
   })
 
   // Subscribe button calls createSubscription successfully
