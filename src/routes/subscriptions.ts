@@ -111,7 +111,7 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
     .from(subscriptions)
     .where(eq(subscriptions.userId, user.id));
 
-  if (countResult[0].count >= maxSubs) {
+  if ((countResult[0]?.count ?? 0) >= maxSubs) {
     return errorResponse("MAX_SUBSCRIPTIONS", `Maximum subscriptions (${maxSubs}) reached`, 409);
   }
 
