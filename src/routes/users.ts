@@ -9,7 +9,8 @@ import { login, AuthError } from "../services/auth";
 import { verifyCaptcha, CaptchaError } from "../services/captcha";
 import { rateLimit } from "../middleware/rate-limit";
 import { requireAuth } from "../middleware/auth";
-import { generateToken } from "../utils/token";
+import { generateToken, generateUniqueToken } from "../utils/token";
+import { tokenExists } from "../utils/token-collision";
 import { errorResponse } from "../utils/error";
 import { CQUAPIClient } from "../services/cqu-api";
 import {
@@ -268,6 +269,86 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     .where(eq(users.id, user.id));
 
   return c.json({ calendar_token: user.calendarToken });
+});
+
+// POST /api/v1/users/me/rotate-token (prepare)
+app.post("/me/rotate-token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+
+  const newToken = await generateUniqueToken((t) => tokenExists(db, t));
+
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+
+  await db
+    .update(users)
+    .set({
+      pendingCalendarToken: newToken,
+      pendingTokenExpiresAt: expiresAt,
+      updatedAt: now,
+    })
+    .where(eq(users.id, user.id));
+
+  return c.json({ new_token: newToken });
+});
+
+// POST /api/v1/users/me/rotate-token/confirm
+app.post("/me/rotate-token/confirm", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+
+  let body: { token: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return errorResponse("BAD_REQUEST", "Invalid JSON body", 400);
+  }
+  if (!body.token) {
+    return errorResponse("BAD_REQUEST", "token is required", 400);
+  }
+
+  const [pending] = await db
+    .select({
+      pendingCalendarToken: users.pendingCalendarToken,
+      pendingTokenExpiresAt: users.pendingTokenExpiresAt,
+    })
+    .from(users)
+    .where(eq(users.id, user.id))
+    .limit(1);
+
+  if (!pending?.pendingCalendarToken) {
+    return errorResponse("PENDING_NOT_FOUND", "No pending token rotation", 404);
+  }
+
+  if (new Date(pending.pendingTokenExpiresAt!) <= new Date()) {
+    await db
+      .update(users)
+      .set({ pendingCalendarToken: null, pendingTokenExpiresAt: null })
+      .where(eq(users.id, user.id));
+    return errorResponse("PENDING_EXPIRED", "Token rotation expired, please try again", 410);
+  }
+
+  // Timing-safe comparison
+  const encoder = new TextEncoder();
+  const a = encoder.encode(body.token);
+  const b = encoder.encode(pending.pendingCalendarToken);
+  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
+    return errorResponse("TOKEN_MISMATCH", "Token does not match", 422);
+  }
+
+  const now = new Date().toISOString();
+  await db
+    .update(users)
+    .set({
+      calendarToken: pending.pendingCalendarToken,
+      pendingCalendarToken: null,
+      pendingTokenExpiresAt: null,
+      updatedAt: now,
+    })
+    .where(eq(users.id, user.id));
+
+  return c.json({ calendar_token: pending.pendingCalendarToken });
 });
 
 /** Background sync: populate ICS content for newly created personal subscriptions */
