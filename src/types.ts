@@ -23,6 +23,7 @@ export interface Env {
   // Secrets
   ENCRYPTION_KEY: string;
   HCAPTCHA_SECRET: string;
+  ADMIN_SECRET: string;
 
   // Environment Variables
   PUBLIC_URL: string;

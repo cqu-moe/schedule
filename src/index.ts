@@ -5,6 +5,7 @@ import configRoutes from "./routes/config";
 import userRoutes from "./routes/users";
 import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
+import adminRoutes from "./routes/admin";
 import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
@@ -40,6 +41,7 @@ app.route("/api/v1", configRoutes);
 app.route("/api/v1/users", userRoutes);
 app.route("/api/v1/subscriptions", subscriptionRoutes);
 app.route("/api/v1", exploreRoutes);
+app.route("/api/v1/admin", adminRoutes);
 
 // Global error handler
 app.onError((err, c) => {

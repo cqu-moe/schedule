@@ -31,6 +31,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `npx wrangler d1 execute schedule-beta-cqu-moe-db --remote --command "SQL"` — 查询生产 D1
 - `npx wrangler tail schedule-beta-cqu-moe --format pretty` — 实时查看生产 Worker 日志
 - `npx wrangler dev --remote --test-scheduled` — 用生产 D1 手动触发 cron (访问 `http://localhost:8787/__scheduled?cron=<url-encoded-cron>`)
+- `ADMIN_SECRET=xxx ./scripts/admin-refresh-all.sh [url]` — 触发全量课表刷新（默认 https://schedule.cqu.moe）
 
 ## 开发注意事项
 
@@ -44,6 +45,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Hono 路由：静态路径 (如 /recover) 必须定义在参数路径 (如 /:token) 之前
 - Hono Context 类型不协变：接受 `c` 参数的 helper 函数须匹配 app 的完整 env 类型（如 `AuthEnv`），不能用更窄的 `{ Bindings: Env }`
 - 日志格式: `console.log(JSON.stringify({ event: "context.subsystem.action", message: "...", ...fields }))` — 结构化 JSON，便于 Workers Observability 过滤
+- Secret/token 比较须用 `crypto.subtle.timingSafeEqual`（防 timing attack），且先检查 `!secret` 防止 `Bearer undefined` bypass
 
 ### Cron & Queue
 - Cron 表达式在两处定义，修改时必须同步：`wrangler.jsonc` triggers.crons + `src/index.ts` switch case
@@ -79,6 +81,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
+- Drizzle D1 mock 须同时提供 `all()` 和 `raw()` 方法：`prepare().mockReturnValue({ bind: fn().mockReturnThis(), all: fn(), raw: fn() })`
 
 ### 部署 & CI
 - Cloudflare Builds 只在根目录 `npm ci`，前端依赖需在 `build:frontend` 中 `npm install`
@@ -121,9 +124,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)；还导出 `SourceType` union、`PERSONAL_SOURCE_TYPES`/`EXPLORE_SOURCE_TYPES` 集合；`sourceType` 列用 `.$type<SourceType>()` 让 Drizzle 推断正确类型
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
-- `src/routes/` — API 路由 (config, users, subscriptions, explore)
+- `src/routes/` — API 路由 (config, users, subscriptions, explore, admin)
 - `src/routes/config.ts` — 配置路由 (health check, merged config, captcha)
 - `src/routes/config.test.ts` — config 路由测试 (health, merged config, captcha compat)
+- `src/routes/admin.ts` — 管理端点 (Bearer token auth middleware + refresh-all)
 - `src/routes/validation.test.ts` — 输入验证测试
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)
@@ -132,6 +136,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `frontend/vitest.config.ts` — 前端测试配置 (jsdom, @/ alias)
 - `frontend/src/test-setup.ts` — 全局 mock (clipboard, hCaptcha, shadcn stubs)
 - `frontend/src/test-utils.ts` — 测试工具 (mock factories, mountWithContext)
+- `scripts/` — 运维脚本 (admin-refresh-all.sh)
 - `docs/plans/` — 设计文档和实现计划
 - OAuth token (accessToken/refreshToken) 使用 AES-256-GCM 加密存储，读写路径:
   - 写入: `src/routes/users.ts` (注册+恢复), `src/cron/token-refresh.ts` (刷新+重登录)
