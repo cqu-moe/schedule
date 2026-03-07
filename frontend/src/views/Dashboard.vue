@@ -64,7 +64,7 @@
             <div class="bg-muted rounded px-3 py-2 overflow-x-auto">
               <code class="text-xs text-muted-foreground break-all font-mono">{{ sub.subscription_url }}</code>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -136,32 +136,27 @@
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <!-- Delete button (only for non-personal subscriptions) -->
-              <AlertDialog v-if="!sub.is_personal">
-                <AlertDialogTrigger as-child>
-                  <Button variant="outline" size="sm" class="cursor-pointer text-destructive hover:text-destructive">
-                    <Trash2 class="h-4 w-4 mr-1.5" />
-                    删除
+              <!-- More actions (danger zone) -->
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button variant="outline" size="icon" class="cursor-pointer h-8 w-8">
+                    <Ellipsis class="h-4 w-4" />
                   </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>确认删除订阅</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      确定要删除「{{ sub.source_name }}」的课表订阅吗？已订阅的日历客户端将不再收到更新。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      @click="handleDeleteSub(sub.calendar_token)"
-                    >
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openRotateSubDialog(sub)">
+                    <RefreshCw class="h-4 w-4 mr-2" />
+                    重置链接
+                  </DropdownMenuItem>
+                  <template v-if="!sub.is_personal">
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openDeleteSubDialog(sub)">
+                      <Trash2 class="h-4 w-4 mr-2" />
                       删除
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                    </DropdownMenuItem>
+                  </template>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </CardContent>
         </Card>
@@ -182,6 +177,51 @@
             <CardTitle class="text-base text-destructive">危险操作区</CardTitle>
           </CardHeader>
           <CardContent>
+            <!-- Rotate auth token -->
+            <div class="mb-4">
+              <p class="text-sm text-muted-foreground mb-2">
+                轮换认证 Token 后，旧 Token 将立即失效。
+              </p>
+              <RotateTokenDialog>
+                <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
+                  <RefreshCw class="h-4 w-4 mr-1.5" />
+                  轮换认证 Token
+                </Button>
+              </RotateTokenDialog>
+            </div>
+
+            <!-- Rotate all subscription URLs -->
+            <div class="mb-4">
+              <p class="text-sm text-muted-foreground mb-2">
+                重置所有订阅链接后，旧链接将立即失效，日历客户端需要重新订阅。
+              </p>
+              <AlertDialog>
+                <AlertDialogTrigger as-child>
+                  <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
+                    <RefreshCw class="h-4 w-4 mr-1.5" />
+                    重置所有订阅链接
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>重置所有订阅链接</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      重置后所有旧的订阅链接将立即失效，日历客户端需要重新订阅。此操作无法撤销。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
+                      @click="handleRotateAll"
+                    >
+                      确认重置
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+
             <p class="text-sm text-muted-foreground mb-4">
               删除账号将永久移除你的所有数据，此操作无法撤销。
             </p>
@@ -212,7 +252,7 @@
                     取消
                   </AlertDialogCancel>
                   <AlertDialogAction
-                    class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
                     :disabled="deleteConfirmText !== '确认删除' || deleting"
                     @click="handleDelete"
                   >
@@ -229,26 +269,69 @@
 
     <QrcodeModal v-model="showQrcode" :url="qrcodeUrl" />
     <RiskWarning v-model="showRiskWarning" />
+
+    <!-- Global dialog: rotate subscription URL -->
+    <AlertDialog :open="!!rotateSubDialog" @update:open="v => { if (!v) rotateSubDialog = null }">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>重置订阅链接</AlertDialogTitle>
+          <AlertDialogDescription>
+            重置后「{{ rotateSubDialog?.name }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
+          <AlertDialogAction
+            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
+            @click="handleRotateSub(rotateSubDialog!.token)"
+          >
+            确认重置
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <!-- Global dialog: delete subscription -->
+    <AlertDialog :open="!!deleteSubDialog" @update:open="v => { if (!v) deleteSubDialog = null }">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认删除订阅</AlertDialogTitle>
+          <AlertDialogDescription>
+            确定要删除「{{ deleteSubDialog?.name }}」的课表订阅吗？已订阅的日历客户端将不再收到更新。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
+          <AlertDialogAction
+            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
+            @click="handleDeleteSub(deleteSubDialog!.token)"
+          >
+            删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download, Calendar } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download, Calendar, Ellipsis } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useRiskWarning } from '@/composables/useRiskWarning'
 import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { toast } from 'vue-sonner'
-import type { SourceType } from '@/types/api'
+import type { SourceType, Subscription } from '@/types/api'
 import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
+import RotateTokenDialog from '@/components/RotateTokenDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -268,6 +351,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
@@ -283,6 +367,8 @@ const deleting = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
+const rotateSubDialog = ref<{ token: string; name: string } | null>(null)
+const deleteSubDialog = ref<{ token: string; name: string } | null>(null)
 const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
   subStore.subscriptions.some(s => !s.last_synced_at)
@@ -308,6 +394,14 @@ const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
 
 function sourceTypeLabel(type: SourceType) {
   return SOURCE_TYPE_LABELS[type] || type
+}
+
+function openRotateSubDialog(sub: Subscription) {
+  rotateSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
+}
+
+function openDeleteSubDialog(sub: Subscription) {
+  deleteSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
 }
 
 function handleShowQrcode(url: string) {
@@ -375,6 +469,27 @@ async function handleRefreshSub(subToken: string) {
     }, subToken)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
+  }
+}
+
+async function handleRotateSub(subToken: string) {
+  try {
+    await api.rotateSubscription(authStore.token, subToken)
+    toast.success('订阅链接已重置')
+    await subStore.load(true).catch(() => {})
+  } catch (error) {
+    toast.error(parseApiError(error, '重置链接失败'))
+  }
+}
+
+async function handleRotateAll() {
+  try {
+    const result = await api.rotateAllSubscriptions(authStore.token)
+    toast.success(`已重置 ${result.count} 个订阅链接`)
+    // All tokens changed — must re-fetch; bypass browser cache
+    await subStore.load(true).catch(() => {})
+  } catch (error) {
+    toast.error(parseApiError(error, '重置链接失败'))
   }
 }
 

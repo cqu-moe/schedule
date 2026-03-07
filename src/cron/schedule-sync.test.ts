@@ -53,6 +53,8 @@ describe("enqueueScheduleSync (producer)", () => {
         refresh_token text,
         token_expires_at text,
         calendar_token text NOT NULL,
+        pending_calendar_token text,
+        pending_token_expires_at text,
         last_login_at text,
         last_refresh_at text,
         login_error text,
@@ -65,6 +67,9 @@ describe("enqueueScheduleSync (producer)", () => {
     ).run();
     await env.DB.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_pending_calendar_token_unique ON users (pending_calendar_token)`,
     ).run();
   });
 

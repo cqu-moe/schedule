@@ -72,3 +72,20 @@ export interface CalendarData {
   generated_at: string
   events: FormattedEvent[]
 }
+
+export interface RotateTokenPrepare {
+  new_token: string
+}
+
+export interface RotateTokenConfirm {
+  calendar_token: string
+}
+
+export interface RotateSubscription {
+  calendar_token: string
+  subscription_url: string
+}
+
+export interface RotateAllSubscriptions {
+  count: number
+}

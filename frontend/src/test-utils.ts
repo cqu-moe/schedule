@@ -63,6 +63,10 @@ export function createMockApi() {
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
     getCalendarData: vi.fn().mockResolvedValue({ semester: '2025秋', semester_start: '2025-09-01', generated_at: new Date().toISOString(), events: [] }),
+    rotateTokenPrepare: vi.fn(),
+    rotateTokenConfirm: vi.fn(),
+    rotateSubscription: vi.fn(),
+    rotateAllSubscriptions: vi.fn(),
   }
 }
 
