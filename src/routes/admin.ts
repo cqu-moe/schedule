@@ -12,8 +12,9 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Admin auth middleware
 app.use("/*", async (c, next) => {
+  const secret = c.env.ADMIN_SECRET;
   const auth = c.req.header("Authorization");
-  if (!auth || auth !== `Bearer ${c.env.ADMIN_SECRET}`) {
+  if (!secret || !auth || auth !== `Bearer ${secret}`) {
     return errorResponse("UNAUTHORIZED", "Invalid or missing admin secret", 401);
   }
   await next();

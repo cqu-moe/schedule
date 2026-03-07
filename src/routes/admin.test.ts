@@ -33,6 +33,13 @@ describe("POST /refresh-all", () => {
     expect(body.detail.error.code).toBe("UNAUTHORIZED");
   });
 
+  it("returns 401 when ADMIN_SECRET is unset", async () => {
+    const res = await post("/refresh-all", mockEnv({ ADMIN_SECRET: undefined }), {
+      Authorization: "Bearer undefined",
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("returns 401 with wrong secret", async () => {
     const res = await post("/refresh-all", mockEnv(), {
       Authorization: "Bearer wrong-secret",
