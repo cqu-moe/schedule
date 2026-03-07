@@ -152,7 +152,7 @@ async function copyToken() {
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
   } catch {
-    // ignore
+    toast.error('复制失败，请手动选择并复制 Token')
   }
 }
 
@@ -163,9 +163,9 @@ async function handleConfirm() {
     const result = await api.rotateTokenConfirm(authStore.token, confirmInput.value)
     authStore.token = result.calendar_token
     localStorage.setItem('calendar_token', result.calendar_token)
-    await authStore.fetchUserInfo()
     toast.success('Token 已轮换')
     open.value = false
+    authStore.fetchUserInfo().catch(() => {})
   } catch (error) {
     confirmError.value = parseApiError(error, '确认失败')
   } finally {

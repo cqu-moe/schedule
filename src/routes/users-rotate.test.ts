@@ -110,4 +110,54 @@ describe("POST /me/rotate-token/confirm", () => {
     const res = await authPost("/me/rotate-token/confirm", "valid-token", { token: "some-token" }, env);
     expect(res.status).toBe(404);
   });
+
+  it("returns 410 when pending token is expired", async () => {
+    const expiredAt = new Date(Date.now() - 60_000).toISOString(); // 1 minute ago
+    let callIdx = 0;
+    const env = createMockEnv(() => {
+      callIdx++;
+      if (callIdx === 1) return mockStmt([AUTH_USER_ROW]);
+      // pending token query returns row with expired pending token
+      if (callIdx === 2) return mockStmt([["pending-token-value", expiredAt]]);
+      return mockStmt([]);
+    });
+
+    const res = await authPost("/me/rotate-token/confirm", "valid-token", { token: "pending-token-value" }, env);
+    expect(res.status).toBe(410);
+    const body = await res.json() as any;
+    expect(body.detail.error.code).toBe("PENDING_EXPIRED");
+  });
+
+  it("returns 422 when token does not match", async () => {
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString(); // 10 min from now
+    let callIdx = 0;
+    const env = createMockEnv(() => {
+      callIdx++;
+      if (callIdx === 1) return mockStmt([AUTH_USER_ROW]);
+      if (callIdx === 2) return mockStmt([["correct-token", expiresAt]]);
+      return mockStmt([]);
+    });
+
+    const res = await authPost("/me/rotate-token/confirm", "valid-token", { token: "wrong-token" }, env);
+    expect(res.status).toBe(422);
+    const body = await res.json() as any;
+    expect(body.detail.error.code).toBe("TOKEN_MISMATCH");
+  });
+
+  it("returns calendar_token on successful confirm", async () => {
+    const pendingToken = "new-pending-token-abc123";
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    let callIdx = 0;
+    const env = createMockEnv(() => {
+      callIdx++;
+      if (callIdx === 1) return mockStmt([AUTH_USER_ROW]);
+      if (callIdx === 2) return mockStmt([[pendingToken, expiresAt]]);
+      return mockStmt([]);
+    });
+
+    const res = await authPost("/me/rotate-token/confirm", "valid-token", { token: pendingToken }, env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.calendar_token).toBe(pendingToken);
+  });
 });

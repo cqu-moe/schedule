@@ -317,11 +317,11 @@ app.post("/me/rotate-token/confirm", requireAuth, rateLimit("AUTH_LIMITER"), asy
     .where(eq(users.id, user.id))
     .limit(1);
 
-  if (!pending?.pendingCalendarToken) {
+  if (!pending?.pendingCalendarToken || !pending.pendingTokenExpiresAt) {
     return errorResponse("PENDING_NOT_FOUND", "No pending token rotation", 404);
   }
 
-  if (new Date(pending.pendingTokenExpiresAt!) <= new Date()) {
+  if (new Date(pending.pendingTokenExpiresAt) <= new Date()) {
     await db
       .update(users)
       .set({ pendingCalendarToken: null, pendingTokenExpiresAt: null })
