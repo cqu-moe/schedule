@@ -13,8 +13,8 @@ describe("tokenExists", () => {
     const db = { select: mockSelect } as any;
     const result = await tokenExists(db, "unique-token");
     expect(result).toBe(false);
-    // Called twice: once for users, once for subscriptions
-    expect(mockSelect).toHaveBeenCalledTimes(2);
+    // Called three times: users.calendarToken, users.pendingCalendarToken, subscriptions.calendarToken
+    expect(mockSelect).toHaveBeenCalledTimes(3);
   });
 
   it("returns true when token found in users table (short-circuits)", async () => {
@@ -38,6 +38,27 @@ describe("tokenExists", () => {
     expect(mockSelect).toHaveBeenCalledTimes(1);
   });
 
+  it("returns true when token found in pending_calendar_token (short-circuits)", async () => {
+    let callCount = 0;
+    const mockSelect = vi.fn().mockImplementation(() => {
+      callCount++;
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(
+              callCount === 2 ? [{ id: "u2" }] : [],
+            ),
+          }),
+        }),
+      };
+    });
+    const db = { select: mockSelect } as any;
+    const result = await tokenExists(db, "pending-token");
+    expect(result).toBe(true);
+    // First check (calendarToken) miss, second check (pendingCalendarToken) hit
+    expect(mockSelect).toHaveBeenCalledTimes(2);
+  });
+
   it("returns true when token found in subscriptions table", async () => {
     let callCount = 0;
     const mockSelect = vi.fn().mockImplementation(() => {
@@ -46,7 +67,7 @@ describe("tokenExists", () => {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue(
-              callCount === 2 ? [{ id: "s1" }] : [],
+              callCount === 3 ? [{ id: "s1" }] : [],
             ),
           }),
         }),
@@ -55,6 +76,6 @@ describe("tokenExists", () => {
     const db = { select: mockSelect } as any;
     const result = await tokenExists(db, "sub-token");
     expect(result).toBe(true);
-    expect(mockSelect).toHaveBeenCalledTimes(2);
+    expect(mockSelect).toHaveBeenCalledTimes(3);
   });
 });

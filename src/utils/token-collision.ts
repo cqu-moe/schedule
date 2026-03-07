@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { users, subscriptions } from "../db/schema";
 
 /**
- * Check if a token already exists in users.calendar_token or subscriptions.calendar_token.
+ * Check if a token already exists in users.calendar_token,
+ * users.pending_calendar_token, or subscriptions.calendar_token.
  */
 export async function tokenExists(db: DrizzleD1Database, token: string): Promise<boolean> {
   const [userMatch] = await db
@@ -13,6 +14,14 @@ export async function tokenExists(db: DrizzleD1Database, token: string): Promise
     .limit(1);
 
   if (userMatch) return true;
+
+  const [pendingMatch] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.pendingCalendarToken, token))
+    .limit(1);
+
+  if (pendingMatch) return true;
 
   const [subMatch] = await db
     .select({ id: subscriptions.id })
