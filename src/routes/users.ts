@@ -29,6 +29,9 @@ function handleAuthError(e: AuthError): Response {
   if (e.code === "INVALID_CREDENTIALS") {
     return errorResponse("INVALID_CREDENTIALS", e.message, 401);
   }
+  if (e.code === "UPSTREAM_TIMEOUT") {
+    return errorResponse("UPSTREAM_TIMEOUT", e.message, 504);
+  }
   return errorResponse("UPSTREAM_ERROR", e.message, 502);
 }
 

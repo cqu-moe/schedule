@@ -142,7 +142,8 @@ function escapeCsvField(value: string | number | null): string {
   if (
     sanitized.includes(",") ||
     sanitized.includes('"') ||
-    sanitized.includes("\n")
+    sanitized.includes("\n") ||
+    sanitized.includes("\r")
   ) {
     return `"${sanitized.replace(/"/g, '""')}"`;
   }
@@ -158,6 +159,6 @@ export function generateCsv(events: FormattedEvent[]): string {
     lines.push(row.join(","));
   }
 
-  return BOM + lines.join("\n");
+  return BOM + lines.join("\r\n");
 }
 

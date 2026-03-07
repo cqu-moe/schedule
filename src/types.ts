@@ -29,6 +29,7 @@ export interface Env {
   PUBLIC_URL: string;
   HCAPTCHA_ENABLED: string;
   HCAPTCHA_SITEKEY: string;
+  CAPTCHA_FAIL_CLOSED?: string;
   MAX_SUBSCRIPTIONS: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
