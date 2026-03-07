@@ -9,7 +9,7 @@ const SECURITY_HEADERS: Record<string, string> = {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "frame-src https://*.hcaptcha.com https://hcaptcha.com",
-    "connect-src 'self' https://*.hcaptcha.com https://hcaptcha.com",
+    "connect-src 'self' https://cloudflareinsights.com https://*.hcaptcha.com https://hcaptcha.com",
     "img-src 'self' data:",
   ].join("; "),
 };
