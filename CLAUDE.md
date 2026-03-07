@@ -79,6 +79,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `cloudflare:test` 模块类型仅在 vitest pool workers 中可用，tsconfig.json 须 exclude `src/**/*.test.ts`
 - 前端测试: `frontend/src/test-utils.ts` 提供 `mountWithContext()` helper (Pinia + Router + 默认 stubs)
 - 前端测试: shadcn-vue teleporting 组件 (AlertDialog, Dialog, DropdownMenu 等) 需在 test-setup.ts 全局 stub
+- 前端测试: shadcn-vue DropdownMenuItem 在 stub 下渲染为 `div`（非 `button`），用 `wrapper.findAll('div').filter(...)` 查找；全局 AlertDialog 需两步：先触发 menu item 打开 dialog，再触发 action button
 - 前端测试: `@pinia/testing` 须用 v0.1.x (v1.x 需要 pinia>=3，当前项目用 pinia v2)
 - 前端测试: vitest v4 中 `vi.mock()` factory 被 hoist，mock 对象须用 `vi.hoisted()` 声明
 - Drizzle D1 mock 须同时提供 `all()` 和 `raw()` 方法：`prepare().mockReturnValue({ bind: fn().mockReturnThis(), all: fn(), raw: fn() })`
@@ -95,6 +96,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - frontend/dist 和 frontend/node_modules 已 gitignore
 - 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
+- Git worktree 中 `.dev.vars` 不存在（gitignore），需从主仓库 `cp .dev.vars .worktrees/<name>/.dev.vars` 后才能运行 `npm run dev`
 - Git commit 签名依赖 1Password SSH agent；若 1Password 未解锁会报 "failed to fill whole buffer"，此时用 `-c commit.gpgsign=false` 暂时跳过，待 1Password 可用后用 `git rebase --exec 'git commit --amend --no-edit -S' HEAD~N` 补签
 - 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
@@ -117,6 +119,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `rollup-plugin-visualizer` 用动态 import + `process.env.ANALYZE` 门控，不影响正常构建
 - FullCalendar 主题样式在 `frontend/src/assets/fullcalendar-theme.css`；`.fc { font-family: inherit }` 会覆盖图标字体，须用 `.fc .fc-icon { font-family: fcicons !important }` 恢复
 - FullCalendar timegrid 事件的 `::after` 伪元素有 `rgba(0,0,0,0.25)` 遮罩，已用 `.fc .fc-event::after { display: none !important }` 全局禁用
+- FullCalendar 命名时区 (`timeZone: 'Asia/Chongqing'`) 下 `event.start` 的 Date 对象将墙钟时间存在 UTC 槽位（`getUTCHours()` 返回中国时间），格式化时须用 `timeZone: 'UTC'`；而数据库 ISO 字符串是真 UTC，格式化须用 `timeZone: 'Asia/Shanghai'`
+- `text-destructive-foreground` 在当前主题中未定义，destructive 按钮须用 `text-white` 代替；outline 按钮 hover 须加 `hover:bg-destructive/10` 覆盖默认 `bg-accent`
+- `<onepassword-save-button>` Web Component 须带完整属性：`data-onepassword-type="login"` `:value="opSaveValue"` `lang="zh-CN"` `padding="none"`；localhost 下按钮会 disabled（扩展校验 URL）
+- GET `/subscriptions` 有 `Cache-Control: max-age=10`；mutation 后 re-fetch 须传 `Cache-Control: no-cache` 请求头绕过浏览器 HTTP 缓存，或直接用 mutation 返回值更新 store
 
 ## 项目结构
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)

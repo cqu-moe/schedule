@@ -167,11 +167,12 @@ function formatEventTime(event: typeof selectedEvent.value): string {
   const fmt = (d: Date) => d.toLocaleString('zh-CN', {
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
+    timeZone: 'UTC',
   })
   const start = fmt(event.start)
   if (!event.end) return start
   if (event.start.toDateString() === event.end.toDateString()) {
-    const endTime = event.end.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    const endTime = event.end.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
     return `${start} - ${endTime}`
   }
   return `${start} - ${fmt(event.end)}`

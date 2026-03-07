@@ -1,6 +1,6 @@
 export function getSemesterWeek(date: Date, semesterStart: string): number | null {
   if (!semesterStart) return null
-  const termStart = new Date(semesterStart + 'T00:00:00')
+  const termStart = new Date(semesterStart + 'T00:00:00Z')
   if (isNaN(termStart.getTime())) return null
 
   // Align to Monday of the semester start week
