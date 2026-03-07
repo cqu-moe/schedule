@@ -96,6 +96,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 
 ## 前端开发注意事项
 - 所有自定义 Vue SFC 已迁移到 `<script setup lang="ts">` (PR #62)，新建组件须保持一致
+- `<script setup>` 不支持 ES module exports（编译后在 setup() 内部），需要导出的纯函数应放在独立 `.ts` 文件中
 - 前端测试运行: `npm run test:frontend`（cd frontend && npm test），构建验证: `cd frontend && npm run build`
 - `vue-tsc --noEmit` 有预存的 tsconfig.node.json 错误，不影响构建
 - Toast 通知用 vue-sonner（`<Toaster />` 在 App.vue），错误解析用 `frontend/src/utils/error.ts` 的 `parseApiError()`
