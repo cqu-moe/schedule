@@ -14,7 +14,8 @@ import {
 } from "../services/export";
 import { decrypt } from "../services/crypto";
 import { EMPTY_ICS } from "../services/ics";
-import { generateToken } from "../utils/token";
+import { generateToken, generateUniqueToken } from "../utils/token";
+import { tokenExists } from "../utils/token-collision";
 import { handleCquApiError, errorResponse } from "../utils/error";
 import {
   fetchSessionContextCached,
@@ -187,6 +188,32 @@ app.post("/", requireAuthWithCquToken, rateLimit("EXPLORE_LIMITER"), async (c) =
   }
 });
 
+// POST /api/v1/subscriptions/rotate-all
+app.post("/rotate-all", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+
+  const subs = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, user.id));
+
+  if (subs.length === 0) {
+    return c.json({ count: 0 });
+  }
+
+  const now = new Date().toISOString();
+  for (const sub of subs) {
+    const newToken = await generateUniqueToken((t) => tokenExists(db, t));
+    await db
+      .update(subscriptions)
+      .set({ calendarToken: newToken, updatedAt: now })
+      .where(eq(subscriptions.id, sub.id));
+  }
+
+  return c.json({ count: subs.length });
+});
+
 // DELETE /api/v1/subscriptions/:sub_token
 app.delete("/:sub_token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   const subToken = c.req.param("sub_token");
@@ -270,6 +297,40 @@ app.post("/:sub_token/refresh", requireAuthWithCquToken, rateLimit("AUTH_LIMITER
   }
 
   return c.json({ success: true });
+});
+
+// POST /api/v1/subscriptions/:sub_token/rotate
+app.post("/:sub_token/rotate", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
+  const subToken = c.req.param("sub_token");
+  const user = c.get("user");
+  const db = drizzle(c.env.DB);
+
+  const [sub] = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.calendarToken, subToken),
+        eq(subscriptions.userId, user.id),
+      ),
+    )
+    .limit(1);
+
+  if (!sub) return errorResponse("NOT_FOUND", "Subscription not found", 404);
+
+  const newToken = await generateUniqueToken((t) => tokenExists(db, t));
+  const now = new Date().toISOString();
+  const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
+
+  await db
+    .update(subscriptions)
+    .set({ calendarToken: newToken, updatedAt: now })
+    .where(eq(subscriptions.id, sub.id));
+
+  return c.json({
+    calendar_token: newToken,
+    subscription_url: `${baseUrl}/api/v1/subscriptions/${newToken}/calendar.ics`,
+  });
 });
 
 // GET /api/v1/subscriptions/:sub_token/calendar.ics (public)
