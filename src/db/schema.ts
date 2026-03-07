@@ -21,6 +21,8 @@ export const users = sqliteTable("users", {
 
   /** 64-char random token for calendar subscription URL */
   calendarToken: text("calendar_token").unique().notNull(),
+  pendingCalendarToken: text("pending_calendar_token").unique(),
+  pendingTokenExpiresAt: text("pending_token_expires_at"),
 
   // Status tracking
   /** ISO 8601 datetime string */

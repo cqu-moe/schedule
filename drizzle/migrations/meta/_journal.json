@@ -15,6 +15,13 @@
       "when": 1772761669999,
       "tag": "0001_luxuriant_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1772920000000,
+      "tag": "0002_pending_calendar_token",
+      "breakpoints": true
     }
   ]
 }
