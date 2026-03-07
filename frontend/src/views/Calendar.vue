@@ -77,6 +77,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import '@/assets/fullcalendar-theme.css'
+import { getSemesterWeek } from '@/utils/calendarWeek'
 
 const COURSE_COLORS = [
   '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b',
@@ -106,6 +107,7 @@ const route = useRoute()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const semester = ref('')
+const semesterStart = ref('')
 const events = ref<EventInput[]>([])
 const showDetail = ref(false)
 const selectedEvent = ref<SelectedEvent | null>(null)
@@ -175,6 +177,31 @@ function formatEventTime(event: typeof selectedEvent.value): string {
   return `${start} - ${fmt(event.end)}`
 }
 
+function handleDatesSet(arg: { view: { type: string }; start: Date; end: Date }) {
+  const viewType = arg.view.type
+  if (viewType === 'dayGridMonth') return
+
+  const refDate = arg.start
+
+  const week = getSemesterWeek(refDate, semesterStart.value)
+
+  requestAnimationFrame(() => {
+    const titleEl = document.querySelector('.fc-toolbar-title')
+    if (!titleEl) return
+
+    const existing = titleEl.querySelector('.semester-week')
+    if (existing) existing.remove()
+
+    if (week !== null) {
+      const span = document.createElement('span')
+      span.className = 'semester-week text-muted-foreground font-normal'
+      span.style.cssText = 'font-size:0.75em;margin-left:0.5em;'
+      span.textContent = `· 第${week}周`
+      titleEl.appendChild(span)
+    }
+  })
+}
+
 const calendarOptions = computed<CalendarOptions>(() => ({
   plugins: [dayGridPlugin, timeGridPlugin],
   initialView: window.innerWidth < 768 ? 'timeGridDay' : 'timeGridWeek',
@@ -199,6 +226,12 @@ const calendarOptions = computed<CalendarOptions>(() => ({
     month: '月',
   },
   events: events.value,
+  weekNumbers: true,
+  weekNumberContent: (arg: { num: number; date: Date }) => {
+    const week = getSemesterWeek(arg.date, semesterStart.value)
+    return week !== null ? { html: `<span class="text-xs text-muted-foreground">W${week}</span>` } : { html: '' }
+  },
+  datesSet: handleDatesSet,
   eventClick: handleEventClick,
   eventDidMount: handleEventMount,
   height: 'auto',
@@ -209,6 +242,7 @@ onMounted(async () => {
   try {
     const data = await api.getCalendarData(subToken)
     semester.value = data.semester ? `${data.semester} 课表` : '课表日历'
+    semesterStart.value = data.semester_start ?? ''
     events.value = data.events.map(toCalendarEvent)
   } catch (err) {
     error.value = parseApiError(err, '加载课表数据失败')
