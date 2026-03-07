@@ -212,7 +212,7 @@
                   <AlertDialogFooter>
                     <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
                     <AlertDialogAction
-                      class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
                       @click="handleRotateAll"
                     >
                       确认重置
@@ -252,7 +252,7 @@
                     取消
                   </AlertDialogCancel>
                   <AlertDialogAction
-                    class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
                     :disabled="deleteConfirmText !== '确认删除' || deleting"
                     @click="handleDelete"
                   >
@@ -282,7 +282,7 @@
         <AlertDialogFooter>
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
-            class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
             @click="handleRotateSub(rotateSubToken)"
           >
             确认重置
@@ -303,7 +303,7 @@
         <AlertDialogFooter>
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
-            class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
             @click="handleDeleteSub(deleteSubToken)"
           >
             删除
