@@ -32,6 +32,10 @@ export const ROUTE_META: Record<string, RouteMeta> = {
     description: "找回你的 CQU Schedule 订阅 Token",
     noindex: true,
   },
+  "/changelog": {
+    title: `更新日志 | ${SITE_NAME}`,
+    description: "CQU Schedule 功能更新与改进记录",
+  },
 };
 
 export const DEFAULT_META: RouteMeta = {
