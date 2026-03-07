@@ -7,6 +7,10 @@ import type {
   HealthStatus,
   Subscription,
   CalendarData,
+  RotateTokenPrepare,
+  RotateTokenConfirm,
+  RotateSubscription,
+  RotateAllSubscriptions,
 } from '@/types/api'
 
 const client = axios.create({
@@ -120,6 +124,27 @@ export default {
 
   async getCalendarData(subToken: string): Promise<CalendarData> {
     const response = await client.get(`/subscriptions/${encodeURIComponent(subToken)}/data.json`)
+    return response.data
+  },
+
+  // Token rotation
+  async rotateTokenPrepare(token: string): Promise<RotateTokenPrepare> {
+    const response = await client.post('/users/me/rotate-token', null, authHeaders(token))
+    return response.data
+  },
+
+  async rotateTokenConfirm(token: string, newToken: string): Promise<RotateTokenConfirm> {
+    const response = await client.post('/users/me/rotate-token/confirm', { token: newToken }, authHeaders(token))
+    return response.data
+  },
+
+  async rotateSubscription(token: string, subToken: string): Promise<RotateSubscription> {
+    const response = await client.post(`/subscriptions/${subToken}/rotate`, null, authHeaders(token))
+    return response.data
+  },
+
+  async rotateAllSubscriptions(token: string): Promise<RotateAllSubscriptions> {
+    const response = await client.post('/subscriptions/rotate-all', null, authHeaders(token))
     return response.data
   },
 }
