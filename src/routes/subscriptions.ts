@@ -203,13 +203,19 @@ app.post("/rotate-all", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
   }
 
   const now = new Date().toISOString();
+  const updates: { id: string; newToken: string }[] = [];
   for (const sub of subs) {
     const newToken = await generateUniqueToken((t) => tokenExists(db, t));
-    await db
-      .update(subscriptions)
-      .set({ calendarToken: newToken, updatedAt: now })
-      .where(eq(subscriptions.id, sub.id));
+    updates.push({ id: sub.id, newToken });
   }
+
+  // Batch update atomically via D1 batch API
+  const stmts = updates.map(({ id, newToken }) =>
+    c.env.DB.prepare(
+      "UPDATE subscriptions SET calendar_token = ?, updated_at = ? WHERE id = ?",
+    ).bind(newToken, now, id),
+  );
+  await c.env.DB.batch(stmts);
 
   return c.json({ count: subs.length });
 });
