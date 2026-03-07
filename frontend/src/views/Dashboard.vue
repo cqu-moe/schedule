@@ -162,6 +162,33 @@
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+
+              <!-- Rotate subscription URL -->
+              <AlertDialog>
+                <AlertDialogTrigger as-child>
+                  <Button variant="outline" size="sm" class="cursor-pointer text-destructive hover:text-destructive">
+                    <RefreshCw class="h-4 w-4 mr-1.5" />
+                    重置链接
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>重置订阅链接</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      重置后「{{ sub.source_name }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      @click="handleRotateSub(sub.calendar_token)"
+                    >
+                      确认重置
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </CardContent>
         </Card>
@@ -182,6 +209,51 @@
             <CardTitle class="text-base text-destructive">危险操作区</CardTitle>
           </CardHeader>
           <CardContent>
+            <!-- Rotate auth token -->
+            <div class="mb-4">
+              <p class="text-sm text-muted-foreground mb-2">
+                轮换认证 Token 后，旧 Token 将立即失效。
+              </p>
+              <RotateTokenDialog>
+                <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:text-destructive">
+                  <RefreshCw class="h-4 w-4 mr-1.5" />
+                  轮换认证 Token
+                </Button>
+              </RotateTokenDialog>
+            </div>
+
+            <!-- Rotate all subscription URLs -->
+            <div class="mb-4">
+              <p class="text-sm text-muted-foreground mb-2">
+                重置所有订阅链接后，旧链接将立即失效，日历客户端需要重新订阅。
+              </p>
+              <AlertDialog>
+                <AlertDialogTrigger as-child>
+                  <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:text-destructive">
+                    <RefreshCw class="h-4 w-4 mr-1.5" />
+                    重置所有订阅链接
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>重置所有订阅链接</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      重置后所有旧的订阅链接将立即失效，日历客户端需要重新订阅。此操作无法撤销。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      class="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      @click="handleRotateAll"
+                    >
+                      确认重置
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+
             <p class="text-sm text-muted-foreground mb-4">
               删除账号将永久移除你的所有数据，此操作无法撤销。
             </p>
@@ -249,6 +321,7 @@ import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
+import RotateTokenDialog from '@/components/RotateTokenDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -375,6 +448,26 @@ async function handleRefreshSub(subToken: string) {
     }, subToken)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
+  }
+}
+
+async function handleRotateSub(subToken: string) {
+  try {
+    await api.rotateSubscription(authStore.token, subToken)
+    toast.success('订阅链接已重置')
+    await subStore.load().catch(() => {})
+  } catch (error) {
+    toast.error(parseApiError(error, '重置链接失败'))
+  }
+}
+
+async function handleRotateAll() {
+  try {
+    const result = await api.rotateAllSubscriptions(authStore.token)
+    toast.success(`已重置 ${result.count} 个订阅链接`)
+    await subStore.load().catch(() => {})
+  } catch (error) {
+    toast.error(parseApiError(error, '重置链接失败'))
   }
 }
 
