@@ -276,21 +276,27 @@ app.post("/me/rotate-token", requireAuth, rateLimit("AUTH_LIMITER"), async (c) =
   const user = c.get("user");
   const db = drizzle(c.env.DB);
 
-  const newToken = await generateUniqueToken((t) => tokenExists(db, t));
+  try {
+    const newToken = await generateUniqueToken((t) => tokenExists(db, t));
 
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
 
-  await db
-    .update(users)
-    .set({
-      pendingCalendarToken: newToken,
-      pendingTokenExpiresAt: expiresAt,
-      updatedAt: now,
-    })
-    .where(eq(users.id, user.id));
+    await db
+      .update(users)
+      .set({
+        pendingCalendarToken: newToken,
+        pendingTokenExpiresAt: expiresAt,
+        updatedAt: now,
+      })
+      .where(eq(users.id, user.id));
 
-  return c.json({ new_token: newToken });
+    console.log(JSON.stringify({ event: "user.token.rotate_prepare", userId: user.id, message: "Pending token generated" }));
+    return c.json({ new_token: newToken });
+  } catch (e) {
+    console.error(JSON.stringify({ event: "user.token.rotate_prepare_failed", userId: user.id, error: e instanceof Error ? e.message : String(e), message: "Token rotation prepare failed" }));
+    return errorResponse("INTERNAL_ERROR", "Failed to generate new token", 500);
+  }
 });
 
 // POST /api/v1/users/me/rotate-token/confirm
@@ -308,47 +314,53 @@ app.post("/me/rotate-token/confirm", requireAuth, rateLimit("AUTH_LIMITER"), asy
     return errorResponse("BAD_REQUEST", "token is required", 400);
   }
 
-  const [pending] = await db
-    .select({
-      pendingCalendarToken: users.pendingCalendarToken,
-      pendingTokenExpiresAt: users.pendingTokenExpiresAt,
-    })
-    .from(users)
-    .where(eq(users.id, user.id))
-    .limit(1);
+  try {
+    const [pending] = await db
+      .select({
+        pendingCalendarToken: users.pendingCalendarToken,
+        pendingTokenExpiresAt: users.pendingTokenExpiresAt,
+      })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1);
 
-  if (!pending?.pendingCalendarToken || !pending.pendingTokenExpiresAt) {
-    return errorResponse("PENDING_NOT_FOUND", "No pending token rotation", 404);
-  }
+    if (!pending?.pendingCalendarToken || !pending.pendingTokenExpiresAt) {
+      return errorResponse("PENDING_NOT_FOUND", "No pending token rotation", 404);
+    }
 
-  if (new Date(pending.pendingTokenExpiresAt) <= new Date()) {
+    if (new Date(pending.pendingTokenExpiresAt) <= new Date()) {
+      await db
+        .update(users)
+        .set({ pendingCalendarToken: null, pendingTokenExpiresAt: null })
+        .where(eq(users.id, user.id));
+      return errorResponse("PENDING_EXPIRED", "Token rotation expired, please try again", 410);
+    }
+
+    // Timing-safe comparison
+    const encoder = new TextEncoder();
+    const a = encoder.encode(body.token);
+    const b = encoder.encode(pending.pendingCalendarToken);
+    if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
+      return errorResponse("TOKEN_MISMATCH", "Token does not match", 422);
+    }
+
+    const now = new Date().toISOString();
     await db
       .update(users)
-      .set({ pendingCalendarToken: null, pendingTokenExpiresAt: null })
+      .set({
+        calendarToken: pending.pendingCalendarToken,
+        pendingCalendarToken: null,
+        pendingTokenExpiresAt: null,
+        updatedAt: now,
+      })
       .where(eq(users.id, user.id));
-    return errorResponse("PENDING_EXPIRED", "Token rotation expired, please try again", 410);
+
+    console.log(JSON.stringify({ event: "user.token.rotate_confirm", userId: user.id, message: "Token rotation confirmed" }));
+    return c.json({ calendar_token: pending.pendingCalendarToken });
+  } catch (e) {
+    console.error(JSON.stringify({ event: "user.token.rotate_confirm_failed", userId: user.id, error: e instanceof Error ? e.message : String(e), message: "Token rotation confirm failed" }));
+    return errorResponse("INTERNAL_ERROR", "Token rotation failed", 500);
   }
-
-  // Timing-safe comparison
-  const encoder = new TextEncoder();
-  const a = encoder.encode(body.token);
-  const b = encoder.encode(pending.pendingCalendarToken);
-  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
-    return errorResponse("TOKEN_MISMATCH", "Token does not match", 422);
-  }
-
-  const now = new Date().toISOString();
-  await db
-    .update(users)
-    .set({
-      calendarToken: pending.pendingCalendarToken,
-      pendingCalendarToken: null,
-      pendingTokenExpiresAt: null,
-      updatedAt: now,
-    })
-    .where(eq(users.id, user.id));
-
-  return c.json({ calendar_token: pending.pendingCalendarToken });
 });
 
 /** Background sync: populate ICS content for newly created personal subscriptions */

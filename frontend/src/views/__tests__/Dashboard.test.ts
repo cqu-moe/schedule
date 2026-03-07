@@ -219,15 +219,14 @@ describe('Dashboard view', () => {
     mockApi.deleteSubscription.mockResolvedValue({})
     const { wrapper } = await mountDashboard([exploreSub])
 
-    // Find the delete action button within the AlertDialog (the AlertDialogAction emits click)
-    const deleteActionBtn = wrapper.findAll('button').find(
-      b => b.text() === '删除' && b.element.closest('[class*="destructive"]') !== null,
-    )
-    // The AlertDialog stub renders the AlertDialogAction as a button with text "删除"
-    // There should be two "删除" buttons: the trigger and the action
+    // Step 1: Click "删除" in the DropdownMenuItem (rendered as div in stubs) to open global dialog
+    const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
+    expect(menuDeleteItems.length).toBeGreaterThanOrEqual(1)
+    await menuDeleteItems[0].trigger('click')
+    await flushPromises()
+
+    // Step 2: Click the "删除" action button in the global AlertDialog
     const deleteButtons = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
-    expect(deleteButtons.length).toBeGreaterThanOrEqual(1)
-    // Click the last one (the action inside AlertDialog)
     await deleteButtons[deleteButtons.length - 1].trigger('click')
     await flushPromises()
 
@@ -239,14 +238,11 @@ describe('Dashboard view', () => {
     const personalSub = mockSubscription({ is_personal: true })
     const { wrapper } = await mountDashboard([personalSub])
 
-    // Personal subs should not have a delete button (AlertDialog is v-if="!sub.is_personal")
-    const deleteButtons = wrapper.findAll('button').filter(
-      b => b.text().trim() === '删除' && !b.text().includes('账号'),
+    // Personal subs should not have a "删除" DropdownMenuItem (hidden via v-if="!sub.is_personal")
+    const menuDeleteItems = wrapper.findAll('div').filter(
+      b => b.text().trim() === '删除',
     )
-    // The only "删除" should be in the danger zone "删除账号"
-    // There should be no standalone "删除" button for the subscription
-    const subDeleteButtons = deleteButtons.filter(b => !b.text().includes('账号'))
-    expect(subDeleteButtons.length).toBe(0)
+    expect(menuDeleteItems.length).toBe(0)
   })
 
   // 12. Export opens window.open with correct URL
@@ -411,6 +407,12 @@ describe('Dashboard view', () => {
     })
     const { wrapper } = await mountDashboard([exploreSub])
 
+    // Step 1: Click "删除" in dropdown menu to open global dialog
+    const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
+    await menuDeleteItems[0].trigger('click')
+    await flushPromises()
+
+    // Step 2: Click action button in the global AlertDialog
     const deleteButtons = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
     await deleteButtons[deleteButtons.length - 1].trigger('click')
     await flushPromises()

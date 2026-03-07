@@ -144,13 +144,13 @@
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="rotateSubToken = sub.calendar_token; rotateSubName = sub.source_name; showRotateSubDialog = true">
+                  <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openRotateSubDialog(sub)">
                     <RefreshCw class="h-4 w-4 mr-2" />
                     重置链接
                   </DropdownMenuItem>
                   <template v-if="!sub.is_personal">
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="deleteSubToken = sub.calendar_token; deleteSubName = sub.source_name; showDeleteSubDialog = true">
+                    <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openDeleteSubDialog(sub)">
                       <Trash2 class="h-4 w-4 mr-2" />
                       删除
                     </DropdownMenuItem>
@@ -271,19 +271,19 @@
     <RiskWarning v-model="showRiskWarning" />
 
     <!-- Global dialog: rotate subscription URL -->
-    <AlertDialog v-model:open="showRotateSubDialog">
+    <AlertDialog :open="!!rotateSubDialog" @update:open="v => { if (!v) rotateSubDialog = null }">
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>重置订阅链接</AlertDialogTitle>
           <AlertDialogDescription>
-            重置后「{{ rotateSubName }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
+            重置后「{{ rotateSubDialog?.name }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
             class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleRotateSub(rotateSubToken)"
+            @click="handleRotateSub(rotateSubDialog!.token)"
           >
             确认重置
           </AlertDialogAction>
@@ -292,19 +292,19 @@
     </AlertDialog>
 
     <!-- Global dialog: delete subscription -->
-    <AlertDialog v-model:open="showDeleteSubDialog">
+    <AlertDialog :open="!!deleteSubDialog" @update:open="v => { if (!v) deleteSubDialog = null }">
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除订阅</AlertDialogTitle>
           <AlertDialogDescription>
-            确定要删除「{{ deleteSubName }}」的课表订阅吗？已订阅的日历客户端将不再收到更新。
+            确定要删除「{{ deleteSubDialog?.name }}」的课表订阅吗？已订阅的日历客户端将不再收到更新。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
             class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleDeleteSub(deleteSubToken)"
+            @click="handleDeleteSub(deleteSubDialog!.token)"
           >
             删除
           </AlertDialogAction>
@@ -324,7 +324,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { toast } from 'vue-sonner'
-import type { SourceType } from '@/types/api'
+import type { SourceType, Subscription } from '@/types/api'
 import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
@@ -367,12 +367,8 @@ const deleting = ref(false)
 const deleteConfirmText = ref('')
 const showQrcode = ref(false)
 const qrcodeUrl = ref('')
-const showRotateSubDialog = ref(false)
-const rotateSubToken = ref('')
-const rotateSubName = ref('')
-const showDeleteSubDialog = ref(false)
-const deleteSubToken = ref('')
-const deleteSubName = ref('')
+const rotateSubDialog = ref<{ token: string; name: string } | null>(null)
+const deleteSubDialog = ref<{ token: string; name: string } | null>(null)
 const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
   subStore.subscriptions.some(s => !s.last_synced_at)
@@ -398,6 +394,14 @@ const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
 
 function sourceTypeLabel(type: SourceType) {
   return SOURCE_TYPE_LABELS[type] || type
+}
+
+function openRotateSubDialog(sub: Subscription) {
+  rotateSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
+}
+
+function openDeleteSubDialog(sub: Subscription) {
+  deleteSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
 }
 
 function handleShowQrcode(url: string) {

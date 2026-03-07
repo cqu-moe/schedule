@@ -202,22 +202,30 @@ app.post("/rotate-all", requireAuth, rateLimit("AUTH_LIMITER"), async (c) => {
     return c.json({ count: 0 });
   }
 
-  const now = new Date().toISOString();
-  const updates: { id: string; newToken: string }[] = [];
-  for (const sub of subs) {
-    const newToken = await generateUniqueToken((t) => tokenExists(db, t));
-    updates.push({ id: sub.id, newToken });
+  try {
+    const now = new Date().toISOString();
+    const generated = new Set<string>();
+    const updates: { id: string; newToken: string }[] = [];
+    for (const sub of subs) {
+      const newToken = await generateUniqueToken((t) => tokenExists(db, t, generated));
+      generated.add(newToken);
+      updates.push({ id: sub.id, newToken });
+    }
+
+    // Batch update atomically via D1 batch API
+    const stmts = updates.map(({ id, newToken }) =>
+      c.env.DB.prepare(
+        "UPDATE subscriptions SET calendar_token = ?, updated_at = ? WHERE id = ?",
+      ).bind(newToken, now, id),
+    );
+    await c.env.DB.batch(stmts);
+
+    console.log(JSON.stringify({ event: "subscription.rotate_all", userId: user.id, count: subs.length, message: `Rotated ${subs.length} subscription tokens` }));
+    return c.json({ count: subs.length });
+  } catch (e) {
+    console.error(JSON.stringify({ event: "subscription.rotate_all_failed", userId: user.id, error: e instanceof Error ? e.message : String(e), message: "Rotate all subscriptions failed" }));
+    return errorResponse("INTERNAL_ERROR", "Failed to rotate subscription tokens", 500);
   }
-
-  // Batch update atomically via D1 batch API
-  const stmts = updates.map(({ id, newToken }) =>
-    c.env.DB.prepare(
-      "UPDATE subscriptions SET calendar_token = ?, updated_at = ? WHERE id = ?",
-    ).bind(newToken, now, id),
-  );
-  await c.env.DB.batch(stmts);
-
-  return c.json({ count: subs.length });
 });
 
 // DELETE /api/v1/subscriptions/:sub_token
@@ -324,19 +332,25 @@ app.post("/:sub_token/rotate", requireAuth, rateLimit("AUTH_LIMITER"), async (c)
 
   if (!sub) return errorResponse("NOT_FOUND", "Subscription not found", 404);
 
-  const newToken = await generateUniqueToken((t) => tokenExists(db, t));
-  const now = new Date().toISOString();
-  const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
+  try {
+    const newToken = await generateUniqueToken((t) => tokenExists(db, t));
+    const now = new Date().toISOString();
+    const baseUrl = (c.env.PUBLIC_URL ?? "").replace(/\/$/, "");
 
-  await db
-    .update(subscriptions)
-    .set({ calendarToken: newToken, updatedAt: now })
-    .where(eq(subscriptions.id, sub.id));
+    await db
+      .update(subscriptions)
+      .set({ calendarToken: newToken, updatedAt: now })
+      .where(eq(subscriptions.id, sub.id));
 
-  return c.json({
-    calendar_token: newToken,
-    subscription_url: `${baseUrl}/api/v1/subscriptions/${newToken}/calendar.ics`,
-  });
+    console.log(JSON.stringify({ event: "subscription.rotate", userId: user.id, subscriptionId: sub.id, message: "Subscription token rotated" }));
+    return c.json({
+      calendar_token: newToken,
+      subscription_url: `${baseUrl}/api/v1/subscriptions/${newToken}/calendar.ics`,
+    });
+  } catch (e) {
+    console.error(JSON.stringify({ event: "subscription.rotate_failed", userId: user.id, subscriptionId: sub.id, error: e instanceof Error ? e.message : String(e), message: "Subscription token rotation failed" }));
+    return errorResponse("INTERNAL_ERROR", "Failed to rotate subscription token", 500);
+  }
 });
 
 // GET /api/v1/subscriptions/:sub_token/calendar.ics (public)

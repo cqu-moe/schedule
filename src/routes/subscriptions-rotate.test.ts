@@ -72,6 +72,29 @@ describe("POST /:sub_token/rotate (single)", () => {
     const res = await authPost("/nonexistent/rotate", "auth-token", env);
     expect(res.status).toBe(404);
   });
+
+  it("returns new calendar_token and subscription_url on success", async () => {
+    // Call sequence:
+    // 1. requireAuth: SELECT user (raw) -> auth user row
+    // 2. SELECT subscription by token+userId (raw) -> found
+    // 3-5. tokenExists: 3 parallel SELECTs (raw) -> all empty (no collision)
+    // 6. UPDATE subscription: run()
+    let callIdx = 0;
+    const env = createMockEnv(() => {
+      callIdx++;
+      if (callIdx === 1) return mockStmt([AUTH_USER_ROW]);
+      if (callIdx === 2) return mockStmt([["sub-id"]]);
+      return mockStmt([]);
+    });
+
+    const res = await authPost("/auth-token/rotate", "auth-token", env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.calendar_token).toBeDefined();
+    expect(typeof body.calendar_token).toBe("string");
+    expect(body.subscription_url).toContain(body.calendar_token);
+    expect(body.subscription_url).toContain("https://schedule.cqu.moe");
+  });
 });
 
 describe("POST /rotate-all", () => {
@@ -99,5 +122,30 @@ describe("POST /rotate-all", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.count).toBe(0);
+  });
+
+  it("returns correct count and calls batch when user has subscriptions", async () => {
+    // Call sequence:
+    // 1. requireAuth: SELECT user (raw) -> auth user row
+    // 2. SELECT subscriptions by userId (raw) -> 2 subs
+    // 3-5. tokenExists for sub1: 3 parallel SELECTs -> all empty
+    // 6-8. tokenExists for sub2: 3 parallel SELECTs -> all empty
+    // batch() called with 2 statements
+    let callIdx = 0;
+    const env = createMockEnv(() => {
+      callIdx++;
+      if (callIdx === 1) return mockStmt([AUTH_USER_ROW]);
+      if (callIdx === 2) return mockStmt([["sub-1"], ["sub-2"]]);
+      return mockStmt([]);
+    });
+
+    const res = await authPost("/rotate-all", "auth-token", env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.count).toBe(2);
+    expect(env.DB.batch).toHaveBeenCalledTimes(1);
+    // batch receives 2 prepared statements (one per subscription)
+    const batchArg = env.DB.batch.mock.calls[0][0];
+    expect(batchArg).toHaveLength(2);
   });
 });
