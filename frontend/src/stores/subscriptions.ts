@@ -8,9 +8,9 @@ export const useSubscriptionsStore = defineStore('subscriptions', () => {
   const subscriptions = ref<Subscription[]>([])
   const max = ref(5)
 
-  async function load() {
+  async function load(noCache = false) {
     const authStore = useAuthStore()
-    const data = await api.getSubscriptions(authStore.token)
+    const data = await api.getSubscriptions(authStore.token, noCache)
     subscriptions.value = data.subscriptions
     max.value = data.max
   }

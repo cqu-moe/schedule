@@ -40,7 +40,13 @@
               <Copy v-else class="h-4 w-4 mr-1.5" />
               {{ copied ? '已复制' : '复制' }}
             </Button>
-            <onepassword-save-button v-if="opSaveValue" :value="opSaveValue" />
+            <onepassword-save-button
+              v-if="opSaveValue"
+              data-onepassword-type="login"
+              :value="opSaveValue"
+              lang="zh-CN"
+              padding="none"
+            />
           </div>
         </div>
         <AlertDialogFooter>

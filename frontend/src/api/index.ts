@@ -98,8 +98,12 @@ export default {
     return response.data
   },
 
-  async getSubscriptions(token: string): Promise<SubscriptionList> {
-    const response = await client.get('/subscriptions', authHeaders(token))
+  async getSubscriptions(token: string, noCache = false): Promise<SubscriptionList> {
+    const config = authHeaders(token)
+    if (noCache) {
+      config.headers = { ...config.headers, 'Cache-Control': 'no-cache' }
+    }
+    const response = await client.get('/subscriptions', config)
     return response.data
   },
 
