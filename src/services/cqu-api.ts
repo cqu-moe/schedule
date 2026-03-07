@@ -115,6 +115,7 @@ function formatUrl(template: string, value: string): string {
 }
 
 const LECTURER_REGEX = /^(.*?)-\d/;
+const ROOM_CODE_REGEX = /^[A-E][A-Z\d主理研二]\d/;
 
 // ── CQU API response interfaces (key-path only) ────────────────────────────
 
@@ -353,11 +354,30 @@ export class CQUAPIClient {
         lecturer = lecturerMatch[1];
       }
 
+      const rawRoom = item.roomName ?? "";
+      const rawPosition = item.position ?? item.campusName ?? "";
+      let room: string;
+      let position: string;
+
+      if (ROOM_CODE_REGEX.test(rawRoom)) {
+        room = rawRoom;
+        position = rawPosition;
+      } else if (ROOM_CODE_REGEX.test(rawPosition)) {
+        room = rawPosition;
+        position = rawRoom;
+      } else {
+        room = rawRoom;
+        position = rawPosition;
+        if (rawRoom || rawPosition) {
+          console.warn(JSON.stringify({ event: "cqu_api.parse.unknown_room_format", roomName: rawRoom, position: rawPosition, course: item.courseName, message: "Neither roomName nor position matches room code pattern" }));
+        }
+      }
+
       courses.push({
         name: item.courseName ?? "",
         lecturer,
-        room: item.roomName ?? "",
-        position: item.position ?? item.campusName ?? "",
+        room,
+        position,
         day_of_week: Number(item.weekDay ?? 1),
         start_session: startSession,
         end_session: endSession,

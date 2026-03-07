@@ -59,6 +59,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
 
 ### CQU API
+- CQU API 的 `roomName` 和 `position` 字段语义不固定：`roomName` 可能是课程名（如"杨氏弹性模量的测量"），`position` 可能是教室编号（如"DS1417"）；`parseCourses()` 用 `ROOM_CODE_REGEX` (`/^[A-E][A-Z\d主理研二]\d/`) 智能选取教室编号，不匹配时 `console.warn` 记录
 - CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
 - `CQUAPIClient.request<T>()` 是泛型方法，CQU API 响应接口定义在 cqu-api.ts 内部（不导出），只覆盖代码实际访问的字段
 - CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
