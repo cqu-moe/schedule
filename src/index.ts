@@ -53,6 +53,7 @@ export default {
     let response: Response;
     if (url.pathname.startsWith("/api/")) {
       response = await app.fetch(request, env, ctx);
+      response.headers.set("X-Robots-Tag", "noindex, nofollow");
     } else {
       response = await env.ASSETS.fetch(request);
       try {
