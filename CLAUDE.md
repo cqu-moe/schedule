@@ -56,6 +56,8 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - CQU OAuth token 有效期约 4 小时，token-refresh cron 每小时运行 (`0 * * * *`)，2 小时 lookahead
 
 ### D1 & Drizzle
+- **部署后必须手动执行 D1 migration**: `npx wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote`；`npm run deploy` 只部署代码，不会自动跑 migration，schema drift 会导致运行时错误
+- Drizzle `.returning()` 不带参数时生成包含 schema 所有列的 RETURNING 子句；若 DB 缺少列会报 `no such column` 错误（schema drift 的典型症状）
 - D1 SQL 查询须用 snake_case 列名 (如 `student_id`)，非 Drizzle 的 camelCase (如 `studentId`)
 - Drizzle `sql<number>` 是纯 TypeScript 类型断言，不做运行时类型转换；对 D1 返回值用 `?.` 防御
 - wrangler.jsonc 中 database_id/namespace_id 是 placeholder，部署前需替换真实值
