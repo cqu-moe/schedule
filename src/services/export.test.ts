@@ -70,6 +70,19 @@ describe("generateFormattedEvents", () => {
     const events = generateFormattedEvents(null, "2025-02-24");
     expect(events).toHaveLength(0);
   });
+
+  it("should pass through experiment_name when present", () => {
+    const labCourse = { ...testCourse, experiment_name: "电抛光+金属电镀" };
+    const events = generateFormattedEvents([labCourse], "2025-02-24");
+    expect(events).toHaveLength(1);
+    expect(events[0].experiment_name).toBe("电抛光+金属电镀");
+  });
+
+  it("should omit experiment_name field when course has none", () => {
+    const events = generateFormattedEvents([testCourse], "2025-02-24");
+    expect(events).toHaveLength(1);
+    expect(events[0]).not.toHaveProperty("experiment_name");
+  });
 });
 
 describe("generateCsv", () => {

@@ -40,6 +40,10 @@
             <MapPin class="h-4 w-4 text-muted-foreground" />
             <span>{{ selectedEvent.extendedProps.location }}</span>
           </div>
+          <div v-if="selectedEvent?.extendedProps?.experimentName" class="flex items-start gap-2">
+            <FlaskConical class="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <span>{{ selectedEvent.extendedProps.experimentName }}</span>
+          </div>
           <div class="flex items-center gap-2">
             <Clock class="h-4 w-4 text-muted-foreground" />
             <span>{{ formatEventTime(selectedEvent) }}</span>
@@ -58,7 +62,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Loader2, User, MapPin, Clock } from 'lucide-vue-next'
+import { Loader2, User, MapPin, Clock, FlaskConical } from 'lucide-vue-next'
 import FullCalendar from '@fullcalendar/vue3'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -123,6 +127,7 @@ function toCalendarEvent(e: FormattedEvent): EventInput {
       instructor: e.instructor ?? '',
       type: e.type,
       color,
+      experimentName: e.experiment_name ?? '',
     },
   }
 }
