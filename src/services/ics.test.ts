@@ -92,6 +92,33 @@ describe("generateCoursesIcs", () => {
 
     expect(ics).toContain("LOCATION:A区");
   });
+
+  it("should append experiment_name to DESCRIPTION for lab courses", async () => {
+    const labCourse: CourseEntry = {
+      ...testCourse,
+      name: "大学化学实验Ⅰ",
+      lecturer: "陈刚",
+      experiment_name: "氧化还原与电化学,五水硫酸铜晶体的制备及表征",
+    };
+    const ics = await generateCoursesIcs(
+      [labCourse],
+      "2025-02-24",
+      "student1",
+    );
+
+    // SUMMARY must stay equal to course.name to preserve UID stability
+    expect(ics).toContain("SUMMARY:大学化学实验Ⅰ");
+    // ICS escapes \n as literal "\\n" and "," as "\\,"
+    expect(ics).toContain(
+      "DESCRIPTION:教师：陈刚\\n实验内容：氧化还原与电化学\\,五水硫酸铜晶体的制备及表征",
+    );
+  });
+
+  it("should keep DESCRIPTION minimal when experiment_name is missing", async () => {
+    const ics = await generateCoursesIcs([testCourse], "2025-02-24", "student1");
+    expect(ics).toContain("DESCRIPTION:教师：张三");
+    expect(ics).not.toContain("实验内容");
+  });
 });
 
 describe("generateExamsIcs", () => {

@@ -23,6 +23,7 @@ export interface FormattedEvent {
   start_time: string;
   end_time: string;
   week: number | null;
+  experiment_name?: string;
 }
 
 export function semesterShortName(sessionName: string | null): string {
@@ -80,6 +81,7 @@ export function generateFormattedEvents(
               start_time: formatChinaIso(startDate),
               end_time: formatChinaIso(endDate),
               week,
+              ...(course.experiment_name ? { experiment_name: course.experiment_name } : {}),
             });
           }
         } catch {

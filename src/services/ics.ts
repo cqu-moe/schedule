@@ -87,6 +87,9 @@ export function generateCoursesIcs(
       const endStr = formatIcsTime(endTime);
       const uid = generateUid(username, course.name, startStr, endStr);
       const location = course.room || course.position;
+      const description = course.experiment_name
+        ? `教师：${course.lecturer}\n实验内容：${course.experiment_name}`
+        : `教师：${course.lecturer}`;
 
       lines.push(
         "BEGIN:VEVENT",
@@ -95,7 +98,7 @@ export function generateCoursesIcs(
         `DTEND:${endStr}`,
         `SUMMARY:${escapeIcsText(course.name)}`,
         `LOCATION:${escapeIcsText(location)}`,
-        `DESCRIPTION:${escapeIcsText(`教师：${course.lecturer}`)}`,
+        `DESCRIPTION:${escapeIcsText(description)}`,
         "BEGIN:VALARM",
         "TRIGGER:-PT15M",
         "ACTION:DISPLAY",

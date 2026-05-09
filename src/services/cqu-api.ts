@@ -66,6 +66,7 @@ export interface CourseEntry {
   start_session: number;
   end_session: number;
   weeks: number[];
+  experiment_name?: string;
 }
 
 export interface ExamEntry {
@@ -144,6 +145,7 @@ interface ScheduleResponse {
     weekDay?: string | number;
     teachingWeek?: string;
     period?: string;
+    exprProjectName?: string;
   }>;
 }
 
@@ -373,6 +375,8 @@ export class CQUAPIClient {
         }
       }
 
+      const experimentName = item.exprProjectName?.trim() || undefined;
+
       courses.push({
         name: item.courseName ?? "",
         lecturer,
@@ -382,6 +386,7 @@ export class CQUAPIClient {
         start_session: startSession,
         end_session: endSession,
         weeks,
+        ...(experimentName ? { experiment_name: experimentName } : {}),
       });
     }
 

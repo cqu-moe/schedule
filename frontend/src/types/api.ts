@@ -64,6 +64,7 @@ export interface FormattedEvent {
   start_time: string
   end_time: string
   week: number | null
+  experiment_name?: string
 }
 
 export interface CalendarData {
