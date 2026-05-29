@@ -139,4 +139,13 @@ describe('Login view', () => {
     expect(recoverLink.exists()).toBe(true)
     expect(recoverLink.text()).toContain('找回')
   })
+
+  it('renders the auth.cqu.moe login button (a non-form button, separate from the token form)', async () => {
+    const { wrapper } = await mountLogin()
+
+    const oauthButton = wrapper.findAll('button').find((b) => b.text().includes('auth.cqu.moe'))
+    expect(oauthButton).toBeTruthy()
+    // It must be a plain button (type="button"), not the form submit button.
+    expect(oauthButton!.attributes('type')).toBe('button')
+  })
 })

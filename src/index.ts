@@ -6,6 +6,7 @@ import userRoutes from "./routes/users";
 import subscriptionRoutes from "./routes/subscriptions";
 import exploreRoutes from "./routes/explore";
 import adminRoutes from "./routes/admin";
+import oauthApp from "./routes/oauth";
 import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
@@ -42,6 +43,7 @@ app.route("/api/v1/users", userRoutes);
 app.route("/api/v1/subscriptions", subscriptionRoutes);
 app.route("/api/v1", exploreRoutes);
 app.route("/api/v1/admin", adminRoutes);
+app.route("/api/v1/auth/oauth", oauthApp);
 
 // Global error handler
 app.onError((err, c) => {

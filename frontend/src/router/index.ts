@@ -13,6 +13,7 @@ export const RouteNames = {
   ApiDocs: 'ApiDocs',
   Changelog: 'Changelog',
   Calendar: 'Calendar',
+  OAuthCallback: 'OAuthCallback',
 } as const
 
 const routes = [
@@ -69,6 +70,12 @@ const routes = [
     name: RouteNames.Calendar,
     component: () => import('@/views/Calendar.vue'),
     meta: { title: `课表日历 | ${SITE_NAME}` }
+  },
+  {
+    path: '/auth/callback',
+    name: RouteNames.OAuthCallback,
+    component: () => import('@/views/OAuthCallback.vue'),
+    meta: { title: `登录 | ${SITE_NAME}` }
   }
 ]
 

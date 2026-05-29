@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { refreshToken, login, AuthError, encryptAesEcb, parseLoginPage } from "./auth";
+import {
+  refreshToken,
+  login,
+  exchangeTicketForCquToken,
+  AuthError,
+  encryptAesEcb,
+  parseLoginPage,
+} from "./auth";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -432,6 +439,164 @@ describe("login", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(AuthError);
       expect(e.code).toBe("UPSTREAM_TIMEOUT");
+    }
+  });
+});
+
+// ── exchangeTicketForCquToken tests ─────────────────────────────
+
+/**
+ * Mock the 3 fetch calls of exchangeTicketForCquToken:
+ *   #1 CAS validate (Set-Cookie: SESSION),
+ *   #2 OAuth authorize (302 Location with code),
+ *   #3 token exchange (JSON).
+ */
+function createTicketFetchMock(overrides: {
+  casStatus?: number;
+  casCookie?: string;
+  authorizeStatus?: number;
+  authorizeLocation?: string;
+  tokenStatus?: number;
+  tokenBody?: object;
+} = {}) {
+  const {
+    casStatus = 302,
+    casCookie = "SESSION=sess-xyz; Path=/",
+    authorizeStatus = 302,
+    authorizeLocation =
+      "https://my.cqu.edu.cn/workspace/token-index?code=AUTHCODE&state=",
+    tokenStatus = 200,
+    tokenBody = {
+      access_token: "at-xyz",
+      refresh_token: "rt-xyz",
+      expires_in: 3600,
+    },
+  } = overrides;
+
+  let callIndex = 0;
+  return vi.fn().mockImplementation(() => {
+    callIndex++;
+    switch (callIndex) {
+      case 1:
+        return Promise.resolve(
+          new Response(null, {
+            status: casStatus,
+            headers: { "Set-Cookie": casCookie, Location: "/workspace/cas" },
+          }),
+        );
+      case 2:
+        return Promise.resolve(
+          new Response(null, {
+            status: authorizeStatus,
+            headers: { Location: authorizeLocation },
+          }),
+        );
+      case 3:
+        return Promise.resolve(
+          new Response(JSON.stringify(tokenBody), {
+            status: tokenStatus,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      default:
+        return Promise.reject(new Error(`Unexpected fetch call #${callIndex}`));
+    }
+  });
+}
+
+describe("exchangeTicketForCquToken", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("should exchange a CAS ticket for a TokenResult", async () => {
+    globalThis.fetch = createTicketFetchMock();
+
+    const r = await exchangeTicketForCquToken("ST-abc");
+
+    expect(r.accessToken).toBe("at-xyz");
+    expect(r.refreshToken).toBe("rt-xyz");
+    expect(new Date(r.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("should URL-encode the ticket in the CAS validate request", async () => {
+    globalThis.fetch = createTicketFetchMock();
+
+    await exchangeTicketForCquToken("ST-special+chars");
+
+    const casCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(casCall[0] as string).toContain("ticket=ST-special%2Bchars");
+  });
+
+  it("should NOT send a Cookie header when called without one (OAuth path)", async () => {
+    globalThis.fetch = createTicketFetchMock();
+
+    await exchangeTicketForCquToken("ST-abc");
+
+    const casCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const casInit = casCall[1] as RequestInit;
+    expect((casInit.headers as Record<string, string>)["Cookie"]).toBeUndefined();
+  });
+
+  it("should forward the supplied cookie to the CAS validate request", async () => {
+    globalThis.fetch = createTicketFetchMock();
+
+    await exchangeTicketForCquToken("ST-abc", { cookie: "CASTGC=x" });
+
+    const casCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const casInit = casCall[1] as RequestInit;
+    expect((casInit.headers as Record<string, string>)["Cookie"]).toContain("CASTGC=x");
+  });
+
+  it("should throw UPSTREAM_UNREACHABLE when SESSION cookie is missing", async () => {
+    globalThis.fetch = createTicketFetchMock({ casCookie: "" });
+
+    try {
+      await exchangeTicketForCquToken("ST-abc");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("No SESSION cookie");
+    }
+  });
+
+  it("should throw UPSTREAM_UNREACHABLE when authorization code is missing", async () => {
+    globalThis.fetch = createTicketFetchMock({
+      authorizeLocation: "https://my.cqu.edu.cn/workspace/token-index?state=",
+    });
+
+    try {
+      await exchangeTicketForCquToken("ST-abc");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("No authorization code");
+    }
+  });
+
+  it("should parse error_description on token exchange failure", async () => {
+    globalThis.fetch = createTicketFetchMock({
+      tokenStatus: 400,
+      tokenBody: { error: "invalid_grant", error_description: "Authorization code expired" },
+    });
+
+    try {
+      await exchangeTicketForCquToken("ST-abc");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(AuthError);
+      expect(e.code).toBe("UPSTREAM_UNREACHABLE");
+      expect(e.message).toContain("Authorization code expired");
     }
   });
 });
