@@ -256,8 +256,16 @@ export async function login(
     }
     const ticket = ticketMatch[1];
 
+    // Forward the CASTGC cookie (the CAS TGT) from the step-2 login response to
+    // the step-3 CAS-validate request, preserving login()'s production-proven
+    // wire behavior. The OAuth-callback path omits it (no CASTGC available).
+    const castgcCookie = extractCookie(loginRes, "CASTGC");
+
     // Steps 3-5: validate the CAS ticket and exchange it for CQU tokens.
-    return await exchangeTicketForCquToken(ticket, controller.signal);
+    return await exchangeTicketForCquToken(ticket, {
+      cookie: castgcCookie ?? undefined,
+      signal: controller.signal,
+    });
   } catch (e) {
     if (e instanceof AuthError) throw e;
     if (e instanceof Error && e.name === "AbortError") {
@@ -275,17 +283,27 @@ export async function login(
 // OAuth authorize → token exchange dance, returning CQU bearer tokens.
 // The ticket may come from password login (login()) or from auth.cqu.moe's
 // service-ticket endpoint — both mint an ST bound to CAS_SERVICE_URL.
-// CAS ST validation does not require a CASTGC cookie (the TGT lives on the
-// CAS server), so only the ticket is needed.
+//
+// `opts.cookie` (when provided) is forwarded as the Cookie request header on
+// the step-3 CAS-validate fetch. The password-login path passes its CASTGC
+// cookie here to preserve its production-proven wire behavior; the OAuth path
+// omits it (CAS validates the ST without the TGT/CASTGC cookie — an assumption
+// pending live verification, isolated to the cookie-less call).
 export async function exchangeTicketForCquToken(
   ticket: string,
-  signal?: AbortSignal,
+  opts?: { cookie?: string; signal?: AbortSignal },
 ): Promise<TokenResult> {
+  const signal = opts?.signal;
+
   // Step 3: Validate CAS ticket → get SESSION cookie
+  const step3Headers: Record<string, string> = { "User-Agent": USER_AGENT };
+  if (opts?.cookie) {
+    step3Headers["Cookie"] = opts.cookie;
+  }
   const casRes = await fetch(
     `${CAS_SERVICE_URL}?ticket=${encodeURIComponent(ticket)}`,
     {
-      headers: { "User-Agent": USER_AGENT },
+      headers: step3Headers,
       redirect: "manual",
       signal,
     },

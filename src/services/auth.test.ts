@@ -348,7 +348,7 @@ describe("login", () => {
     expect(cookieHeader).toContain("OTHER=xyz");
   });
 
-  it("should not forward a CASTGC cookie to Step 3 (CAS validates the ST directly)", async () => {
+  it("should forward CASTGC cookie to Step 3", async () => {
     globalThis.fetch = createLoginFetchMock({
       loginCookie: "CASTGC=TGC-xyz789; Path=/; HttpOnly",
     });
@@ -357,7 +357,7 @@ describe("login", () => {
 
     const step3Call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2];
     const step3Init = step3Call[1] as RequestInit;
-    expect((step3Init.headers as Record<string, string>)["Cookie"]).toBeUndefined();
+    expect((step3Init.headers as Record<string, string>)["Cookie"]).toContain("CASTGC=TGC-xyz789");
   });
 
   it("should URL-encode ticket in Step 3", async () => {
@@ -536,7 +536,7 @@ describe("exchangeTicketForCquToken", () => {
     expect(casCall[0] as string).toContain("ticket=ST-special%2Bchars");
   });
 
-  it("should NOT require a CASTGC cookie (ticket-only)", async () => {
+  it("should NOT send a Cookie header when called without one (OAuth path)", async () => {
     globalThis.fetch = createTicketFetchMock();
 
     await exchangeTicketForCquToken("ST-abc");
@@ -544,6 +544,16 @@ describe("exchangeTicketForCquToken", () => {
     const casCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const casInit = casCall[1] as RequestInit;
     expect((casInit.headers as Record<string, string>)["Cookie"]).toBeUndefined();
+  });
+
+  it("should forward the supplied cookie to the CAS validate request", async () => {
+    globalThis.fetch = createTicketFetchMock();
+
+    await exchangeTicketForCquToken("ST-abc", { cookie: "CASTGC=x" });
+
+    const casCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const casInit = casCall[1] as RequestInit;
+    expect((casInit.headers as Record<string, string>)["Cookie"]).toContain("CASTGC=x");
   });
 
   it("should throw UPSTREAM_UNREACHABLE when SESSION cookie is missing", async () => {
