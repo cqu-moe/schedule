@@ -256,96 +256,8 @@ export async function login(
     }
     const ticket = ticketMatch[1];
 
-    // Forward CASTGC cookie from login response
-    const castgcCookie = extractCookie(loginRes, "CASTGC");
-    const step3Headers: Record<string, string> = { "User-Agent": USER_AGENT };
-    if (castgcCookie) {
-      step3Headers["Cookie"] = castgcCookie;
-    }
-
-    // Step 3: Validate CAS ticket → get SESSION cookie
-    const casRes = await fetch(
-      `${CAS_SERVICE_URL}?ticket=${encodeURIComponent(ticket)}`,
-      {
-        headers: step3Headers,
-        redirect: "manual",
-        signal: controller.signal,
-      },
-    );
-    const sessionCookie = extractCookie(casRes, "SESSION");
-    if (!sessionCookie) {
-      throw new AuthError(
-        "UPSTREAM_UNREACHABLE",
-        "No SESSION cookie from CAS validation",
-      );
-    }
-
-    // Step 4: OAuth authorize → get authorization code
-    const authorizeUrl =
-      `${OAUTH_AUTHORIZE_URL}?client_id=${OAUTH_CLIENT_ID}` +
-      `&response_type=code&scope=all&state=` +
-      `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}`;
-    const authorizeRes = await fetch(authorizeUrl, {
-      headers: { "User-Agent": USER_AGENT, Cookie: sessionCookie },
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    const authLocation = authorizeRes.headers.get("location") ?? "";
-    const codeMatch = authLocation.match(/code=([^&]+)/);
-    if (!codeMatch) {
-      throw new AuthError(
-        "UPSTREAM_UNREACHABLE",
-        "No authorization code in OAuth redirect",
-      );
-    }
-
-    // Step 5: Exchange code for tokens
-    const tokenRes = await fetch(TOKEN_REFRESH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": USER_AGENT,
-        Authorization: `Basic ${OAUTH_BASIC_AUTH}`,
-        Accept: "application/json",
-      },
-      body: new URLSearchParams({
-        client_id: OAUTH_CLIENT_ID,
-        client_secret: OAUTH_CLIENT_SECRET,
-        code: codeMatch[1],
-        redirect_uri: OAUTH_REDIRECT_URI,
-        grant_type: "authorization_code",
-      }),
-      signal: controller.signal,
-    });
-
-    if (!tokenRes.ok) {
-      let detail = `HTTP ${tokenRes.status}`;
-      try {
-        const errBody = (await tokenRes.json()) as OAuthTokenResponse;
-        detail = errBody.error_description ?? errBody.error ?? detail;
-      } catch {
-        // non-JSON error response, keep defaults
-      }
-      throw new AuthError(
-        "UPSTREAM_UNREACHABLE",
-        `Token exchange failed: ${detail}`,
-      );
-    }
-
-    const data = (await tokenRes.json()) as OAuthTokenResponse;
-    if (!data.access_token) {
-      throw new AuthError(
-        "UPSTREAM_UNREACHABLE",
-        "No access_token in token response",
-      );
-    }
-
-    const expiresIn = data.expires_in ?? TOKEN_EXPIRY_HOURS * 3600;
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token ?? "",
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-    };
+    // Steps 3-5: validate the CAS ticket and exchange it for CQU tokens.
+    return await exchangeTicketForCquToken(ticket, controller.signal);
   } catch (e) {
     if (e instanceof AuthError) throw e;
     if (e instanceof Error && e.name === "AbortError") {
@@ -355,6 +267,103 @@ export async function login(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── exchangeTicketForCquToken (CAS ST → CQU tokens) ─────────────
+//
+// Validates a CAS service ticket (ST-…) against my.cqu.edu.cn and runs the
+// OAuth authorize → token exchange dance, returning CQU bearer tokens.
+// The ticket may come from password login (login()) or from auth.cqu.moe's
+// service-ticket endpoint — both mint an ST bound to CAS_SERVICE_URL.
+// CAS ST validation does not require a CASTGC cookie (the TGT lives on the
+// CAS server), so only the ticket is needed.
+export async function exchangeTicketForCquToken(
+  ticket: string,
+  signal?: AbortSignal,
+): Promise<TokenResult> {
+  // Step 3: Validate CAS ticket → get SESSION cookie
+  const casRes = await fetch(
+    `${CAS_SERVICE_URL}?ticket=${encodeURIComponent(ticket)}`,
+    {
+      headers: { "User-Agent": USER_AGENT },
+      redirect: "manual",
+      signal,
+    },
+  );
+  const sessionCookie = extractCookie(casRes, "SESSION");
+  if (!sessionCookie) {
+    throw new AuthError(
+      "UPSTREAM_UNREACHABLE",
+      "No SESSION cookie from CAS validation",
+    );
+  }
+
+  // Step 4: OAuth authorize → get authorization code
+  const authorizeUrl =
+    `${OAUTH_AUTHORIZE_URL}?client_id=${OAUTH_CLIENT_ID}` +
+    `&response_type=code&scope=all&state=` +
+    `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}`;
+  const authorizeRes = await fetch(authorizeUrl, {
+    headers: { "User-Agent": USER_AGENT, Cookie: sessionCookie },
+    redirect: "manual",
+    signal,
+  });
+  const authLocation = authorizeRes.headers.get("location") ?? "";
+  const codeMatch = authLocation.match(/code=([^&]+)/);
+  if (!codeMatch) {
+    throw new AuthError(
+      "UPSTREAM_UNREACHABLE",
+      "No authorization code in OAuth redirect",
+    );
+  }
+
+  // Step 5: Exchange code for tokens
+  const tokenRes = await fetch(TOKEN_REFRESH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": USER_AGENT,
+      Authorization: `Basic ${OAUTH_BASIC_AUTH}`,
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      code: codeMatch[1],
+      redirect_uri: OAUTH_REDIRECT_URI,
+      grant_type: "authorization_code",
+    }),
+    signal,
+  });
+
+  if (!tokenRes.ok) {
+    let detail = `HTTP ${tokenRes.status}`;
+    try {
+      const errBody = (await tokenRes.json()) as OAuthTokenResponse;
+      detail = errBody.error_description ?? errBody.error ?? detail;
+    } catch {
+      // non-JSON error response, keep defaults
+    }
+    throw new AuthError(
+      "UPSTREAM_UNREACHABLE",
+      `Token exchange failed: ${detail}`,
+    );
+  }
+
+  const data = (await tokenRes.json()) as OAuthTokenResponse;
+  if (!data.access_token) {
+    throw new AuthError(
+      "UPSTREAM_UNREACHABLE",
+      "No access_token in token response",
+    );
+  }
+
+  const expiresIn = data.expires_in ?? TOKEN_EXPIRY_HOURS * 3600;
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token ?? "",
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+  };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
