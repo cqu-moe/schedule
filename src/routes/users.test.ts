@@ -88,7 +88,7 @@ describe("syncNewUserSubscriptions", () => {
       `CREATE TABLE IF NOT EXISTS users (
         id text PRIMARY KEY NOT NULL,
         student_id text NOT NULL,
-        encrypted_password text,
+        encrypted_password text NOT NULL,
         auth_user_id text,
         auth_refresh_token text,
         auth_refresh_issued_at text,

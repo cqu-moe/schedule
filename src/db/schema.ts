@@ -12,8 +12,8 @@ export const users = sqliteTable(
 
     studentId: text("student_id").notNull(),
 
-    /** AES-256-GCM encrypted password stored as base64 text; null for auth.cqu.moe accounts */
-    encryptedPassword: text("encrypted_password"),
+    /** AES-256-GCM encrypted password stored as base64 text; empty-string sentinel "" for auth.cqu.moe accounts */
+    encryptedPassword: text("encrypted_password").notNull(),
 
     /** auth.cqu.moe `sub` (opaque base62 string); null for password accounts */
     authUserId: text("auth_user_id").unique(),
