@@ -148,13 +148,13 @@ AUTH 只替换 `login()` 的第 1-2 步;第 3-5 步与所有下游(`CQUAPIClient
 
 ### 4.3 `auth.ts` 重构
 
-将现有 `login()` 的第 3-5 步抽成可复用纯函数:
+将现有 `login()` 的第 3-5 步抽成可复用纯函数(实现签名):
 
 ```
-exchangeTicketForCquToken(ticket: string): Promise<TokenResult>
+exchangeTicketForCquToken(ticket: string, opts?: { cookie?: string; signal?: AbortSignal }): Promise<TokenResult>
 ```
 
-`login()` 在自行拿到 ticket 后调它;OAuth 回调用 AUTH 提供的 ticket 调它。
+`login()` 在自行拿到 ticket 后调它,并**传入自己提取的 CASTGC**(`{ cookie: castgcCookie, signal }`),使密码登录路径的第 3 步请求与重构前 byte-for-byte 一致;OAuth 回调用 AUTH 提供的 ticket 调它且**不传 cookie**(无 CASTGC)。这样把"CASTGC-less 验证"这个未验证假设(§13.1)隔离在新 OAuth 路径,不触碰已验证的生产密码路径。
 
 > **待实现时验证的细节**:新链路没有 `CASTGC` cookie(TGT 在 auth 侧)。CAS ST 验证本身不依赖 CASTGC(服务端自行回 CAS server 校验 ST),故第 3 步在无 CASTGC 下应能取得 `SESSION`。需用真实 ticket 跑通确认。
 
