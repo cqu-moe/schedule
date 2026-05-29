@@ -25,6 +25,11 @@ export interface Env {
   HCAPTCHA_SECRET: string;
   ADMIN_SECRET: string;
 
+  // OAuth (auth.cqu.moe) secrets
+  AUTH_OAUTH_CLIENT_ID: string;
+  AUTH_OAUTH_CLIENT_SECRET: string;
+  OAUTH_STATE_KEY: string; // base64, 独立于 ENCRYPTION_KEY
+
   // Environment Variables
   PUBLIC_URL: string;
   HCAPTCHA_ENABLED: string;
