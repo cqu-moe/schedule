@@ -157,6 +157,21 @@ app.get("/callback", rateLimit("UNAUTH_LIMITER"), async (c) => {
       throw e;
     }
 
+    // ── Step 4b: require a usable auth refresh_token ─────────────────
+    // postToken defaults a missing refresh_token to "". We requested
+    // offline_access, so a well-behaved provider always returns one; treat
+    // its absence as an auth failure. An AUTH account with no refresh token
+    // cannot be kept alive by the D8 rotation, so we must NOT create it.
+    if (!tokens.refreshToken) {
+      console.warn(
+        JSON.stringify({
+          event: "oauth.callback.no_refresh_token",
+          message: "Token response missing refresh_token; aborting login",
+        }),
+      );
+      return redirectErr("oauth_token");
+    }
+
     // ── Step 5: userinfo → sub ───────────────────────────────────────
     let sub: string;
     try {
@@ -298,7 +313,7 @@ app.get("/callback", rateLimit("UNAUTH_LIMITER"), async (c) => {
   } catch (e) {
     console.error(
       JSON.stringify({
-        event: "auth.oauth.callback_error",
+        event: "oauth.callback.error",
         error: e instanceof Error ? e.message : String(e),
         message: "Unexpected error in OAuth callback",
       }),

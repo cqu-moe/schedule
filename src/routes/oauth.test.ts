@@ -144,18 +144,23 @@ function callbackEnv(): Env {
   } as unknown as Env;
 }
 
-/** Minimal ExecutionContext capturing waitUntil promises so we can await them. */
+/**
+ * Minimal ExecutionContext capturing waitUntil promises so we can await them.
+ * `scheduled` exposes how many times waitUntil fired (the callback only schedules
+ * syncNewUserSubscriptions on the insert-winner path, so its length = sync count).
+ */
 function makeExecutionCtx() {
-  const promises: Promise<unknown>[] = [];
+  const scheduled: Promise<unknown>[] = [];
   return {
+    scheduled,
     ctx: {
       waitUntil: (p: Promise<unknown>) => {
-        promises.push(Promise.resolve(p).catch(() => {}));
+        scheduled.push(Promise.resolve(p).catch(() => {}));
       },
       passThroughOnException: () => {},
       props: {},
     } as unknown as ExecutionContext,
-    settle: () => Promise.all(promises),
+    settle: () => Promise.all(scheduled),
   };
 }
 
@@ -473,6 +478,25 @@ describe("GET /callback", () => {
     expect(res.headers.get("Location")).toBe(`${PROD_ORIGIN}/auth/callback#error=oauth_token`);
   });
 
+  it("redirects #error=oauth_token and creates NO user when the auth refresh_token is empty", async () => {
+    // exchangeCode succeeds but returns an empty refresh_token (postToken defaults a
+    // missing refresh_token to ""). Such an account cannot be kept alive by the D8
+    // rotation, so the callback must abort before creating any row.
+    globalThis.fetch = createCallbackFetchMock({
+      tokenBody: { access_token: "auth-at", refresh_token: "", expires_in: 3600 },
+    });
+    const { env_, state, rawCookie } = await startTx();
+    const { ctx } = makeExecutionCtx();
+    const res = await callback(PROD_ORIGIN, { code: "AUTHCODE", state }, rawCookie, env_, ctx);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${PROD_ORIGIN}/auth/callback#error=oauth_token`);
+
+    // No user row was created.
+    const rows = await db.select().from(users).where(eq(users.authUserId, "auth-sub-123"));
+    expect(rows).toHaveLength(0);
+  });
+
   // ── Step 6: CQU status ──────────────────────────────────────────────
   it("redirects #error=cqu_unbound when status is unbound", async () => {
     globalThis.fetch = createCallbackFetchMock({ cquStatusBody: { status: "unbound" } });
@@ -594,5 +618,63 @@ describe("GET /callback", () => {
     expect(subs[0].id).toBe(subId);
 
     await settle();
+  });
+
+  // ── Concurrency: two callbacks for the SAME sub → exactly-once end state ─
+  // Design §11 / Task 7: two concurrent callbacks for the same `sub` must produce
+  // exactly one user row, exactly 3 personal subscriptions, and at-most-once sync.
+  //
+  // Both transactions resolve the SAME mocked userinfo `sub` + active CQU status,
+  // so they race on the `users_auth_user_id_unique` index. onConflictDoNothing means
+  // only the winning insert returns a row (→ creates the 3 subs + schedules sync);
+  // the loser takes the read-after-conflict path (no new subs, reuses the calendar
+  // token). The `uq_personal_user_source` partial unique index further guarantees
+  // at most 3 personal subs even if both somehow tried to insert.
+  //
+  // Note: under cloudflare:test, D1's single-writer model serializes the two writes,
+  // so the exactly-once outcome is guaranteed by the DB even when we fire both via
+  // Promise.all. We assert the end state — the property that actually matters.
+  it("two concurrent callbacks for the same sub → 1 user, 3 subs, at-most-once sync", async () => {
+    globalThis.fetch = createCallbackFetchMock();
+
+    // Two independent valid OAuth transactions, each with its own sealed cookie.
+    const tx1 = await startTx();
+    const tx2 = await startTx();
+    const ec1 = makeExecutionCtx();
+    const ec2 = makeExecutionCtx();
+
+    const [res1, res2] = await Promise.all([
+      callback(PROD_ORIGIN, { code: "AUTHCODE", state: tx1.state }, tx1.rawCookie, tx1.env_, ec1.ctx),
+      callback(PROD_ORIGIN, { code: "AUTHCODE", state: tx2.state }, tx2.rawCookie, tx2.env_, ec2.ctx),
+    ]);
+
+    // Both succeed (302 to a #token= fragment); the conflict one reuses the same token.
+    expect(res1.status).toBe(302);
+    expect(res2.status).toBe(302);
+    const loc1 = res1.headers.get("Location")!;
+    const loc2 = res2.headers.get("Location")!;
+    expect(loc1.startsWith(`${PROD_ORIGIN}/auth/callback#token=`)).toBe(true);
+    expect(loc2.startsWith(`${PROD_ORIGIN}/auth/callback#token=`)).toBe(true);
+    expect(loc1.split("#token=")[1]).toBe(loc2.split("#token=")[1]);
+
+    // Exactly ONE users row for that auth_user_id.
+    const rows = await db.select().from(users).where(eq(users.authUserId, "auth-sub-123"));
+    expect(rows).toHaveLength(1);
+
+    // Exactly 3 personal subscriptions for that user.
+    const subs = await db.select().from(subscriptions).where(eq(subscriptions.userId, rows[0].id));
+    expect(subs).toHaveLength(3);
+    expect(new Set(subs.map((s) => s.sourceType))).toEqual(
+      new Set(["personal_all", "personal_courses", "personal_exams"]),
+    );
+
+    // The redirect token matches the single stored calendar token.
+    expect(rows[0].calendarToken).toBe(loc1.split("#token=")[1]);
+
+    // Background sync (syncNewUserSubscriptions, via waitUntil) was scheduled at most
+    // once — only the insert winner reaches the sync-scheduling branch.
+    expect(ec1.scheduled.length + ec2.scheduled.length).toBeLessThanOrEqual(1);
+
+    await Promise.all([ec1.settle(), ec2.settle()]);
   });
 });
