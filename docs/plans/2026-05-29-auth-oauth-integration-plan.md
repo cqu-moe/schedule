@@ -149,7 +149,7 @@ git commit -m "feat(oauth): add Env secrets, constants, host->origin resolver"
 
 ```ts
   studentId: text("student_id").notNull(), // 去掉 .unique()(改为下方部分唯一索引)
-  encryptedPassword: text("encrypted_password"), // 去掉 .notNull()
+  encryptedPassword: text("encrypted_password").notNull(), // D7: 保持 NOT NULL,AUTH 账号存哨兵 ""(绕开会级联删 subscriptions 的整表重建)
   authUserId: text("auth_user_id").unique(), // auth.cqu.moe 的 sub,不透明 base62
   authRefreshToken: text("auth_refresh_token"),
   authRefreshIssuedAt: text("auth_refresh_issued_at"), // ISO 8601
@@ -170,7 +170,7 @@ git commit -m "feat(oauth): add Env secrets, constants, host->origin resolver"
 **Step 2: 生成迁移**
 
 Run: `npm run db:generate`
-Expected: 新 migration SQL 含:`ADD COLUMN auth_user_id/auth_refresh_token/auth_refresh_issued_at`、`DROP INDEX users_student_id_unique`、`CREATE UNIQUE INDEX uq_password_student_id ... WHERE auth_user_id IS NULL`、`uq_personal_user_source ... WHERE is_personal = 1`,以及 `encrypted_password` 可空化(整表重建 12 步)。**人工 review 生成的 SQL** 确认重建脚本保留了 `users_calendar_token_unique` 等所有现有索引。
+Expected: 新 migration SQL 只含:`ADD COLUMN auth_user_id/auth_refresh_token/auth_refresh_issued_at`、`DROP INDEX users_student_id_unique`、`CREATE UNIQUE INDEX users_auth_user_id_unique`、`CREATE UNIQUE INDEX uq_password_student_id ... WHERE auth_user_id IS NULL`、`uq_personal_user_source ... WHERE is_personal = 1`。**关键(D7):因 `encrypted_password` 保持 `NOT NULL`,迁移 _不应_ 出现整表重建(`CREATE TABLE __new_users` / `DROP TABLE users`)。若 drizzle-kit 仍生成了重建,STOP——它会在 D1 生产库经 `ON DELETE CASCADE` 删光 `subscriptions`(D1 迁移内关不掉外键,CF 文档证实)。**人工 review 确认无 `DROP TABLE`。
 
 **Step 3: 本地应用**
 
@@ -184,7 +184,7 @@ Run:
 npx wrangler d1 execute schedule-beta-cqu-moe-db --local --command "PRAGMA index_list(users);"
 npx wrangler d1 execute schedule-beta-cqu-moe-db --local --command "PRAGMA table_info(users);"
 ```
-Expected: `users_student_id_unique` 不在列表;`uq_password_student_id` 在;`encrypted_password` 的 `notnull` 列为 0;`calendar_token`/`auth_user_id` 唯一索引在。
+Expected: `users_student_id_unique` 不在列表;`uq_password_student_id` 在;`encrypted_password` 的 `notnull` 列**为 1**(D7 保持 NOT NULL);`calendar_token`/`auth_user_id` 唯一索引在。另外:先插一条 user + 一条 subscription 再 apply,`SELECT count(*) FROM subscriptions` 应 = 1(证明无 cascade)。
 
 **Step 5: 跑现有后端测试确认无回归**
 

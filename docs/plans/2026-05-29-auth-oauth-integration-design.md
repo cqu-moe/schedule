@@ -10,6 +10,7 @@
 > - **第二轮** must-fix 已纳入:D8 主动轮换的并发/stale-`invalid_grant` 守卫(重读最新 + 良性竞态判定,先持久化 CQU 再轮换)、OAuth 建用户 + 个人订阅副作用幂等(`ON CONFLICT(auth_user_id) DO NOTHING RETURNING` + 仅插入路径建订阅);并修:status `expired`/`error` 不当 unbound(Low)、失败分类加 operator-permanent 桶(`invalid_client`/`invalid_scope`,Low)、host→origin 精确映射表消歧(Low)、service-ticket 形状改 `{ ticket }`(Nit)。
 > - **第三轮** must-fix 已纳入(均为第二轮修复的连带项):D8 早退门同时计算 `needsAuthRotation`(否则中断/重试会跳过仍 stale 的 auth 轮换)、`DO NOTHING` 命中后补 read-after-conflict 的 `SELECT id, calendarToken`(否则更新分支拿不到 id/calendar_token)、§9 错误表 status 触发条件对齐 §4.2(消除回归)。第三轮零 Critical/High。
 > - **第四轮(确认性)**:三处 Round3 修复全部 RESOLVED,零 Critical/High/Medium/Nit。唯一 Low(改绑后缓存 `icsContent`/JSON 陈旧到下次 sync)已作为"已知可接受行为"文档化(§4.2 step 9)。**Verdict:可转实现计划,无剩余 must-fix。**
+> - **实现期(T2 代码审查)**:发现 `encrypted_password` 可空化的整表重建会在 D1 生产库**级联删光 `subscriptions`**(D1 迁移内关不掉外键,CF 文档证实)。**反转 D7**:改为保持 `NOT NULL` + AUTH 账号哨兵 `""`,迁移无重建。已更新 D7 / §3 / §3.2 / §4.2 step9 / §13。
 
 ---
 
@@ -57,7 +58,7 @@ AUTH 只替换 `login()` 的第 1-2 步;第 3-5 步与所有下游(`CQUAPIClient
 | D4 | 申请的 OAuth scope | `openid offline_access cqu:ticket:jwxt` | `offline_access` 是拿 refresh_token 的前提(指南 §33),漏了会导致刷新兜底断链。 |
 | D5 | OAuth state / PKCE verifier 的存放 | **加密 HttpOnly Cookie(无服务端状态)** | 不用 KV(见 §6 的一致性论证)。 |
 | D6 | Cookie 加密密钥 | **独立 secret `OAUTH_STATE_KEY`** | 与 D1-at-rest 的 `ENCRYPTION_KEY` 分离(见 §7 的密钥分离论证)。 |
-| D7 | `encrypted_password` 迁移方式 | **改为可空(整表重建)** | schema 最诚实。SQLite 无法直接 drop NOT NULL,走 drizzle-kit 12 步重建,配 §3 的可执行迁移序列 + 本地验证。 |
+| D7 | AUTH 账号的 `encrypted_password` | **保持 `NOT NULL`,AUTH 账号存哨兵空串 `""`(绕开整表重建)** | 原拟"改可空"会触发 SQLite 整表重建,而 D1 迁移内**关不掉外键**(`PRAGMA foreign_keys=OFF` no-op,`defer_foreign_keys` 也挡不住 cascade,均经 CF 官方文档证实),`DROP TABLE users` 会**级联删光生产 `subscriptions`**。哨兵方案迁移只需 ADD COLUMN + 换索引,不碰 `DROP TABLE`,对满数据生产表安全。已写的 `!encryptedPassword` 守卫天然兼容 `""`(falsy)。**(由实现期 Codex 代码审查发现并反转原决策)** |
 | D8 | auth refresh token 30 天时效 | **主动周期轮换** | 避免兜底 token 因从不使用而过期、导致 CQU 刷新链某天断开时用户被静默永久登出。新增 `auth_refresh_issued_at` 列,cron 见其 >25 天即主动 auth refresh 轮换(见 §5)。 |
 | D9 | auth 侧改绑(studentId 变化) | **改绑需重新 OAuth 登录才生效** | `studentId` 只在 OAuth 回调更新。改绑低频,要求重登一次可接受;个人订阅 `source_id` 同样在重登时刷新。不做刷新时实时检测(YAGNI)。 |
 
@@ -69,7 +70,7 @@ AUTH 只替换 `login()` 的第 1-2 步;第 3-5 步与所有下游(`CQUAPIClient
 
 | 改动 | 原因 |
 |---|---|
-| `encrypted_password`:`notNull` → **可空** | AUTH 账号没有 CQU 密码 |
+| `encrypted_password`:**保持 `notNull`**(D7),AUTH 账号写哨兵 `""` | AUTH 账号无 CQU 密码;保持 NOT NULL 是为绕开会级联删 `subscriptions` 的整表重建(见 §3.2) |
 | `student_id`:去掉行内 `.unique()`,改为**部分唯一索引** `uniqueIndex(...).where(sql\`auth_user_id IS NULL\`)` | 同一 studentId 可能既有密码账号又有 AUTH 账号;但密码账号内仍需唯一 |
 | 新增 `auth_user_id text`(可空、`unique`) | auth.cqu.moe 的 `sub`,AUTH 账号去重键 |
 | 新增 `auth_refresh_token text`(可空,AES-256-GCM 加密) | 存 auth 的 30 天 refresh_token,刷新兜底用 |
@@ -81,19 +82,19 @@ AUTH 只替换 `login()` 的第 1-2 步;第 3-5 步与所有下游(`CQUAPIClient
 
 `student_id` 不再全局唯一后,现有按 `studentId` 单条件查询的密码流会**误命中 AUTH 行**。必须修复:
 
-- 注册 `POST /` 的存在性查询(`users.ts:97`)、recover `POST /recover`(`:206`)、recover/verify(`:244`)等所有密码账号路径,WHERE 一律追加 **`auth_user_id IS NULL`**。否则:密码注册可能更新一个 AUTH 行并返回它的 `calendar_token`(违反「账号分离」);recover 可能选中 `encrypted_password` 为 null 的 AUTH 行。
-- nullable 的 `encrypted_password` **永不**传入 `verifyPassword`(AUTH 行已被上面的 `auth_user_id IS NULL` 过滤掉,天然不会到达密码校验)。
+- 注册 `POST /` 的存在性查询(`users.ts:97`)、recover `POST /recover`(`:206`)、recover/verify(`:244`)等所有密码账号路径,WHERE 一律追加 **`auth_user_id IS NULL`**。否则:密码注册可能更新一个 AUTH 行并返回它的 `calendar_token`(违反「账号分离」);recover 可能选中哨兵 `""` 密码的 AUTH 行。
+- AUTH 账号的哨兵 `""`(D7)**永不**通过密码校验:`auth_user_id IS NULL` 过滤已挡掉 AUTH 行;即便漏到 `verifyPassword`,`""` 解密会失败、其 try/catch 返回 false,且 `!encryptedPassword` 守卫先行短路。
 
-### 3.2 迁移序列(纠正后 + 可执行)
+### 3.2 迁移序列(哨兵方案,无整表重建)
 
-> **纠正**(原稿有误):`student_id` 的唯一性是**独立索引** `users_student_id_unique`(`drizzle/migrations/0000_square_guardsmen.sql:38`,`student_id text NOT NULL` 行内无 `UNIQUE`),去掉它只是 `DROP INDEX`,**不触发整表重建**。真正需要整表重建的是把 `encrypted_password` 从 `NOT NULL` 改为可空(SQLite 不支持直接 drop NOT NULL,drizzle-kit 生成 12 步 create→copy→drop→rename)。
+> **为什么不整表重建(D7,实现期审查发现)**:`encrypted_password` 改可空需 SQLite 整表重建(create→copy→`DROP TABLE users`→rename)。但 `subscriptions.user_id` 有 `ON DELETE CASCADE`,而 **D1 在迁移事务内无法关闭外键**——CF 官方文档:「By default, D1 enforces … foreign key constraints … within all queries and **migrations** … user queries cannot change this during a query or migration」,且「`PRAGMA defer_foreign_keys = ON` **does not prevent `ON DELETE CASCADE`**」。故 `DROP TABLE users` 会级联删光生产 `subscriptions`(本地 apply 因库空而未暴露)。哨兵方案 `encrypted_password` 保持 `NOT NULL`,**不重建**,从而绕开 cascade。
 
-迁移须本地充分验证后再上生产 `users` 表,序列:
+迁移序列(均为对 `users` 的原位操作,不 `DROP TABLE`,对满数据生产表安全):
 
-1. `ADD COLUMN auth_user_id` / `auth_refresh_token` / `auth_refresh_issued_at`(均可空,廉价)。
-2. `DROP INDEX users_student_id_unique`;新建部分唯一索引 `CREATE UNIQUE INDEX ... ON users(student_id) WHERE auth_user_id IS NULL`。
-3. `encrypted_password` 可空化 → 整表重建(确保重建脚本保留 `calendar_token`/`student_id` 等所有现有索引)。
-4. 迁移后用 `PRAGMA index_list(users)` + `PRAGMA table_info(users)` 验证索引与列约束符合预期。
+1. `ALTER TABLE users ADD COLUMN auth_user_id` / `auth_refresh_token` / `auth_refresh_issued_at`(均可空)。
+2. `DROP INDEX users_student_id_unique`;`CREATE UNIQUE INDEX users_auth_user_id_unique ON users(auth_user_id)`(对应 `.unique()`);`CREATE UNIQUE INDEX uq_password_student_id ON users(student_id) WHERE auth_user_id IS NULL`。
+3. `CREATE UNIQUE INDEX uq_personal_user_source ON subscriptions(user_id, source_type) WHERE is_personal = 1`。
+4. 本地用**含数据的种子库**(先插一条 user + 一条 subscription)apply,再 `PRAGMA index_list(users)` / `PRAGMA table_info(users)` / `SELECT count(*) FROM subscriptions` 验证:索引/约束符合预期,且 subscriptions **未被删**(回归 cascade 风险)。
 
 > **迁移红线**:`src/routes/users.ts:137` 的 `.returning()` 不带参数 → SELECT schema 所有列。加列后**必须先** `npx wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote`,否则线上 `no such column`(CLAUDE.md 已记录的 schema drift 症状)。
 
@@ -140,7 +141,7 @@ AUTH 只替换 `login()` 的第 1-2 步;第 3-5 步与所有下游(`CQUAPIClient
 8. 用该 ST 调 **`exchangeTicketForCquToken(ticket)`**(由 `auth.ts` 第 3-5 步重构而来)→ CQU `{ accessToken, refreshToken, expiresAt }`;失败 → `#error=cqu_login`。
 9. **建/更新 AUTH 账号(按 `auth_user_id = sub` 去重,且副作用须幂等——复审 Medium 2)**:
    - **幂等建行**:`INSERT users (...) ON CONFLICT(auth_user_id) DO NOTHING RETURNING id`。CF 下两个并发回调(同 sub)可能都走"新用户"分支,而 `uq_user_source_session` 含可空 `session_id`、SQLite NULL 互异,挡不住重复个人订阅。**只有 `RETURNING` 真正返回新行的那一条**才去建 3 个个人订阅 + 后台同步(复用 `syncNewUserSubscriptions`,`src/routes/users.ts:370`);`DO NOTHING` 命中(已存在)的那条只走下面的更新分支。建议再加部分唯一索引 `UNIQUE(user_id, source_type) WHERE is_personal = 1` 作为兜底,并用 conflict-safe 插入个人订阅。
-   - 新行字段:`authUserId=sub`、`studentId`、`encryptedPassword=null`、CQU tokens、加密的 `authRefreshToken`、`auth_refresh_issued_at=now`、`calendarToken`。
+   - 新行字段:`authUserId=sub`、`studentId`、`encryptedPassword=""`(D7 哨兵,非 null)、CQU tokens、加密的 `authRefreshToken`、`auth_refresh_issued_at=now`、`calendarToken`。
    - **已存在(`DO NOTHING` 命中,`RETURNING` 返回空)** → 必须**先 read-after-conflict**:`SELECT id, calendarToken FROM users WHERE auth_user_id = sub`(对齐现有密码注册 `users.ts:97-103` 先 SELECT 再 update 的模式;`ON CONFLICT DO NOTHING` 不返回行,没有这步就拿不到 `id` 去更新订阅、也拿不到 `calendar_token` 做第 10 步跳转)。拿到后:更新 CQU tokens + `auth_refresh_token` + `auth_refresh_issued_at=now` + `studentId` + `lastLoginAt`;**这里是 D9 改绑生效点**——`studentId` 仅在此更新,若 auth 侧已改绑,执行 `UPDATE subscriptions SET source_id = studentId WHERE user_id = id AND is_personal = 1` 刷新个人订阅 `source_id`(`users.ts:147`,会回传给客户端 `subscriptions.ts:55`),避免内容更新而 metadata 滞留旧值。**此分支绝不建订阅、绝不触发后台同步**(只有上面 insert-returned 路径才建)。第 10 步用这里 SELECT 到的 `calendarToken`。
      - **已知可接受行为(复审 Round4 Low)**:此处只刷新 `source_id` 元数据、不触发 sync,故缓存的 `icsContent`/`coursesJson`(公开 ICS/导出走存储缓存,`subscriptions.ts:361/467`)在下一次手动刷新或每日 sync 前仍反映旧 `studentId`。改绑低频,陈旧到下次 sync 可接受,不阻塞。
 10. 302 跳 `${origin}/auth/callback#token=<calendar_token>`。
@@ -299,7 +300,7 @@ OAuth state/verifier 握手 = 「写完几秒内必须精确读回一次」,恰�
 **仍需实测/留意(实现期)**
 
 1. **CASTGC-less ticket 验证(最高优先,唯一真未知)**:第 3 步在无 `CASTGC` cookie 下能否取得 `SESSION`(理论上 ST 验证不依赖 CASTGC,需真实 ticket 跑通确认)。
-2. **encrypted_password 可空化整表重建**:见 §3.2 序列,本地充分验证 + `PRAGMA` 校验后再上生产 `users` 表(D7)。
+2. **迁移须用含数据的种子库验证**:哨兵方案(D7)已绕开整表重建,迁移为纯 ADD COLUMN + 换索引、对满数据安全;但本地验证仍须先插 user+subscription 再 apply,断言 subscriptions 未被删(锁死 cascade 回归),见 §3.2 step4。
 
 **外部前置(用户在 auth 侧完成)**
 
