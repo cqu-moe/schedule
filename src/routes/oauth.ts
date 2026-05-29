@@ -50,34 +50,52 @@ app.get("/login", rateLimit("UNAUTH_LIMITER"), async (c) => {
   if (!origin) {
     return errorResponse("BAD_REQUEST", "unsupported host", 400);
   }
+  const safeOrigin = origin;
 
-  const { verifier, challenge } = await generatePkce();
-  const state = generateState();
+  // Mirror /callback's redirectErr: a safe redirect target exists once the origin is
+  // resolved, so any unexpected throw (e.g. a missing/invalid OAUTH_STATE_KEY making
+  // sealTx → encrypt fail) degrades to `#error=internal` instead of a raw JSON 500.
+  const redirectErr = (code: string): Response =>
+    c.redirect(`${safeOrigin}/auth/callback#error=${code}`, 302);
 
-  const sealed = await sealTx(
-    { state, verifier, origin },
-    c.env.OAUTH_STATE_KEY,
-    Date.now() + OAUTH_TX_TTL_MS,
-  );
+  try {
+    const { verifier, challenge } = await generatePkce();
+    const state = generateState();
 
-  // Secure only on https — the browser drops a Secure cookie over http://localhost.
-  const secure = origin.startsWith("https://") ? "; Secure" : "";
-  c.header(
-    "Set-Cookie",
-    `${OAUTH_TX_COOKIE}=${sealed}; HttpOnly${secure}; SameSite=Lax; Path=${OAUTH_COOKIE_PATH}; Max-Age=600`,
-  );
+    const sealed = await sealTx(
+      { state, verifier, origin: safeOrigin },
+      c.env.OAUTH_STATE_KEY,
+      Date.now() + OAUTH_TX_TTL_MS,
+    );
 
-  const params = new URLSearchParams({
-    client_id: c.env.AUTH_OAUTH_CLIENT_ID,
-    redirect_uri: `${origin}/api/v1/auth/oauth/callback`,
-    response_type: "code",
-    scope: OAUTH_SCOPE,
-    state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-  });
+    // Secure only on https — the browser drops a Secure cookie over http://localhost.
+    const secure = safeOrigin.startsWith("https://") ? "; Secure" : "";
+    c.header(
+      "Set-Cookie",
+      `${OAUTH_TX_COOKIE}=${sealed}; HttpOnly${secure}; SameSite=Lax; Path=${OAUTH_COOKIE_PATH}; Max-Age=600`,
+    );
 
-  return c.redirect(`${AUTH_BASE}/api/auth/oauth2/authorize?${params.toString()}`, 302);
+    const params = new URLSearchParams({
+      client_id: c.env.AUTH_OAUTH_CLIENT_ID,
+      redirect_uri: `${safeOrigin}/api/v1/auth/oauth/callback`,
+      response_type: "code",
+      scope: OAUTH_SCOPE,
+      state,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+
+    return c.redirect(`${AUTH_BASE}/api/auth/oauth2/authorize?${params.toString()}`, 302);
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        event: "oauth.login.error",
+        error: e instanceof Error ? e.message : String(e),
+        message: "Unexpected error in OAuth login",
+      }),
+    );
+    return redirectErr("internal");
+  }
 });
 
 // GET /api/v1/auth/oauth/callback — complete Authorization Code + PKCE, mint a CQU

@@ -5,7 +5,7 @@
   "description": "CQU schedule subscription service on Cloudflare Workers",
   "scripts": {
     "setup:secrets": "op inject -i .dev.vars.tpl -o .dev.vars",
-    "deploy:secrets": "op read op://Development/schedule-cloudflare/ENCRYPTION_KEY | wrangler secret put ENCRYPTION_KEY && op read op://Development/schedule-cloudflare/HCAPTCHA_SECRET | wrangler secret put HCAPTCHA_SECRET",
+    "deploy:secrets": "op read op://Development/schedule-cloudflare/ENCRYPTION_KEY | wrangler secret put ENCRYPTION_KEY && op read op://Development/schedule-cloudflare/HCAPTCHA_SECRET | wrangler secret put HCAPTCHA_SECRET && op read op://Development/schedule-cloudflare/AUTH_OAUTH_CLIENT_ID | wrangler secret put AUTH_OAUTH_CLIENT_ID && op read op://Development/schedule-cloudflare/AUTH_OAUTH_CLIENT_SECRET | wrangler secret put AUTH_OAUTH_CLIENT_SECRET && op read op://Development/schedule-cloudflare/OAUTH_STATE_KEY | wrangler secret put OAUTH_STATE_KEY",
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm install && npm run build",

@@ -107,6 +107,21 @@ describe("GET /login", () => {
     expect(body.detail.error.code).toBe("BAD_REQUEST");
   });
 
+  it("redirects #error=internal (not a 500) when OAUTH_STATE_KEY is missing/invalid", async () => {
+    // No OAUTH_STATE_KEY → sealTx → encrypt throws after the origin is resolved.
+    // The /login body must degrade to a #error=internal redirect, never a raw 500.
+    const badEnv = {
+      AUTH_OAUTH_CLIENT_ID: "test-client-id",
+      UNAUTH_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
+    } as any;
+    const res = await login("https://schedule.cqu.moe", badEnv);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(
+      "https://schedule.cqu.moe/auth/callback#error=internal",
+    );
+  });
+
   it("round-trips state/origin through the sealed cookie and matches the Location state", async () => {
     const res = await login("https://schedule.cqu.moe");
 
