@@ -314,6 +314,7 @@ async function rotateAuthRefresh(
       .set({
         authRefreshToken: newAuthRefreshEnc,
         authRefreshIssuedAt: now,
+        loginError: null, // clear any stale error from a prior transient failure
         updatedAt: now,
       })
       .where(eq(users.id, userId));
@@ -371,6 +372,7 @@ async function rotateAuthRefreshBestEffort(
       .set({
         authRefreshToken: newAuthRefreshEnc,
         authRefreshIssuedAt: now,
+        loginError: null, // clear any stale error from a prior transient failure
         updatedAt: now,
       })
       .where(eq(users.id, userId));
@@ -448,6 +450,11 @@ async function handleAuthRemintError(
         .where(eq(users.id, userId));
       const threshold = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
       const tokenChanged = fresh && fresh.authRefreshToken !== user.authRefreshToken;
+      // CQU-freshness is a valid benign signal: a concurrent successful re-mint
+      // always rotates the auth refresh token too, so `tokenChanged` already
+      // covers that case; `cquFreshNow` is a redundant-but-safe secondary signal.
+      // Deferring permanent classification to a later cron (when CQU goes stale
+      // again) is the intended bias against false permanent logout.
       const cquFreshNow = fresh && (!fresh.tokenExpiresAt || fresh.tokenExpiresAt >= threshold);
       if (tokenChanged || cquFreshNow) {
         console.log(JSON.stringify({ event: "queue.token_refresh.remint_benign_race", studentId, message: "Auth refresh token already rotated by another delivery" }));

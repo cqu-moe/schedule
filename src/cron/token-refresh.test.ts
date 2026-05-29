@@ -910,6 +910,30 @@ describe("processTokenRefreshBatch (consumer) — AUTH accounts", () => {
     expect(u.authRefreshIssuedAt).not.toBe(OLD_AUTH);
   });
 
+  it("AUTH: auth-only rotation success clears a stale loginError from a prior transient failure", async () => {
+    globalThis.fetch = createAuthFetchMock();
+    const id = await insertAuthUser(db, {
+      studentId: "20210223",
+      authUserId: "sub-223",
+      tokenExpiresAt: FRESH, // CQU fresh → auth-only rotation path
+      authRefreshIssuedAt: OLD_AUTH,
+      authRefreshPlaintext: "auth-rt-old",
+      cquRefreshPlaintext: "cqu-rt-old",
+    });
+    // Simulate a stale error left by a prior transient failure.
+    await db.update(users).set({ loginError: "prior transient failure" }).where(eq(users.id, id));
+    const msg = mockMessage({ userId: id, studentId: "20210223" });
+
+    await processTokenRefreshBatch(mockBatch([msg]), authEnv());
+
+    expect(msg.ack).toHaveBeenCalled();
+    const u = await readUser(db, id);
+    // rotation succeeded
+    expect(await decrypt(u.authRefreshToken!, TEST_KEY)).toBe("auth-rt-new");
+    // stale error cleared on success
+    expect(u.loginError).toBeNull();
+  });
+
   it("AUTH: auth-only rotation invalid_grant but reread shows already rotated → benign ack", async () => {
     const id = await insertAuthUser(db, {
       studentId: "20210222",
