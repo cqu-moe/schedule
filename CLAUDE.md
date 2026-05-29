@@ -10,7 +10,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - Runtime: Cloudflare Workers (Hono framework)
 - Database: D1 (SQLite) via Drizzle ORM
 - Crypto: Web Crypto API AES-256-GCM (`src/services/crypto.ts`), node:crypto AES-ECB (`src/services/auth.ts`)
-- Auth: 纯 HTTP CAS→OAuth 登录流程 (`src/services/auth.ts`), 无需浏览器
+- Auth: 两条并存登录路径——① 学号密码:纯 HTTP CAS→OAuth (`src/services/auth.ts`),无需浏览器;② auth.cqu.moe 第三方 OAuth 2.1+OIDC (`src/routes/oauth.ts`),类"用 Google 登录"。账号按登录方式分离
 - Frontend: Vue 3 + Tailwind v4 + shadcn-vue (in `frontend/`)
 - Cache: KV namespace `CACHE` 缓存 SessionContext (24h TTL)，减少 CQU API 调用
 - Queues: `schedule-token-refresh` (token 刷新) + `schedule-sync` (课表同步), cron 入队 + consumer 处理
@@ -67,6 +67,17 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - CQU SSO/jwxt 逆向文档: `../cqu-api-endpoint-collection/systems/auth/` 和 `../cqu-api-endpoint-collection/systems/jwxt/`
 - `CQUAPIClient.request<T>()` 是泛型方法，CQU API 响应接口定义在 cqu-api.ts 内部（不导出），只覆盖代码实际访问的字段
 - CQU SSO `captchaId` 始终存在于登录页 HTML 中，不代表需要验证码；须调用 `findCaptchaCount` API 判断
+
+### auth.cqu.moe OAuth 登录 (第三方,与学号密码并存)
+- 路由 `GET /api/v1/auth/oauth/login` + `/callback` (`src/routes/oauth.ts`)。设计/计划见 `docs/plans/2026-05-29-auth-oauth-integration-{design,plan}.md`
+- **接缝**: AUTH 只替换 `login()` 第 1-2 步 (密码→ticket);`exchangeTicketForCquToken(ticket, opts?)` (`src/services/auth.ts`) 复用第 3-5 步,AUTH 账号最终落到与密码账号相同的 CQU bearer token,下游 (CQUAPIClient/sync/explore/ICS) 不变
+- **CASTGC**: `login()` 传入自己的 CASTGC (保住已验证的密码路径);OAuth 路径调 `exchangeTicketForCquToken(ticket)` **不传 cookie**——"CASTGC-less ticket 验证"这一未验证假设只存在于此,仍需真实 ticket 实测 (design §13.1)
+- **state/PKCE**: 装在**加密的 HttpOnly SameSite=Lax cookie** `oauth_tx` (Path=`/api/v1/auth/oauth`),**不用 KV** (KV 最终一致,回调读不到)。`sealTx`/`openTx` (`src/services/oauth-tx.ts`) 用 `OAUTH_STATE_KEY` 加密——**独立于 `ENCRYPTION_KEY`** (密钥分离 + GCM nonce 预算)。SameSite 必须 Lax (回调是跨站顶级 GET 跳转,Strict 会丢 cookie)。state 比对用 `timingSafeEqual`
+- **origin 按请求 host 白名单** (`resolveOrigin` in `src/services/oauth-constants.ts`: schedule.cqu.moe / schedule-beta.cqu.moe / localhost:8787),**不用固定 `PUBLIC_URL`**——beta 与 prod 各自的 cookie/redirect_uri 才不会错位。auth.cqu.moe 客户端须登记这三个 redirect_uri
+- **新 secrets**: `AUTH_OAUTH_CLIENT_ID` / `AUTH_OAUTH_CLIENT_SECRET` / `OAUTH_STATE_KEY` (`openssl rand -base64 32`) → `.dev.vars` + 1Password + `Env`
+- **auth.cqu.moe 客户端** (`src/services/auth-oauth-client.ts`): `exchangeCode`/`refreshAuthToken`/`getUserInfo`/`getCquStatus`/`getServiceTicket`;`AuthOAuthError.kind` 分 user/operator/transient 三桶。`refreshAuthToken` 返回 `refreshToken:""` 表示未轮换→保留原值。`getServiceTicket` 解析 JSON `{ ticket }` (实际只返回 ticket 字段)
+- **回调错误**: 302 跳 `${origin}/auth/callback#error=<code>` (access_denied / oauth_missing_code / oauth_state / oauth_token / cqu_unbound / cqu_ticket / cqu_login / internal);成功用 `#token=<calendar_token>` fragment 交还。整个 handler try/catch 兜底 `#error=internal`,绝不抛裸 500
+- 前端落点 `frontend/src/views/OAuthCallback.vue` (路由 `/auth/callback`,**不设 requiresAuth**):解析 hash → `loginWithToken` 或映射错误文案,先 `history.replaceState` 抹除 fragment 再异步
 
 ### API 设计
 - 错误响应格式: 统一为 `{ detail: { error: { code, message } } }`，使用 `errorResponse(code, message, status)` (from `src/utils/error.ts`)
@@ -130,9 +141,10 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/index.ts` — 入口 (Hono app, CORS, routes, cron, queue handler, 安全头注入)
 - `src/types.ts` — Env 接口定义
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)；还导出 `SourceType` union、`PERSONAL_SOURCE_TYPES`/`EXPLORE_SOURCE_TYPES` 集合；`sourceType` 列用 `.$type<SourceType>()` 让 Drizzle 推断正确类型
-- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
+- `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync;OAuth: oauth-constants, oauth-tx, auth-oauth-client)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
-- `src/routes/` — API 路由 (config, users, subscriptions, explore, admin)
+- `src/routes/` — API 路由 (config, users, subscriptions, explore, admin, oauth)
+- `src/routes/oauth.ts` — auth.cqu.moe OAuth 登录/回调 (`/login` + `/callback`,挂在 `/api/v1/auth/oauth`)
 - `src/routes/config.ts` — 配置路由 (health check, merged config, captcha)
 - `src/routes/config.test.ts` — config 路由测试 (health, merged config, captcha compat)
 - `src/routes/admin.ts` — 管理端点 (Bearer token auth middleware + refresh-all)
@@ -147,5 +159,6 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `scripts/` — 运维脚本 (admin-refresh-all.sh)
 - `docs/plans/` — 设计文档和实现计划
 - OAuth token (accessToken/refreshToken) 使用 AES-256-GCM 加密存储，读写路径:
-  - 写入: `src/routes/users.ts` (注册+恢复), `src/cron/token-refresh.ts` (刷新+重登录)
+  - 写入: `src/routes/users.ts` (注册+恢复), `src/routes/oauth.ts` (AUTH 账号回调建/更新), `src/cron/token-refresh.ts` (刷新+重登录/auth 重签)
   - 读取: `src/routes/subscriptions.ts`, `src/routes/explore.ts`, `src/cron/schedule-sync.ts`, `src/cron/token-refresh.ts`
+  - AUTH 账号额外存 `auth_refresh_token` (auth.cqu.moe 的 30 天 refresh token,亦 AES-256-GCM 加密);`encrypted_password` 对 AUTH 账号是哨兵 `""` (D7,保持 NOT NULL 以绕开会级联删 subscriptions 的整表重建)
