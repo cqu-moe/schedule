@@ -7,6 +7,17 @@
           <CardTitle class="text-2xl font-heading">登录</CardTitle>
         </CardHeader>
         <CardContent>
+          <Button type="button" class="w-full cursor-pointer mb-4" @click="handleOAuthLogin">
+            使用 auth.cqu.moe 登录
+          </Button>
+          <div class="relative my-4">
+            <div class="absolute inset-0 flex items-center">
+              <span class="w-full border-t border-border" />
+            </div>
+            <div class="relative flex justify-center text-xs uppercase">
+              <span class="bg-card px-2 text-muted-foreground">或</span>
+            </div>
+          </div>
           <form @submit.prevent="handleLogin" class="space-y-4">
             <div class="space-y-2">
               <Label for="token">Token</Label>
@@ -74,5 +85,11 @@ async function handleLogin() {
   } else {
     errorMessage.value = result.error ?? '登录失败'
   }
+}
+
+function handleOAuthLogin() {
+  // Full-page navigation to the Worker route, which 302-redirects to auth.cqu.moe.
+  // Must NOT use router.push — the request has to hit the Worker, not the SPA.
+  window.location.href = '/api/v1/auth/oauth/login'
 }
 </script>
