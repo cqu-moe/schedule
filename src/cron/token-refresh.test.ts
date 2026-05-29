@@ -52,7 +52,10 @@ describe("enqueueTokenRefresh (producer)", () => {
       `CREATE TABLE IF NOT EXISTS users (
         id text PRIMARY KEY NOT NULL,
         student_id text NOT NULL,
-        encrypted_password text NOT NULL,
+        encrypted_password text,
+        auth_user_id text,
+        auth_refresh_token text,
+        auth_refresh_issued_at text,
         access_token text,
         refresh_token text,
         token_expires_at text,
@@ -67,7 +70,10 @@ describe("enqueueTokenRefresh (producer)", () => {
       )`,
     ).run();
     await env.DB.prepare(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_student_id_unique ON users (student_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_auth_user_id_unique ON users (auth_user_id)`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_password_student_id ON users (student_id) WHERE auth_user_id IS NULL`,
     ).run();
     await env.DB.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,
@@ -295,7 +301,10 @@ describe("processTokenRefreshBatch (consumer)", () => {
       `CREATE TABLE IF NOT EXISTS users (
         id text PRIMARY KEY NOT NULL,
         student_id text NOT NULL,
-        encrypted_password text NOT NULL,
+        encrypted_password text,
+        auth_user_id text,
+        auth_refresh_token text,
+        auth_refresh_issued_at text,
         access_token text,
         refresh_token text,
         token_expires_at text,
@@ -310,7 +319,10 @@ describe("processTokenRefreshBatch (consumer)", () => {
       )`,
     ).run();
     await env.DB.prepare(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_student_id_unique ON users (student_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS users_auth_user_id_unique ON users (auth_user_id)`,
+    ).run();
+    await env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_password_student_id ON users (student_id) WHERE auth_user_id IS NULL`,
     ).run();
     await env.DB.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,

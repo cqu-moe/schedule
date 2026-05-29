@@ -214,6 +214,7 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   if (
     !user ||
+    !user.encryptedPassword ||
     !(await verifyPassword(password, user.encryptedPassword, c.env.ENCRYPTION_KEY))
   ) {
     return errorResponse("PASSWORD_MISMATCH", "Password does not match", 422);

@@ -102,7 +102,10 @@ export async function processTokenRefreshBatch(
           }
         }
 
-        // Fallback: re-login
+        // Fallback: re-login (only possible for password accounts)
+        if (!user.encryptedPassword) {
+          throw new AuthError("INVALID_CREDENTIALS", "No stored password for re-login");
+        }
         const password = await decrypt(user.encryptedPassword, env.ENCRYPTION_KEY);
         const result = await login(user.studentId, password);
         await db

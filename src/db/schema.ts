@@ -3,42 +3,58 @@ import { sql } from "drizzle-orm";
 
 // ── Users table ──────────────────────────────────────────────────────────────
 
-export const users = sqliteTable("users", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
 
-  studentId: text("student_id").unique().notNull(),
+    studentId: text("student_id").notNull(),
 
-  /** AES-256-GCM encrypted password stored as base64 text */
-  encryptedPassword: text("encrypted_password").notNull(),
+    /** AES-256-GCM encrypted password stored as base64 text; null for auth.cqu.moe accounts */
+    encryptedPassword: text("encrypted_password"),
 
-  // OAuth Tokens
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  /** ISO 8601 datetime string */
-  tokenExpiresAt: text("token_expires_at"),
+    /** auth.cqu.moe `sub` (opaque base62 string); null for password accounts */
+    authUserId: text("auth_user_id").unique(),
+    /** AES-256-GCM encrypted auth refresh token; null for password accounts */
+    authRefreshToken: text("auth_refresh_token"),
+    /** ISO 8601 datetime string */
+    authRefreshIssuedAt: text("auth_refresh_issued_at"),
 
-  /** 64-char random token for calendar subscription URL */
-  calendarToken: text("calendar_token").unique().notNull(),
-  pendingCalendarToken: text("pending_calendar_token").unique(),
-  pendingTokenExpiresAt: text("pending_token_expires_at"),
+    // OAuth Tokens
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    /** ISO 8601 datetime string */
+    tokenExpiresAt: text("token_expires_at"),
 
-  // Status tracking
-  /** ISO 8601 datetime string */
-  lastLoginAt: text("last_login_at"),
-  /** ISO 8601 datetime string */
-  lastRefreshAt: text("last_refresh_at"),
-  loginError: text("login_error"),
+    /** 64-char random token for calendar subscription URL */
+    calendarToken: text("calendar_token").unique().notNull(),
+    pendingCalendarToken: text("pending_calendar_token").unique(),
+    pendingTokenExpiresAt: text("pending_token_expires_at"),
 
-  // Timestamps (ISO 8601 strings)
-  createdAt: text("created_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-  updatedAt: text("updated_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-});
+    // Status tracking
+    /** ISO 8601 datetime string */
+    lastLoginAt: text("last_login_at"),
+    /** ISO 8601 datetime string */
+    lastRefreshAt: text("last_refresh_at"),
+    loginError: text("login_error"),
+
+    // Timestamps (ISO 8601 strings)
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [
+    // student_id is unique only among password accounts; auth accounts may share a student_id
+    uniqueIndex("uq_password_student_id")
+      .on(table.studentId)
+      .where(sql`auth_user_id IS NULL`),
+  ],
+);
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
 
@@ -98,6 +114,11 @@ export const subscriptions = sqliteTable(
       table.sessionId,
     ),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
+    // Guard against duplicate personal subscriptions under concurrent OAuth callbacks
+    // (is_personal stored as 0/1 integer in SQLite)
+    uniqueIndex("uq_personal_user_source")
+      .on(table.userId, table.sourceType)
+      .where(sql`is_personal = 1`),
   ],
 );
 
