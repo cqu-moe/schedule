@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { users, subscriptions, type SourceType } from "../db/schema";
 import type { Env } from "../types";
 import { encrypt, verifyPassword } from "../services/crypto";
@@ -93,11 +93,12 @@ app.post("/", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const encryptedRefreshToken = await encrypt(tokenResult.refreshToken, c.env.ENCRYPTION_KEY);
   const now = new Date().toISOString();
 
-  // Check if user already exists
+  // Check if a PASSWORD account already exists (scoped to auth_user_id IS NULL so we
+  // never match/hijack an auth.cqu.moe account that happens to share this student_id).
   const [existing] = await db
     .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
-    .where(eq(users.studentId, student_id))
+    .where(and(eq(users.studentId, student_id), isNull(users.authUserId)))
     .limit(1);
 
   if (existing) {
@@ -203,13 +204,15 @@ app.post("/recover", rateLimit("UNAUTH_LIMITER"), async (c) => {
 
   const db = drizzle(c.env.DB);
 
+  // Scope to PASSWORD accounts only (auth_user_id IS NULL); an auth.cqu.moe row
+  // sharing this student_id has encrypted_password = "" and must never be matched.
   const [user] = await db
     .select({
       encryptedPassword: users.encryptedPassword,
       calendarToken: users.calendarToken,
     })
     .from(users)
-    .where(eq(users.studentId, student_id))
+    .where(and(eq(users.studentId, student_id), isNull(users.authUserId)))
     .limit(1);
 
   if (
@@ -242,13 +245,15 @@ app.post("/recover/verify", rateLimit("UNAUTH_LIMITER"), async (c) => {
     throw e;
   }
 
+  // Scope to PASSWORD accounts only (auth_user_id IS NULL); recovery must resolve to
+  // the password row, not an auth.cqu.moe row that happens to share this student_id.
   const [user] = await db
     .select({ id: users.id, calendarToken: users.calendarToken })
     .from(users)
-    .where(eq(users.studentId, student_id))
+    .where(and(eq(users.studentId, student_id), isNull(users.authUserId)))
     .limit(1);
 
-  // User not registered — return same error as SSO failure
+  // No PASSWORD account registered — return same error as SSO failure
   if (!user) {
     return errorResponse("INVALID_CREDENTIALS", "Invalid credentials", 401);
   }
