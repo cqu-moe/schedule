@@ -269,7 +269,7 @@ import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { useSession } from '@/stores/session'
 import api from '@/api'
 import type { SearchResult, SourceType, DepartmentNode } from '@/types/api'
-import { parseApiError } from '@/utils/error'
+import { parseApiError, apiErrorCode } from '@/utils/error'
 import { AUTH_BASE_URL } from '@/config/auth'
 import Navbar from '@/components/Navbar.vue'
 import { Card, CardContent } from '@/components/ui/card'
@@ -365,6 +365,7 @@ const subscribeFeedback = useButtonFeedback()
 const errorMessage = ref('')
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let searchSeq = 0
 
 const searchPlaceholder = computed(() => {
   const map: Record<ExternalSourceType, string> = {
@@ -436,6 +437,7 @@ async function handleDepartmentChange(deptId: string) {
 }
 
 async function doSearch() {
+  const seq = ++searchSeq
   searching.value = true
   searched.value = false
   clearError()
@@ -454,10 +456,11 @@ async function doSearch() {
           : undefined,
       grade: gradeParam,
     })
+    if (seq !== searchSeq) return // superseded by a newer search
     searchResults.value = data.results
   } catch (err: unknown) {
-    // 409 CQU_SESSION_INACTIVE: user's CQU account not bound
-    const code = (err as any)?.response?.data?.detail?.error?.code
+    if (seq !== searchSeq) return // superseded — do not clobber live UI state
+    const code = apiErrorCode(err)
     if (code === 'CQU_SESSION_INACTIVE') {
       errorMessage.value = `您的重庆大学账号尚未绑定或已失效，请前往 ${AUTH_BASE_URL} 重新绑定后再使用外部订阅功能。`
     } else if (code === 'FEATURE_NOT_ENABLED') {
@@ -467,6 +470,7 @@ async function doSearch() {
     }
     searchResults.value = []
   } finally {
+    if (seq !== searchSeq) return // superseded — do not flip UI state for a live search
     searching.value = false
     searched.value = true
   }

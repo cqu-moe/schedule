@@ -30,7 +30,7 @@
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncFeedback.stateOf() === 'loading'"
+              :disabled="syncFeedback.stateOf() === 'loading' || personalSubs.length === 0"
               :class="{
                 'bg-green-600 hover:bg-green-600 text-white border-transparent':
                   syncFeedback.stateOf() === 'success',
@@ -98,15 +98,18 @@
               <Badge v-if="sub.session_name" variant="outline" class="text-xs">
                 {{ sub.session_name }}
               </Badge>
-              <span v-if="sub.last_synced_at" class="text-xs text-muted-foreground">
-                同步于 {{ formatDate(sub.last_synced_at) }}
-              </span>
               <span
-                v-else
+                v-if="sub.id in pendingRefresh"
                 class="text-xs text-muted-foreground inline-flex items-center gap-1"
               >
-                <Loader2 v-if="isPolling" class="h-3 w-3 animate-spin" />
-                {{ isPolling ? '同步中...' : '尚未同步' }}
+                <Loader2 class="h-3 w-3 animate-spin" />
+                同步中...
+              </span>
+              <span v-else-if="sub.last_synced_at" class="text-xs text-muted-foreground">
+                同步于 {{ formatDate(sub.last_synced_at) }}
+              </span>
+              <span v-else class="text-xs text-muted-foreground">
+                尚未同步
               </span>
             </div>
           </CardHeader>
@@ -323,7 +326,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, reactive } from 'vue'
 import {
   RefreshCw,
   Loader2,
@@ -378,18 +381,25 @@ const configStore = useConfigStore()
 
 const loading = ref(true)
 const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
-const isPolling = ref(false)
 const qrModal = ref<{ open: boolean; url: string }>({ open: false, url: '' })
 
+/**
+ * Maps sub.id → the last_synced_at value captured AT THE MOMENT of manual
+ * refresh (may be null). A sub is "pending refresh" while it exists in this
+ * map. Cleared when a poll sees a CHANGED last_synced_at, or on POLL_TIMEOUT.
+ */
+const pendingRefresh = reactive<Record<string, string | null>>({})
+
+const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollStartTime = 0
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 
 const subLimit = computed(() => session.quota('sub_limit'))
 
-const hasPendingSubs = computed(() =>
-  subStore.subscriptions.some(s => !s.last_synced_at),
-)
+const personalSubs = computed(() => subStore.subscriptions.filter(s => s.is_personal))
 
 // ── Button feedback ───────────────────────────────────────────────────────────
 
@@ -430,31 +440,69 @@ function formatDate(isoString: string): string {
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 
+const POLL_INTERVAL = 2000
+const POLL_TIMEOUT = 30000
+
 function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  isPolling.value = false
+}
+
+/**
+ * Clear all pending-refresh tracking (timeout guard so no sub is stuck
+ * "同步中" forever).
+ */
+function clearPendingRefresh() {
+  for (const id of Object.keys(pendingRefresh)) {
+    delete pendingRefresh[id]
+  }
 }
 
 function startSyncPolling() {
-  if (pollTimer) return
-  isPolling.value = true
-  const startTime = Date.now()
-  const POLL_INTERVAL = 2000
-  const POLL_TIMEOUT = 30000
+  if (pollTimer) return // already running
+  pollStartTime = Date.now()
 
   pollTimer = setInterval(async () => {
-    if (Date.now() - startTime > POLL_TIMEOUT) {
+    if (Date.now() - pollStartTime > POLL_TIMEOUT) {
       stopPolling()
+      clearPendingRefresh()
       return
     }
+
     await subStore.load(true).catch(() => {})
-    if (!hasPendingSubs.value) {
+
+    // For each tracked sub, check whether last_synced_at has changed.
+    for (const [id, oldSyncedAt] of Object.entries(pendingRefresh)) {
+      const sub = subStore.subscriptions.find(s => s.id === id)
+      if (!sub) {
+        // Sub no longer exists — remove from tracking
+        delete pendingRefresh[id]
+        continue
+      }
+      if (sub.last_synced_at !== oldSyncedAt) {
+        // Timestamp changed (or first sync completed) — refresh done
+        delete pendingRefresh[id]
+      }
+    }
+
+    if (Object.keys(pendingRefresh).length === 0) {
       stopPolling()
     }
   }, POLL_INTERVAL)
+}
+
+/**
+ * Track a set of sub ids as pending-refresh. Captures their current
+ * last_synced_at values and starts the poll if not already running.
+ */
+function trackRefresh(ids: string[]) {
+  for (const id of ids) {
+    const sub = subStore.subscriptions.find(s => s.id === id)
+    pendingRefresh[id] = sub?.last_synced_at ?? null
+  }
+  startSyncPolling()
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -490,8 +538,7 @@ async function handleRefreshSub(sid: string) {
     await refreshFeedback.run(async () => {
       await api.refreshSubscription(sid)
       toast.success('已加入刷新队列')
-      // Brief poll to pick up new last_synced_at
-      startSyncPolling()
+      trackRefresh([sid])
     }, sid)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
@@ -510,11 +557,11 @@ async function handleDeleteSub(sid: string) {
 }
 
 async function handleSyncAll() {
+  if (personalSubs.value.length === 0) return
   try {
     await syncFeedback.run(async () => {
-      const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
       const results = await Promise.allSettled(
-        personalSubs.map(sub => api.refreshSubscription(sub.id)),
+        personalSubs.value.map(sub => api.refreshSubscription(sub.id)),
       )
       const failures = results.filter(r => r.status === 'rejected')
       if (failures.length > 0) {
@@ -522,6 +569,7 @@ async function handleSyncAll() {
           ? (failures[0] as PromiseRejectedResult).reason
           : new Error(`${failures.length} 个订阅同步失败`)
       }
+      trackRefresh(personalSubs.value.map(s => s.id))
       await subStore.load(true).catch(() => {})
     })
   } catch (error) {
@@ -534,9 +582,6 @@ async function handleSyncAll() {
 onMounted(async () => {
   try {
     await subStore.load()
-    if (hasPendingSubs.value) {
-      startSyncPolling()
-    }
   } catch {
     toast.error('加载订阅列表失败')
   } finally {

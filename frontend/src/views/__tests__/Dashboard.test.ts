@@ -125,39 +125,8 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步于')
   })
 
-  it('shows "同步中..." for unsynced subscriptions when polling is active', async () => {
-    vi.useFakeTimers()
-    mockApi.getSubscriptions.mockResolvedValue(
-      mockSubscriptionList([mockSubscription({ last_synced_at: null })]),
-    )
-    const { wrapper } = await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          session: DEFAULT_SESSION,
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-    expect(wrapper.text()).toContain('同步中...')
-  })
-
-  it('shows "尚未同步" after polling timeout', async () => {
-    vi.useFakeTimers()
-    mockApi.getSubscriptions.mockResolvedValue(
-      mockSubscriptionList([mockSubscription({ last_synced_at: null })]),
-    )
-    const { wrapper } = await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          session: DEFAULT_SESSION,
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-    await vi.advanceTimersByTimeAsync(32000)
-    await flushPromises()
+  it('shows "尚未同步" for unsynced subscriptions NOT in pending refresh', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ last_synced_at: null })])
     expect(wrapper.text()).toContain('尚未同步')
   })
 
@@ -239,6 +208,104 @@ describe('Dashboard view (v2)', () => {
     expect(mockToast.success).toHaveBeenCalledWith('已加入刷新队列')
   })
 
+  it('shows "同步中..." immediately after manual refresh (pending refresh tracker)', async () => {
+    vi.useFakeTimers()
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // Should show 同步中... immediately (pendingRefresh tracker)
+    expect(wrapper.text()).toContain('同步中...')
+  })
+
+  it('clears "同步中..." when poll detects changed last_synced_at', async () => {
+    vi.useFakeTimers()
+    const oldSyncedAt = '2026-03-01T10:00:00Z'
+    const newSyncedAt = '2026-03-01T11:00:00Z'
+    const sub = mockSubscription({ last_synced_at: oldSyncedAt })
+
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    // Trigger manual refresh
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // Verify 同步中... is shown before the poll
+    expect(wrapper.text()).toContain('同步中...')
+
+    // Now the poll returns an updated last_synced_at
+    mockApi.getSubscriptions.mockResolvedValue(
+      mockSubscriptionList([{ ...sub, last_synced_at: newSyncedAt }]),
+    )
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    // 同步中... should be cleared, now shows 同步于
+    expect(wrapper.text()).not.toContain('同步中...')
+    expect(wrapper.text()).toContain('同步于')
+  })
+
+  it('clears "同步中..." state after POLL_TIMEOUT (no sub stuck forever)', async () => {
+    vi.useFakeTimers()
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    // Poll always returns same last_synced_at (sync never completes)
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    // Trigger refresh to enter pending state
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('同步中...')
+
+    // Advance past POLL_TIMEOUT (30s)
+    await vi.advanceTimersByTimeAsync(32000)
+    await flushPromises()
+
+    // After timeout, pendingRefresh cleared — shows 同步于 (the original synced date)
+    expect(wrapper.text()).not.toContain('同步中...')
+  })
+
   it('shows toast error when refresh subscription fails', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
     mockApi.refreshSubscription.mockRejectedValueOnce({
@@ -282,6 +349,42 @@ describe('Dashboard view (v2)', () => {
     await syncAllBtn!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('已同步')
+  })
+
+  it('"同步个人课表" button is disabled when there are no personal subscriptions (M1)', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-only',
+      is_personal: false,
+      source_type: 'instructor',
+      source_name: '李四',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('"同步个人课表" button is disabled when subscriptions list is empty (M1)', async () => {
+    const { wrapper } = await mountDashboard([])
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('handleSyncAll early-returns without toast when personalSubs is empty (M1)', async () => {
+    const exploreSub = mockSubscription({ id: 'e-1', is_personal: false, source_type: 'instructor', source_name: '李四' })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    // Directly invoke handleSyncAll via the vm (bypassing disabled button guard)
+    const vm = wrapper.vm as unknown as { handleSyncAll?: () => Promise<void> }
+    // The function is not exposed on the public vm in script setup, but we can test
+    // by clicking the disabled button — it should not call refreshSubscription
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+    expect(mockToast.success).not.toHaveBeenCalled()
   })
 
   // ── Delete ────────────────────────────────────────────────────────────────────
@@ -360,12 +463,12 @@ describe('Dashboard view (v2)', () => {
 
   // ── Polling ───────────────────────────────────────────────────────────────────
 
-  it('starts polling for unsynced subscriptions and calls getSubscriptions again', async () => {
+  it('starts polling after manual refresh and calls getSubscriptions again', async () => {
     vi.useFakeTimers()
-    mockApi.getSubscriptions.mockResolvedValue(
-      mockSubscriptionList([mockSubscription({ last_synced_at: null })]),
-    )
-    await mountWithContext(Dashboard, {
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+
+    const { wrapper } = await mountWithContext(Dashboard, {
       pinia: {
         initialState: {
           session: DEFAULT_SESSION,
@@ -373,6 +476,12 @@ describe('Dashboard view (v2)', () => {
         },
       },
     })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
     await flushPromises()
 
     const callsBefore = mockApi.getSubscriptions.mock.calls.length
