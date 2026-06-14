@@ -32,7 +32,9 @@ CREATE TABLE `__new_subscriptions` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-INSERT INTO `__new_subscriptions`("id", "user_id", "source_type", "source_id", "source_name", "session_id", "session_name", "semester_start", "is_personal", "ics_content", "courses_json", "exams_json", "last_synced_at", "created_at", "updated_at") SELECT "id", "user_id", "source_type", "source_id", "source_name", "session_id", "session_name", "semester_start", "is_personal", "ics_content", "courses_json", "exams_json", "last_synced_at", "created_at", "updated_at" FROM `subscriptions`;--> statement-breakpoint
+-- v2 整库重建（设计 §4/§10）：旧 subscriptions 数据刻意不迁移。旧行的 user_id 是 v1 用户 id（非 auth user.id），
+-- 且无对应 calendar_links，迁移后会成为不可达孤儿行；故移除 Drizzle 默认生成的 INSERT...SELECT 数据拷贝，新表从空开始。
+--> statement-breakpoint
 DROP TABLE `subscriptions`;--> statement-breakpoint
 ALTER TABLE `__new_subscriptions` RENAME TO `subscriptions`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint

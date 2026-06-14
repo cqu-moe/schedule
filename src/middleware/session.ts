@@ -23,9 +23,9 @@ const CAPS_TTL = 3600;
  * inject `user`/`caps` into the request context, and best-effort cache the
  * calendar caps to KV.
  *
- * The KV write populates `caps:<userId>` for the schedule-sync cron
- * (Task G2, not yet implemented) to read offline for each user's
- * sync_interval; the getCaps RPC is an optional fallback path.
+ * The KV write populates `caps:<userId>` so the schedule-sync cron can read
+ * each user's `sync_interval` offline (no session cookie at cron time); the
+ * getCaps RPC is an optional fallback path.
  *
  * Returns 401 UNAUTHORIZED when the session is missing or invalid.
  */
