@@ -10,6 +10,7 @@ import { errorResponse } from "./utils/error";
 import { createMockAuth } from "./services/auth-mock";
 import { sessionMiddleware } from "./middleware/session";
 import subscriptionsV2 from "./routes/v2/subscriptions";
+import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -54,6 +55,10 @@ app.route("/api/v1/admin", adminRoutes);
 app.use("/api/v2/subscriptions/*", sessionMiddleware);
 app.use("/api/v2/subscriptions", sessionMiddleware);
 app.route("/api/v2/subscriptions", subscriptionsV2);
+
+app.use("/api/v2/external/*", sessionMiddleware);
+app.use("/api/v2/external", sessionMiddleware);
+app.route("/api/v2/external", externalV2);
 
 // v2 public calendar endpoints: addressed by link token, no login required, so
 // NOT guarded by sessionMiddleware. Access control is the per-link format gate.
