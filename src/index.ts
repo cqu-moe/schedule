@@ -93,7 +93,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     switch (controller.cron) {
-      case "0 17 * * *":
+      case "0 * * * *":
         await enqueueScheduleSync(env);
         break;
       default:
