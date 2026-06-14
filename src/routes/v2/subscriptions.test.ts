@@ -321,9 +321,29 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
-  it("rejects missing sourceId → 400 INVALID_INPUT", async () => {
+  it("creates a personal subscription with NO sourceId → 201, source_id pinned to user.id", async () => {
     const app = buildApp("userA");
-    const res = await app.request("/", jsonBody({ sourceType: "personal_all", sourceName: "x" }));
+    // Client omits sourceId entirely; personal types pin it to the auth user.id.
+    const res = await app.request(
+      "/",
+      jsonBody({ sourceType: "personal_all", sourceName: "我的课表" }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; source_id: string; is_personal: boolean };
+    expect(body.source_id).toBe("userA");
+    expect(body.is_personal).toBe(true);
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, body.id));
+    expect(row.sourceId).toBe("userA");
+    expect(row.isPersonal).toBe(true);
+  });
+
+  it("rejects missing sourceId for external source types → 400 INVALID_INPUT", async () => {
+    const app = buildApp("userA");
+    const res = await app.request("/", jsonBody({ sourceType: "instructor", sourceName: "x" }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("INVALID_INPUT");

@@ -141,14 +141,17 @@ app.post("/", async (c) => {
   if (typeof sourceType !== "string" || !SOURCE_TYPE_SET.has(sourceType)) {
     return errorResponse("INVALID_INPUT", "sourceType 无效", 400);
   }
-  if (typeof sourceId !== "string" || sourceId.length === 0) {
+  // sourceType is now known-valid; personal types ignore (and pin) sourceId, so
+  // it is OPTIONAL for them. External types still require a non-empty sourceId.
+  const isPersonalType = PERSONAL_SOURCE_TYPES.has(sourceType as SourceType);
+  if (!isPersonalType && (typeof sourceId !== "string" || sourceId.length === 0)) {
     return errorResponse("INVALID_INPUT", "sourceId 必填", 400);
+  }
+  if (typeof sourceId === "string" && sourceId.length > 100) {
+    return errorResponse("INVALID_INPUT", "sourceId 长度不能超过 100", 400);
   }
   if (typeof sourceName !== "string" || sourceName.length === 0) {
     return errorResponse("INVALID_INPUT", "sourceName 必填", 400);
-  }
-  if (sourceId.length > 100) {
-    return errorResponse("INVALID_INPUT", "sourceId 长度不能超过 100", 400);
   }
   if (sourceName.length > 200) {
     return errorResponse("INVALID_INPUT", "sourceName 长度不能超过 200", 400);
@@ -190,9 +193,11 @@ app.post("/", async (c) => {
   //  a stable per-user identifier (uniqueness/ICS UID namespace) that cannot be
   //  abused to reference another student. External types keep the client
   //  sourceId — those are public timetables and the target id is meant to vary.
+  //  (For external types the validation above guarantees a non-empty string;
+  //  personal types pin to user.id so the client sourceId is never read.)
   const effectiveSourceId = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped)
     ? user.id
-    : sourceId;
+    : (sourceId as string);
 
   // ── Entitlement gating ────────────────────────────────────────────────────
   try {
