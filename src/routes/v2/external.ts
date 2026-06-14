@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { SessionEnv } from "../../middleware/session";
 import { rateLimit } from "../../middleware/rate-limit";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
@@ -19,11 +19,12 @@ function entitlementError(e: unknown): Response {
   throw e;
 }
 
-// ── GET /search — search external (public) timetable sources ──────────────────
-//  Gated by the `external` calendar cap and the EXTERNAL_LIMITER rate limit. The
-//  CQU教务 bearer is minted per-user via getCquBearer (拓扑①); a null bearer means
-//  the user's CQU session is not bound/ready → 409 (re-login/bind required).
-app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
+// ── Shared bearer preamble for external (CQU教务) routes ────────────────────────
+//  Enforces the `external` calendar cap and mints the per-user CQU bearer
+//  (拓扑①). Returns either a ready CQUAPIClient, or a Response to short-circuit
+//  the route (403 if the cap is missing, 409 if the CQU session is not ready).
+//  Rate limiting stays as route-level middleware and is NOT handled here.
+async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient | Response> {
   const user = c.get("user");
   const caps = c.get("caps").calendar;
 
@@ -33,6 +34,26 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
     return entitlementError(e);
   }
 
+  const bearer = await getCquBearer(c.env, user.id);
+  if (!bearer) {
+    console.log(
+      JSON.stringify({
+        event: "external.v2.skip_no_bearer",
+        userId: user.id,
+        message: "No CQU bearer; user must (re)bind CQU",
+      }),
+    );
+    return errorResponse("CQU_SESSION_INACTIVE", "CQU 会话未就绪，请重新登录或绑定 CQU", 409);
+  }
+
+  return new CQUAPIClient(bearer);
+}
+
+// ── GET /search — search external (public) timetable sources ──────────────────
+//  Gated by the `external` calendar cap and the EXTERNAL_LIMITER rate limit. The
+//  CQU教务 bearer is minted per-user via getCquBearer (拓扑①); a null bearer means
+//  the user's CQU session is not bound/ready → 409 (re-login/bind required).
+app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
   const sessionId = c.req.query("session_id") ?? "";
@@ -45,20 +66,12 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
   if (keyword.length > KEYWORD_MAX_LEN) {
     return errorResponse("BAD_REQUEST", `keyword 长度不能超过 ${KEYWORD_MAX_LEN}`, 400);
   }
-
-  const bearer = await getCquBearer(c.env, user.id);
-  if (!bearer) {
-    console.log(
-      JSON.stringify({
-        event: "external.v2.search.skip_no_bearer",
-        userId: user.id,
-        message: "No CQU bearer available; session inactive",
-      }),
-    );
-    return errorResponse("CQU_SESSION_INACTIVE", "CQU 会话未就绪，请重新登录或绑定 CQU", 409);
+  if (sourceType === "admin_class" && !departmentId.trim()) {
+    return errorResponse("BAD_REQUEST", "department_id 必填", 400);
   }
 
-  const api = new CQUAPIClient(bearer);
+  const api = await externalApiOrError(c);
+  if (api instanceof Response) return api;
 
   try {
     let results: SearchResult[];
@@ -95,28 +108,8 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
 
 // ── GET /departments — department tree for admin_class search drill-down ──────
 app.get("/departments", rateLimit("EXTERNAL_LIMITER"), async (c) => {
-  const user = c.get("user");
-  const caps = c.get("caps").calendar;
-
-  try {
-    assertFlag(caps, "external", "外部订阅");
-  } catch (e) {
-    return entitlementError(e);
-  }
-
-  const bearer = await getCquBearer(c.env, user.id);
-  if (!bearer) {
-    console.log(
-      JSON.stringify({
-        event: "external.v2.departments.skip_no_bearer",
-        userId: user.id,
-        message: "No CQU bearer available; session inactive",
-      }),
-    );
-    return errorResponse("CQU_SESSION_INACTIVE", "CQU 会话未就绪，请重新登录或绑定 CQU", 409);
-  }
-
-  const api = new CQUAPIClient(bearer);
+  const api = await externalApiOrError(c);
+  if (api instanceof Response) return api;
 
   try {
     const departments = await api.getDepartments();

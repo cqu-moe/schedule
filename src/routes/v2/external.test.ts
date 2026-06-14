@@ -218,6 +218,18 @@ describe("GET /api/v2/external/search", () => {
     expect(searchAdminClass).toHaveBeenCalledWith("D-7", "2021", "软件");
   });
 
+  it("admin_class search without department_id → 400 BAD_REQUEST (no searchAdminClass call)", async () => {
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const searchAdminClass = vi.spyOn(CQUAPIClient.prototype, "searchAdminClass");
+
+    const app = buildApp("userA");
+    const res = await app.request("/search?source_type=admin_class&keyword=软件&grade=2021");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("BAD_REQUEST");
+    expect(searchAdminClass).not.toHaveBeenCalled();
+  });
+
   it("unknown source_type → 400 BAD_REQUEST", async () => {
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
     const app = buildApp("userA");
