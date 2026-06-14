@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
@@ -725,5 +725,95 @@ describe("POST /api/v2/subscriptions/:sid/links/:lid/rotations", () => {
       method: "POST",
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// ── G3: POST /:sid/syncs (manual refresh + per-day quota) ─────────────────────
+
+describe("POST /api/v2/subscriptions/:sid/syncs", () => {
+  /** Build an app whose env injects a mock SCHEDULE_SYNC_QUEUE.send spy. */
+  function buildSyncApp(userId: string, caps: CalendarCaps = FULL_CAPS) {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const app = new Hono<SessionEnv>();
+    app.use("*", sessionMiddleware);
+    app.route("/", subscriptionsV2);
+    const testEnv = {
+      ...env,
+      AUTH: fakeAuth(userId, caps),
+      SCHEDULE_SYNC_QUEUE: { send },
+    };
+    return {
+      send,
+      request(path: string, init?: RequestInit) {
+        return app.request(path, { method: "POST", ...init }, testEnv);
+      },
+    };
+  }
+
+  /** China-local date key matching the route's counter key. */
+  function dayKey(): string {
+    return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  beforeEach(async () => {
+    await env.CACHE.delete(`refresh:userA:${dayKey()}`);
+  });
+
+  it("enqueues a sync and returns 202", async () => {
+    const sid = await insertSub("userA");
+    const app = buildSyncApp("userA");
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    expect(app.send).toHaveBeenCalledWith({ subscriptionId: sid, userId: "userA" });
+  });
+
+  it("returns 404 for another user's subscription (no enqueue)", async () => {
+    const sid = await insertSub("userB");
+    const app = buildSyncApp("userA");
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(404);
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 when the daily manual_refresh quota is exhausted", async () => {
+    const sid = await insertSub("userA");
+    // Pre-seed today's counter at the cap.
+    await env.CACHE.put(`refresh:userA:${dayKey()}`, "2");
+    const app = buildSyncApp("userA", capsWith({ manual_refresh: 2 }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("RATE_LIMITED");
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("manual_refresh = 0 disables manual refresh → 429", async () => {
+    const sid = await insertSub("userA");
+    const app = buildSyncApp("userA", capsWith({ manual_refresh: 0 }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(429);
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("manual_refresh = null means unlimited (no counter gate)", async () => {
+    const sid = await insertSub("userA");
+    // Even with a high pre-seeded counter, unlimited never rate-limits.
+    await env.CACHE.put(`refresh:userA:${dayKey()}`, "9999");
+    const app = buildSyncApp("userA", capsWith({ manual_refresh: null }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    expect(app.send).toHaveBeenCalledOnce();
+  });
+
+  it("increments the counter so a second refresh at limit=1 is blocked", async () => {
+    const sid = await insertSub("userA");
+    const app = buildSyncApp("userA", capsWith({ manual_refresh: 1 }));
+
+    const first = await app.request(`/${sid}/syncs`);
+    expect(first.status).toBe(202);
+
+    const second = await app.request(`/${sid}/syncs`);
+    expect(second.status).toBe(429);
+    expect(app.send).toHaveBeenCalledOnce();
   });
 });

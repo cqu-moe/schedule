@@ -11,9 +11,12 @@ import {
 } from "../../db/schema";
 import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
+import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
+import { CHINA_TZ_OFFSET_MS } from "../../utils/time";
+import type { ScheduleSyncMessage } from "../../cron/schedule-sync";
 
 const app = new Hono<SessionEnv>();
 
@@ -322,6 +325,64 @@ app.delete("/:sid", async (c) => {
 
   return c.body(null, 204);
 });
+
+// ── G3: POST /:sid/syncs — manual refresh (per-day manual_refresh quota) ──────
+//  Verifies ownership → checks the daily refresh counter against caps →
+//  enqueues a single-subscription sync → 202 Accepted. The KV counter
+//  `refresh:<userId>:<china-date>` is incremented best-effort after enqueue.
+app.post("/:sid/syncs", async (c) => {
+  const user = c.get("user");
+  const caps = c.get("caps").calendar;
+  const sid = c.req.param("sid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+
+  // manual_refresh quota: null = unlimited, 0 = disabled, n = n/day.
+  const limit = resolveQuota(caps.manual_refresh);
+  const dayKey = chinaDateKey(new Date());
+  const counterKey = `refresh:${user.id}:${dayKey}`;
+
+  let used = 0;
+  if (limit !== Infinity) {
+    const raw = await c.env.CACHE.get(counterKey);
+    used = raw ? Number(raw) || 0 : 0;
+    if (used >= limit) {
+      return errorResponse("RATE_LIMITED", "今日手动刷新次数已达上限", 429);
+    }
+  }
+
+  await c.env.SCHEDULE_SYNC_QUEUE.send({
+    subscriptionId: sid,
+    userId: user.id,
+  } satisfies ScheduleSyncMessage);
+
+  // Increment the daily counter (best-effort). TTL covers the rest of the day
+  // plus a margin; an exact midnight rollover is not required for a soft quota.
+  if (limit !== Infinity) {
+    await c.env.CACHE.put(counterKey, String(used + 1), {
+      expirationTtl: 60 * 60 * 25,
+    }).catch(() => {});
+  }
+
+  console.log(
+    JSON.stringify({
+      event: "subscription.v2.manual_refresh",
+      userId: user.id,
+      subscriptionId: sid,
+      message: "Manual refresh enqueued",
+    }),
+  );
+
+  return c.json({ status: "queued" }, 202);
+});
+
+/** China-local date key (YYYY-MM-DD) for the per-day refresh counter. */
+function chinaDateKey(now: Date): string {
+  return new Date(now.getTime() + CHINA_TZ_OFFSET_MS).toISOString().slice(0, 10);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Calendar links (nested under /:sid/links) — guarded by sessionMiddleware via
