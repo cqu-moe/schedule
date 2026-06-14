@@ -7,7 +7,7 @@ import {
 } from "../db/schema";
 import type { Env } from "../types";
 import { CQUAPIClient } from "../services/cqu-api";
-import { getCquBearer } from "../services/cqu-bearer";
+import { getCquBearer, resolveOwnStudentId } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
 import {
   fetchSessionContextCached,
@@ -180,8 +180,22 @@ export async function processScheduleSyncBatch(
         const fallback = { sessionId: sub.sessionId, sessionName: sub.sessionName };
 
         if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-          // Personal subscription: sourceId is the student ID.
-          const studentId = sub.sourceId;
+          // Personal subscription: the student ID is resolved from the bearer's
+          // own authenticated subject — NEVER from the stored sub.sourceId
+          // (which is a client-supplied, untrusted value). This prevents a
+          // crafted sourceId from leaking another student's private schedule.
+          const studentId = await resolveOwnStudentId(env, userId, bearer);
+          if (!studentId) {
+            console.log(
+              JSON.stringify({
+                event: "queue.schedule_sync.skip_no_student_id",
+                subscriptionId,
+                message: "No student ID resolvable from bearer; skipping",
+              }),
+            );
+            message.ack();
+            return;
+          }
           const personalData = await fetchPersonalScheduleCached(
             api,
             studentId,

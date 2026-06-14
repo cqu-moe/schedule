@@ -7,6 +7,7 @@ import {
   LINK_FORMATS,
   SOURCE_TYPES,
   EXPLORE_SOURCE_TYPES,
+  PERSONAL_SOURCE_TYPES,
   type SourceType,
 } from "../../db/schema";
 import type { SessionEnv } from "../../middleware/session";
@@ -181,6 +182,18 @@ app.post("/", async (c) => {
   const isPersonal =
     typeof body.isPersonal === "boolean" ? body.isPersonal : !isExternal;
 
+  // ── Personal-subscription identity binding (security invariant) ───────────
+  //  For personal source types, the personal schedule is fetched against the
+  //  AUTHENTICATED bearer's own 学号 at sync time (see schedule-sync consumer);
+  //  the stored sourceId never reaches the CQU API. We therefore IGNORE any
+  //  client-supplied sourceId and pin it to the trusted auth `user.id` so it is
+  //  a stable per-user identifier (uniqueness/ICS UID namespace) that cannot be
+  //  abused to reference another student. Explore types keep the client
+  //  sourceId — those are public timetables and the target id is meant to vary.
+  const effectiveSourceId = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped)
+    ? user.id
+    : sourceId;
+
   // ── Entitlement gating ────────────────────────────────────────────────────
   try {
     if (isExternal) {
@@ -203,7 +216,7 @@ app.post("/", async (c) => {
   const dupConds = [
     eq(subscriptions.userId, user.id),
     eq(subscriptions.sourceType, sourceTypeTyped),
-    eq(subscriptions.sourceId, sourceId),
+    eq(subscriptions.sourceId, effectiveSourceId),
     sessionId === null
       ? sql`${subscriptions.sessionId} is null`
       : eq(subscriptions.sessionId, sessionId),
@@ -230,7 +243,7 @@ app.post("/", async (c) => {
         id: subId,
         userId: user.id,
         sourceType: sourceTypeTyped,
-        sourceId,
+        sourceId: effectiveSourceId,
         sourceName,
         sessionId,
         sessionName,
@@ -274,7 +287,7 @@ app.post("/", async (c) => {
       id: subId,
       user_id: user.id,
       source_type: sourceTypeTyped,
-      source_id: sourceId,
+      source_id: effectiveSourceId,
       source_name: sourceName,
       session_id: sessionId,
       session_name: sessionName,

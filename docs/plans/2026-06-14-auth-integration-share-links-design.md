@@ -180,6 +180,20 @@ ALL    /api/v1/*                             # → 410 Gone / "请刷新页面" 
 
 `token-refresh` cron + 队列整体删除；`ENCRYPTION_KEY` + `src/services/crypto.ts`（AES-256-GCM）因不再存任何本地凭据**一并移除**；`src/services/captcha.ts`、密码登录/注册/找回端点删除。
 
+### 6.6 个人订阅身份绑定（安全不变量）⚠️
+
+**不变量**：个人订阅（`personal_*`）的课表拉取**始终绑定已认证 bearer 主体自己的学号**，**绝不信任** client 传入的 `sourceId`。
+
+**背景（为何必须）**：个人课表经**公开链接 token** 对外提供，且 CQU `student/my-table-detail` 按 POST body 里的学号拉课表。若用 client 任意传入的 `sourceId` 当学号去拉，攻击者构造一个"别人的学号" → 别人的私人课表被拉到并经公开链接泄露（跨学生数据泄露）。
+
+**机制**：
+
+- **学号来源 = bearer JWT 的 `user_name` claim**。CQU 教务 OAuth access_token 是 JWT，payload 携带 `"user_name": "<学号>"`（逆向：`cqu-api-endpoint-collection/systems/jwxt/notes.md`）。该 claim 即 bearer 的认证主体，无法被 client 伪造。`session/info-detail` 响应**不含**学号（仅 `curSessionId`/`sessionFinder`），故不走该接口。
+- `decodeStudentIdFromBearer(bearer)`（`src/services/cqu-api.ts`）解码 `user_name`；`resolveOwnStudentId(env, userId, bearer)`（`src/services/cqu-bearer.ts`）在此之上加 KV 缓存 `student:<userId>`（30d TTL，学号不变），避免每次 sync 重复解码。解析不出学号时返回 `null`，consumer ack-and-skip（不重试），不阻塞 batch。
+- **同步**（`src/cron/schedule-sync.ts` 个人分支）：`getSchedule(resolvedStudentId, sessionId)` 用解析出的**自己学号**，ICS UID 命名空间亦用该可信值（每用户稳定）；不再读 `sub.sourceId`。
+- **创建端点**（`POST /api/v2/subscriptions`，`src/routes/v2/subscriptions.ts`）：个人源类型**忽略 client `sourceId`**，固定写入 `user.id`（auth userId）——它只作每用户稳定标识（唯一约束 `uq_user_source_session` + ICS UID 命名空间），不再参与 CQU 拉取。
+- **explore 类型不变**（`instructor`/`room`/`laboratory`/`course`/`admin_class`）：订阅他人**公开**时刻表，client 传 target id 是正确语义，保持现状。
+
 ## 7. 前端
 
 - 未登录 → `location` 跳 `https://auth.cqu.moe/login?redirect=<当前页>`。

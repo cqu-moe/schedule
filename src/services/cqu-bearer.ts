@@ -1,8 +1,19 @@
 import type { Env } from "../types";
 import { exchangeTicketForCquToken } from "./auth";
+import { decodeStudentIdFromBearer } from "./cqu-api";
 
 /** KV key prefix for the per-user cached CQU bearer token. */
 const BEARER_KEY_PREFIX = "bearer:";
+
+/** KV key prefix for the per-user resolved CQU 学号 (student ID). */
+const STUDENT_KEY_PREFIX = "student:";
+
+/**
+ * TTL (seconds) for the cached student ID. A user's 学号 is effectively
+ * immutable, so cache it for a long time (30 days) to avoid re-decoding the
+ * bearer on every sync.
+ */
+const STUDENT_TTL = 30 * 24 * 3600;
 
 /**
  * TTL (seconds) for the cached bearer. CQU OAuth tokens last ~4h; cache for ~3h
@@ -86,4 +97,55 @@ export async function getCquBearer(
   );
 
   return bearer;
+}
+
+/**
+ * Resolve the CQU 学号 (student ID) of the authenticated user, bound to the
+ * `userId` (auth bearer subject) — NEVER to any client-supplied input.
+ *
+ * The 学号 is the `user_name` claim of the CQU OAuth bearer JWT
+ * ({@link decodeStudentIdFromBearer}). Because it is effectively immutable, it
+ * is cached in KV (`student:<userId>`, 30d TTL) so subsequent syncs skip the
+ * decode entirely.
+ *
+ * Returns `null` (never throws) when the bearer carries no usable student ID,
+ * so personal sync can ack-and-skip a single user without failing the batch.
+ * The bearer itself is sensitive and is NEVER logged here.
+ */
+export async function resolveOwnStudentId(
+  env: Env,
+  userId: string,
+  bearer: string,
+): Promise<string | null> {
+  const cacheKey = `${STUDENT_KEY_PREFIX}${userId}`;
+
+  const cached = await env.CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const studentId = decodeStudentIdFromBearer(bearer);
+  if (!studentId) {
+    console.log(
+      JSON.stringify({
+        event: "cqu_bearer.student_id.unresolved",
+        userId,
+        message: "Bearer carries no student ID; skipping user",
+      }),
+    );
+    return null;
+  }
+
+  // Best-effort cache; never block on a KV write failure.
+  await env.CACHE.put(cacheKey, studentId, { expirationTtl: STUDENT_TTL }).catch(
+    (e) =>
+      console.warn(
+        JSON.stringify({
+          event: "cqu_bearer.student_id.cache.write_failed",
+          userId,
+          error: e instanceof Error ? e.message : String(e),
+          message: "Failed to cache student ID to KV",
+        }),
+      ),
+  );
+
+  return studentId;
 }
