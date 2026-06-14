@@ -64,17 +64,9 @@
   // Queues
   "queues": {
     "producers": [
-      { "binding": "TOKEN_REFRESH_QUEUE", "queue": "schedule-token-refresh" },
       { "binding": "SCHEDULE_SYNC_QUEUE", "queue": "schedule-sync" }
     ],
     "consumers": [
-      {
-        "queue": "schedule-token-refresh",
-        "max_batch_size": 5,
-        "max_retries": 3,
-        "max_concurrency": 1,
-        "max_batch_timeout": 30
-      },
       {
         "queue": "schedule-sync",
         "max_batch_size": 5,
@@ -118,9 +110,10 @@
   ],
 
   // Cron Triggers
+  // "0 17 * * *" 入队 schedule-sync（每日全量同步）。
+  // 旧的 "0 * * * *" 已随 token-refresh 队列移除（auth 侧续命 CQU 会话）。
   "triggers": {
     "crons": [
-      "0 * * * *",
       "0 17 * * *"
     ]
   }

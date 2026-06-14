@@ -1,4 +1,3 @@
-import type { TokenRefreshMessage } from "./cron/token-refresh";
 import type { ScheduleSyncMessage } from "./cron/schedule-sync";
 
 export interface Env {
@@ -17,7 +16,6 @@ export interface Env {
   EXPLORE_LIMITER: RateLimit;
 
   // Queues
-  TOKEN_REFRESH_QUEUE: Queue<TokenRefreshMessage>;
   SCHEDULE_SYNC_QUEUE: Queue<ScheduleSyncMessage>;
 
   // Auth service (拓扑①: Service Binding RPC to cqu-moe-auth)
