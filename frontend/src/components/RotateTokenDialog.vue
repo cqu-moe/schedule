@@ -1,42 +1,50 @@
 <template>
-  <AlertDialog v-model:open="open">
-    <AlertDialogTrigger as-child>
-      <slot />
-    </AlertDialogTrigger>
+  <!--
+    Per-link token rotation confirm dialog.
+    Usage: bind :open and listen @confirm + @update:open.
+    The parent is responsible for calling api.rotateLink and updating state.
+  -->
+  <AlertDialog :open="open" @update:open="$emit('update:open', $event)">
     <AlertDialogContent>
-      <!--
-        TODO(FE-2): In v2 there is no per-user calendar token to rotate.
-        Token rotation is per-link (POST /api/v2/subscriptions/:sid/links/:lid/rotations).
-        This dialog will be rewritten in FE-2 as per-link rotation or removed entirely.
-      -->
       <AlertDialogHeader>
-        <AlertDialogTitle>功能已迁移</AlertDialogTitle>
+        <AlertDialogTitle>确认轮换链接 Token</AlertDialogTitle>
         <AlertDialogDescription>
-          在 v2 中，链接轮换已迁移为每个订阅链接独立操作。请在订阅详情页面管理链接。
+          轮换后旧链接立即失效，日历客户端需重新订阅新链接。确定要继续吗？
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel class="cursor-pointer" @click="open = false">关闭</AlertDialogCancel>
+        <AlertDialogCancel class="cursor-pointer" @click="$emit('update:open', false)">
+          取消
+        </AlertDialogCancel>
+        <AlertDialogAction
+          class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
+          @click="$emit('confirm')"
+        >
+          轮换
+        </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
 </template>
 
 <script setup lang="ts">
-// TODO(FE-2): rewrite this dialog for per-link rotation via
-//   POST /api/v2/subscriptions/:sid/links/:lid/rotations
-//   (see api.rotateLink in frontend/src/api/index.ts)
-import { ref } from 'vue'
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
-const open = ref(false)
+defineProps<{
+  open: boolean
+}>()
+
+defineEmits<{
+  'update:open': [value: boolean]
+  confirm: []
+}>()
 </script>

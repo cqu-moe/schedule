@@ -10,7 +10,9 @@ Object.assign(navigator, {
 vi.stubGlobal('open', vi.fn())
 
 // Global stubs for teleporting components (Dialog, AlertDialog, DropdownMenu, Popover, Select)
+// ShareLinksDialog is stubbed globally to prevent it from rendering its full tree in Dashboard tests.
 config.global.stubs = {
+  ShareLinksDialog: { template: '<div data-testid="share-links-dialog" />', props: ['open', 'subscription'] },
   AlertDialog: { template: '<div><slot /></div>', props: ['open'] },
   AlertDialogContent: { template: '<div><slot /></div>' },
   AlertDialogHeader: { template: '<div><slot /></div>' },

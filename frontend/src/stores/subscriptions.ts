@@ -22,6 +22,28 @@ export const useSubscriptionsStore = defineStore('subscriptions', () => {
     return count.value >= limit
   })
 
+  /**
+   * Total non-default (share) links across ALL subscriptions.
+   * Used to show usage against the per-user share_limit quota.
+   */
+  const shareLinkCount = computed<number>(() =>
+    subscriptions.value.reduce(
+      (sum, sub) => sum + sub.links.filter(l => !l.is_default).length,
+      0,
+    ),
+  )
+
+  /**
+   * True when the user has reached their share link cap.
+   * null share_limit means unlimited → never at limit.
+   */
+  const atShareLimit = computed<boolean>(() => {
+    const session = useSession()
+    const limit = session.quota('share_limit')
+    if (limit === null) return false
+    return shareLinkCount.value >= limit
+  })
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   /**
@@ -43,5 +65,5 @@ export const useSubscriptionsStore = defineStore('subscriptions', () => {
     subscriptions.value = []
   }
 
-  return { subscriptions, count, atLimit, defaultLink, load, $reset }
+  return { subscriptions, count, atLimit, shareLinkCount, atShareLimit, defaultLink, load, $reset }
 })
