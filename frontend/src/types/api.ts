@@ -1,35 +1,73 @@
-export interface UserInfo {
-  student_id: string
-  calendar_token: string
-  oauth_expires_at: string
-  last_synced_at: string | null
+// ── v2 session / identity types ──────────────────────────────────────────────
+
+export interface SessionUser {
+  id: string
+  name: string
+  email: string
+  role: string
+}
+
+export interface CalendarCaps {
+  sync: boolean
+  external: boolean
+  share: boolean
+  sub_limit: number | null
+  share_limit: number | null
+  sync_interval: number | null
+  manual_refresh: number | null
+}
+
+export interface MeResponse {
+  user: SessionUser
+  caps: {
+    calendar: CalendarCaps
+  }
+}
+
+// ── v2 link / subscription types ─────────────────────────────────────────────
+
+export type LinkFormat = 'ics' | 'origin_json' | 'data_json' | 'csv' | 'web'
+
+export interface CalendarLink {
+  id: string
+  token: string
+  label: string | null
+  formats: string[]
+  is_default: boolean
 }
 
 export type SourceType =
-  | "personal_all"
-  | "personal_courses"
-  | "personal_exams"
-  | "instructor"
-  | "room"
-  | "laboratory"
-  | "course"
-  | "admin_class";
+  | 'personal_all'
+  | 'personal_courses'
+  | 'personal_exams'
+  | 'instructor'
+  | 'room'
+  | 'laboratory'
+  | 'course'
+  | 'admin_class'
 
 export interface Subscription {
-  calendar_token: string
+  id: string
+  user_id: string
   source_type: SourceType
   source_id: string
   source_name: string
+  session_id: string | null
+  session_name: string | null
+  semester_start: string | null
   is_personal: boolean
-  session_name: string
   last_synced_at: string | null
-  subscription_url: string
+  created_at: string
+  updated_at: string
+  links: CalendarLink[]
 }
 
 export interface SubscriptionList {
   subscriptions: Subscription[]
-  max: number
+  count: number
 }
+
+// ── v2 search / department types ─────────────────────────────────────────────
 
 export interface SearchResult {
   id: string
@@ -37,23 +75,44 @@ export interface SearchResult {
   extra: string
 }
 
+export interface DepartmentNode {
+  id: string
+  name: string
+  children?: DepartmentNode[]
+}
+
+// ── v2 link request bodies ────────────────────────────────────────────────────
+
+export interface CreateLinkBody {
+  label?: string
+  formats: string[]
+}
+
+export interface PatchLinkBody {
+  label?: string | null
+  formats?: string[]
+}
+
+// ── v2 link rotation response ─────────────────────────────────────────────────
+
+export interface RotateLinkResult {
+  token: string
+  url?: string
+}
+
+// ── app config & health ───────────────────────────────────────────────────────
+
 export interface AppConfig {
   public_url: string
-  captcha: {
-    enabled: boolean
-    sitekey: string
-  }
 }
 
 export interface HealthStatus {
   status: string
+  commit?: string
+  date?: string
 }
 
-export interface AuthResult {
-  success: boolean
-  token?: string
-  error?: string
-}
+// ── calendar / view page types (unchanged; used by Calendar.vue / FE-4) ──────
 
 export interface FormattedEvent {
   name: string
@@ -72,21 +131,4 @@ export interface CalendarData {
   semester_start: string
   generated_at: string
   events: FormattedEvent[]
-}
-
-export interface RotateTokenPrepare {
-  new_token: string
-}
-
-export interface RotateTokenConfirm {
-  calendar_token: string
-}
-
-export interface RotateSubscription {
-  calendar_token: string
-  subscription_url: string
-}
-
-export interface RotateAllSubscriptions {
-  count: number
 }

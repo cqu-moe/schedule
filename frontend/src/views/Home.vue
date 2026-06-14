@@ -12,9 +12,13 @@
           自动同步课表到你的日历应用，随时随地查看课程安排
         </p>
         <div class="mt-8">
-          <router-link :to="ctaLink">
+          <!-- Authenticated: internal router link. Not authenticated: external auth link. -->
+          <router-link v-if="session.isAuthenticated" to="/dashboard">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
+          <a v-else href="https://auth.cqu.moe/login" class="inline-block">
+            <Button size="lg" class="cursor-pointer">开始使用</Button>
+          </a>
         </div>
       </div>
     </section>
@@ -55,14 +59,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
-import { useAuthStore } from '@/stores/auth'
+import { useSession } from '@/stores/session'
 
-const authStore = useAuthStore()
-const ctaLink = computed(() => authStore.isAuthenticated ? '/dashboard' : '/register')
+const session = useSession()
 
 const appVersion = __APP_VERSION__
 </script>

@@ -1,76 +1,44 @@
+/**
+ * @deprecated This store is a temporary FE-1 shim. It will be deleted in FE-2
+ * when Dashboard/Add/RotateTokenDialog are rewritten for the v2 API.
+ *
+ * In v2, identity comes from the `useSession` store (cookie-based,
+ * loaded via GET /api/v2/me). There is no longer a `token` or `logout()` —
+ * account management goes through auth.cqu.moe.
+ *
+ * TODO(FE-2): delete this file once Dashboard.vue / Add.vue / RotateTokenDialog.vue
+ * no longer import from @/stores/auth.
+ */
+import { computed } from 'vue'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import api from '@/api'
-import { parseApiError } from '@/utils/error'
-import { useSubscriptionsStore } from '@/stores/subscriptions'
-import type { UserInfo, AuthResult } from '@/types/api'
+import { useSession } from '@/stores/session'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('calendar_token') || '')
-  const userInfo = ref<UserInfo | null>(null)
-  const loading = ref(false)
+  const session = useSession()
 
-  const isAuthenticated = computed(() => !!token.value)
+  // token shim — always empty string in v2 (cookie auth, no bearer)
+  const token = computed({
+    get: () => '',
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    set: (_v: string) => { /* noop in v2 */ },
+  })
 
-  async function register(studentId: string, password: string, captchaToken: string | null = null): Promise<AuthResult> {
-    loading.value = true
-    try {
-      const response = await api.register(studentId, password, captchaToken)
-      token.value = response.calendar_token
-      localStorage.setItem('calendar_token', token.value)
-      return { success: true, token: response.calendar_token }
-    } catch (error) {
-      return { success: false, error: parseApiError(error, '注册失败') }
-    } finally {
-      loading.value = false
-    }
-  }
+  const isAuthenticated = computed(() => session.isAuthenticated.value)
 
-  async function loginWithToken(calendarToken: string): Promise<AuthResult> {
-    loading.value = true
-    try {
-      const response = await api.getUserInfo(calendarToken)
-      token.value = calendarToken
-      userInfo.value = response
-      localStorage.setItem('calendar_token', token.value)
-      return { success: true }
-    } catch (error) {
-      return { success: false, error: parseApiError(error, 'Token 无效或已过期') }
-    } finally {
-      loading.value = false
-    }
-  }
+  // userInfo shim — maps session.user into the old shape where possible
+  const userInfo = computed(() => session.user.value)
 
-  async function fetchUserInfo() {
-    if (!token.value) return
-    try {
-      userInfo.value = await api.getUserInfo(token.value)
-    } catch {
-      logout()
-    }
-  }
+  const loading = computed(() => session.loading.value)
 
+  // logout: no-op in v2; account management is via auth.cqu.moe
   function logout() {
-    token.value = ''
-    userInfo.value = null
-    localStorage.removeItem('calendar_token')
-    // Clear shared stores to prevent cross-session data leakage
-    useSubscriptionsStore().$reset()
+    // TODO(FE-2): remove — in v2 the user goes to https://auth.cqu.moe to log out
   }
 
-  // 初始化时检查 token 有效性
-  if (token.value) {
-    fetchUserInfo()
+  // fetchUserInfo: delegates to session.load()
+  async function fetchUserInfo() {
+    await session.load().catch(() => {})
   }
 
-  return {
-    token,
-    userInfo,
-    loading,
-    isAuthenticated,
-    register,
-    loginWithToken,
-    fetchUserInfo,
-    logout
-  }
+  return { token, isAuthenticated, userInfo, loading, logout, fetchUserInfo }
 })

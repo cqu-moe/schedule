@@ -6,19 +6,12 @@ import Navbar from '@/components/Navbar.vue'
 
 vi.mock('@/api', () => ({
   default: {
-    register: vi.fn(),
-    getUserInfo: vi.fn(),
-    recoverToken: vi.fn(),
-    recoverTokenVerify: vi.fn(),
-    deleteUser: vi.fn(),
-    searchSchedule: vi.fn(),
-    getDepartments: vi.fn(),
-    createSubscription: vi.fn(),
+    getMe: vi.fn(),
+    getConfig: vi.fn(),
     getSubscriptions: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
     getHealth: vi.fn(),
-    getConfig: vi.fn(),
   },
 }))
 
@@ -27,8 +20,6 @@ function createTestRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'Home', component: { template: '<div>Home</div>' } },
-      { path: '/login', name: 'Login', component: { template: '<div>Login</div>' } },
-      { path: '/register', name: 'Register', component: { template: '<div>Register</div>' } },
       { path: '/dashboard', name: 'Dashboard', component: { template: '<div>Dashboard</div>' } },
       { path: '/add', name: 'Add', component: { template: '<div>Add</div>' } },
       { path: '/api-docs', name: 'ApiDocs', component: { template: '<div>Docs</div>' } },
@@ -50,7 +41,14 @@ describe('Navbar', () => {
       createSpy: vi.fn,
       stubActions: false,
       initialState: authenticated
-        ? { auth: { token: 'tok', userInfo: null, loading: false } }
+        ? {
+            session: {
+              user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
+              caps: { sync: true, external: true, share: true, sub_limit: 5, share_limit: null, sync_interval: 60, manual_refresh: 5 },
+              loaded: true,
+              loading: false,
+            },
+          }
         : {},
     })
 
@@ -62,39 +60,43 @@ describe('Navbar', () => {
   }
 
   describe('unauthenticated state', () => {
-    it('shows register and login links when not authenticated', () => {
+    it('shows a login link pointing to auth.cqu.moe when not authenticated', () => {
       const wrapper = mountNavbar(false)
 
-      expect(wrapper.text()).toContain('注册')
-      expect(wrapper.text()).toContain('登录')
+      const loginLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+      expect(loginLink.exists()).toBe(true)
+      expect(loginLink.text()).toContain('登录')
     })
 
-    it('does not show dashboard, add, or logout links when not authenticated', () => {
+    it('does not show dashboard, add subscription links when not authenticated', () => {
       const wrapper = mountNavbar(false)
 
       expect(wrapper.text()).not.toContain('仪表盘')
       expect(wrapper.text()).not.toContain('添加新订阅')
-      expect(wrapper.text()).not.toContain('退出登录')
     })
   })
 
   describe('authenticated state', () => {
-    it('shows dashboard, add, and logout when authenticated', () => {
+    it('shows dashboard and add subscription links when authenticated', () => {
       const wrapper = mountNavbar(true)
 
       expect(wrapper.text()).toContain('仪表盘')
       expect(wrapper.text()).toContain('添加新订阅')
-      expect(wrapper.text()).toContain('退出登录')
     })
 
-    it('does not show register or login links when authenticated', () => {
+    it('shows an account link to auth.cqu.moe when authenticated', () => {
       const wrapper = mountNavbar(true)
 
-      // "退出登录" contains "登录" as a substring, so check for exact link text via router-links
-      const links = wrapper.findAll('a')
-      const linkTexts = links.map((l) => l.text().trim())
-      expect(linkTexts).not.toContain('注册')
-      expect(linkTexts).not.toContain('登录')
+      const accountLink = wrapper.find('a[href="https://auth.cqu.moe"]')
+      expect(accountLink.exists()).toBe(true)
+      expect(accountLink.text()).toContain('账户')
+    })
+
+    it('does not show an "https://auth.cqu.moe/login" link when authenticated', () => {
+      const wrapper = mountNavbar(true)
+
+      const loginLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+      expect(loginLink.exists()).toBe(false)
     })
   })
 
@@ -106,33 +108,19 @@ describe('Navbar', () => {
     expect(authWrapper.text()).toContain('API 文档')
   })
 
-  it('logout clears auth and navigates to /', async () => {
-    // Navigate away from home first so we can verify the redirect
-    await router.push('/dashboard')
-
-    const wrapper = mountNavbar(true)
-
-    const logoutButton = wrapper.findAll('button').find((b) => b.text().includes('退出登录'))!
-    expect(logoutButton).toBeTruthy()
-
-    await logoutButton.trigger('click')
-
-    // Wait for the async router.push('/') inside handleLogout to complete
-    await flushPromises()
-
-    // Auth store token should be cleared (logout was called)
-    const { useAuthStore } = await import('@/stores/auth')
-    const authStore = useAuthStore()
-    expect(authStore.token).toBe('')
-
-    // Should navigate to /
-    expect(router.currentRoute.value.path).toBe('/')
-  })
-
   it('theme toggle button exists with correct aria-label', () => {
     const wrapper = mountNavbar(false)
 
     const themeButton = wrapper.find('button[aria-label="切换主题"]')
     expect(themeButton.exists()).toBe(true)
+  })
+
+  it('renders logo link to home', async () => {
+    await flushPromises()
+    const wrapper = mountNavbar(false)
+
+    const logoLink = wrapper.find('a[href="/"]')
+    expect(logoLink.exists()).toBe(true)
+    expect(logoLink.text()).toContain('CQU Schedule')
   })
 })

@@ -244,9 +244,13 @@ const calendarOptions = computed<CalendarOptions>(() => ({
 }))
 
 onMounted(async () => {
+  // TODO(FE-4): /view/:token page will use api.getViewData(token) directly.
+  // This route (/calendar/:sub_token) is kept for backward compat; in v2 the
+  // sub_token is a link token, so we use getViewData() which calls
+  // GET /api/v2/calendar/:token/view.json (gated on the "web" format flag).
   const subToken = route.params.sub_token as string
   try {
-    const data = await api.getCalendarData(subToken)
+    const data = await api.getViewData(subToken)
     semester.value = data.semester ? `${data.semester} 课表` : '课表日历'
     semesterStart.value = data.semester_start ?? ''
     events.value = data.events.map(toCalendarEvent)

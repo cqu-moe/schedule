@@ -3,19 +3,10 @@ import { mountWithContext } from '@/test-utils'
 
 const { mockApi } = vi.hoisted(() => {
   const mockApi = {
-    register: vi.fn(),
-    recoverToken: vi.fn(),
-    recoverTokenVerify: vi.fn(),
-    getUserInfo: vi.fn(),
-    deleteUser: vi.fn(),
-    searchSchedule: vi.fn(),
-    getDepartments: vi.fn(),
-    createSubscription: vi.fn(),
-    getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], max: 5 }),
-    deleteSubscription: vi.fn(),
-    refreshSubscription: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+    getMe: vi.fn(),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
+    getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], count: 0 }),
+    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
   }
   return { mockApi }
 })

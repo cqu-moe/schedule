@@ -9,7 +9,7 @@
           <h3 class="text-base font-semibold">
             我的订阅
             <span v-if="subStore.subscriptions.length > 0" class="text-muted-foreground font-normal text-sm ml-1">
-              ({{ subStore.subscriptions.length }}/{{ subStore.max }})
+              ({{ subStore.subscriptions.length }})
             </span>
           </h3>
           <div class="flex gap-2">
@@ -41,7 +41,8 @@
         </div>
 
         <!-- Subscription cards -->
-        <Card v-for="sub in subStore.subscriptions" :key="sub.calendar_token" class="mb-4">
+        <!-- TODO(FE-2): rewrite card UI for v2 Subscription shape (links[], id instead of calendar_token, etc.) -->
+        <Card v-for="sub in subStore.subscriptions" :key="sub.id" class="mb-4">
           <CardHeader>
             <CardTitle class="text-base flex items-center gap-2">
               <Badge variant="secondary" class="text-xs">{{ sourceTypeLabel(sub.source_type) }}</Badge>
@@ -61,80 +62,25 @@
             </div>
           </CardHeader>
           <CardContent class="space-y-3">
-            <div class="bg-muted rounded px-3 py-2 overflow-x-auto">
-              <code class="text-xs text-muted-foreground break-all font-mono">{{ sub.subscription_url }}</code>
-            </div>
+            <!-- TODO(FE-2): show links[] with copy/download buttons per link -->
             <div class="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="copyFeedback.stateOf(sub.calendar_token) === 'loading'"
+                :disabled="refreshFeedback.stateOf(sub.id) === 'loading'"
                 :class="{
-                  'bg-green-600 hover:bg-green-600 text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'success',
-                  'bg-destructive hover:bg-destructive text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'error'
+                  'bg-green-600 hover:bg-green-600 text-white border-transparent': refreshFeedback.stateOf(sub.id) === 'success',
+                  'bg-destructive hover:bg-destructive text-white border-transparent': refreshFeedback.stateOf(sub.id) === 'error'
                 }"
-                @click="copyUrl(sub.subscription_url, sub.calendar_token)"
+                @click="handleRefreshSub(sub.id)"
               >
-                <Check v-if="copyFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
-                <X v-else-if="copyFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
-                <Copy v-else class="h-4 w-4 mr-1.5" />
-                {{ { success: '已复制', error: '失败' }[copyFeedback.stateOf(sub.calendar_token)] || '复制' }}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                class="cursor-pointer"
-                @click="handleShowQrcode(sub.subscription_url)"
-              >
-                <QrCode class="h-4 w-4 mr-1.5" />
-                二维码
-              </Button>
-              <router-link :to="{ name: RouteNames.Calendar, params: { sub_token: sub.calendar_token } }">
-                <Button variant="outline" size="sm" class="cursor-pointer">
-                  <Calendar class="h-4 w-4 mr-1.5" />
-                  日历
-                </Button>
-              </router-link>
-              <Button
-                variant="outline"
-                size="sm"
-                class="cursor-pointer"
-                :disabled="refreshFeedback.stateOf(sub.calendar_token) === 'loading'"
-                :class="{
-                  'bg-green-600 hover:bg-green-600 text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'success',
-                  'bg-destructive hover:bg-destructive text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'error'
-                }"
-                @click="handleRefreshSub(sub.calendar_token)"
-              >
-                <Loader2 v-if="refreshFeedback.stateOf(sub.calendar_token) === 'loading'" class="h-4 w-4 animate-spin mr-1.5" />
-                <Check v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
-                <X v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
+                <Loader2 v-if="refreshFeedback.stateOf(sub.id) === 'loading'" class="h-4 w-4 animate-spin mr-1.5" />
+                <Check v-else-if="refreshFeedback.stateOf(sub.id) === 'success'" class="h-4 w-4 mr-1.5" />
+                <X v-else-if="refreshFeedback.stateOf(sub.id) === 'error'" class="h-4 w-4 mr-1.5" />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-                {{ { loading: '同步中', success: '已刷新', error: '失败' }[refreshFeedback.stateOf(sub.calendar_token)] || '同步' }}
+                {{ { loading: '同步中', success: '已刷新', error: '失败' }[refreshFeedback.stateOf(sub.id)] || '同步' }}
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger as-child>
-                  <Button variant="outline" size="sm" class="cursor-pointer">
-                    <Download class="h-4 w-4 mr-1.5" />
-                    导出
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'calendar.ics')">
-                    ICS 日历
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'data.json')">
-                    JSON
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'origin.json')">
-                    JSON（原始）
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'data.csv')">
-                    CSV
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
 
               <!-- More actions (danger zone) -->
               <DropdownMenu>
@@ -144,12 +90,7 @@
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openRotateSubDialog(sub)">
-                    <RefreshCw class="h-4 w-4 mr-2" />
-                    重置链接
-                  </DropdownMenuItem>
                   <template v-if="!sub.is_personal">
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openDeleteSubDialog(sub)">
                       <Trash2 class="h-4 w-4 mr-2" />
                       删除
@@ -170,126 +111,10 @@
         </div>
       </section>
 
-      <!-- Danger zone -->
-      <section>
-        <Card class="border-destructive/20 bg-destructive/5 gap-2">
-          <CardHeader>
-            <CardTitle class="text-base text-destructive">危险操作区</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <!-- Rotate auth token -->
-            <div class="mb-4">
-              <p class="text-sm text-muted-foreground mb-2">
-                轮换认证 Token 后，旧 Token 将立即失效。
-              </p>
-              <RotateTokenDialog>
-                <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
-                  <RefreshCw class="h-4 w-4 mr-1.5" />
-                  轮换认证 Token
-                </Button>
-              </RotateTokenDialog>
-            </div>
-
-            <!-- Rotate all subscription URLs -->
-            <div class="mb-4">
-              <p class="text-sm text-muted-foreground mb-2">
-                重置所有订阅链接后，旧链接将立即失效，日历客户端需要重新订阅。
-              </p>
-              <AlertDialog>
-                <AlertDialogTrigger as-child>
-                  <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
-                    <RefreshCw class="h-4 w-4 mr-1.5" />
-                    重置所有订阅链接
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>重置所有订阅链接</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      重置后所有旧的订阅链接将立即失效，日历客户端需要重新订阅。此操作无法撤销。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-                      @click="handleRotateAll"
-                    >
-                      确认重置
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-
-            <p class="text-sm text-muted-foreground mb-4">
-              删除账号将永久移除你的所有数据，此操作无法撤销。
-            </p>
-
-            <AlertDialog>
-              <AlertDialogTrigger as-child>
-                <Button variant="destructive" class="cursor-pointer">
-                  删除账号
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>确认删除账号</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    这将永久删除你的账号和所有数据，此操作无法撤销。
-                    <br /><br />
-                    请输入 <strong>确认删除</strong> 以继续：
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <div class="py-2">
-                  <Input
-                    v-model="deleteConfirmText"
-                    placeholder="确认删除"
-                  />
-                </div>
-                <AlertDialogFooter>
-                  <AlertDialogCancel class="cursor-pointer" @click="deleteConfirmText = ''">
-                    取消
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-                    :disabled="deleteConfirmText !== '确认删除' || deleting"
-                    @click="handleDelete"
-                  >
-                    <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin" />
-                    删除账号
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </CardContent>
-        </Card>
-      </section>
+      <!-- TODO(FE-2): danger zone will be redesigned for v2 (no deleteUser, no rotateAll) -->
     </div>
 
-    <QrcodeModal v-model="showQrcode" :url="qrcodeUrl" />
     <RiskWarning v-model="showRiskWarning" />
-
-    <!-- Global dialog: rotate subscription URL -->
-    <AlertDialog :open="!!rotateSubDialog" @update:open="v => { if (!v) rotateSubDialog = null }">
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>重置订阅链接</AlertDialogTitle>
-          <AlertDialogDescription>
-            重置后「{{ rotateSubDialog?.name }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
-          <AlertDialogAction
-            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleRotateSub(rotateSubDialog!.token)"
-          >
-            确认重置
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
 
     <!-- Global dialog: delete subscription -->
     <AlertDialog :open="!!deleteSubDialog" @update:open="v => { if (!v) deleteSubDialog = null }">
@@ -304,7 +129,7 @@
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
             class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleDeleteSub(deleteSubDialog!.token)"
+            @click="deleteSubDialog && handleDeleteSub(deleteSubDialog.id)"
           >
             删除
           </AlertDialogAction>
@@ -316,25 +141,18 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
-import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download, Calendar, Ellipsis } from 'lucide-vue-next'
+import { RefreshCw, Loader2, Check, X, Trash2, Ellipsis } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
 import { useRiskWarning } from '@/composables/useRiskWarning'
-import { useAuthStore } from '@/stores/auth'
-import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { toast } from 'vue-sonner'
 import type { SourceType, Subscription } from '@/types/api'
-import { RouteNames } from '@/router'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
-import QrcodeModal from '@/components/QrcodeModal.vue'
 import RiskWarning from '@/components/RiskWarning.vue'
-import RotateTokenDialog from '@/components/RotateTokenDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
@@ -345,30 +163,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger
 } from '@/components/ui/alert-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
-const router = useRouter()
-const authStore = useAuthStore()
-const configStore = useConfigStore()
+// TODO(FE-2): full rewrite — this is a minimal shim to keep the app building
+// while the v2 Dashboard UI (link management, share links, etc.) is built.
+
 const subStore = useSubscriptionsStore()
 const { showRiskWarning } = useRiskWarning()
 
 // State
 const loading = ref(true)
-const deleting = ref(false)
-const deleteConfirmText = ref('')
-const showQrcode = ref(false)
-const qrcodeUrl = ref('')
-const rotateSubDialog = ref<{ token: string; name: string } | null>(null)
-const deleteSubDialog = ref<{ token: string; name: string } | null>(null)
+const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
 const isPolling = ref(false)
 const hasPendingSubs = computed(() =>
   subStore.subscriptions.some(s => !s.last_synced_at)
@@ -377,7 +188,6 @@ const hasPendingSubs = computed(() =>
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // Button feedback
-const copyFeedback = useButtonFeedback()
 const refreshFeedback = useButtonFeedback()
 const syncFeedback = useButtonFeedback()
 
@@ -396,22 +206,8 @@ function sourceTypeLabel(type: SourceType) {
   return SOURCE_TYPE_LABELS[type] || type
 }
 
-function openRotateSubDialog(sub: Subscription) {
-  rotateSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
-}
-
 function openDeleteSubDialog(sub: Subscription) {
-  deleteSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
-}
-
-function handleShowQrcode(url: string) {
-  qrcodeUrl.value = url
-  showQrcode.value = true
-}
-
-function downloadExport(calendarToken: string, filename: string) {
-  const url = `${configStore.publicUrl}/api/v1/subscriptions/${calendarToken}/${filename}`
-  window.open(url, '_blank', 'noopener,noreferrer')
+  deleteSubDialog.value = { id: sub.id, name: sub.source_name }
 }
 
 function formatDate(isoString: string) {
@@ -451,52 +247,20 @@ function startSyncPolling() {
   }, POLL_INTERVAL)
 }
 
-async function copyUrl(url: string, token: string) {
-  try {
-    await copyFeedback.run(async () => {
-      await navigator.clipboard.writeText(url)
-    }, token)
-  } catch {
-    // button shows error state, no toast needed for copy
-  }
-}
-
-async function handleRefreshSub(subToken: string) {
+async function handleRefreshSub(sid: string) {
   try {
     await refreshFeedback.run(async () => {
-      await api.refreshSubscription(authStore.token, subToken)
+      await api.refreshSubscription(sid)
       await subStore.load().catch(() => {})
-      await authStore.fetchUserInfo()
-    }, subToken)
+    }, sid)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
   }
 }
 
-async function handleRotateSub(subToken: string) {
+async function handleDeleteSub(sid: string) {
   try {
-    await api.rotateSubscription(authStore.token, subToken)
-    toast.success('订阅链接已重置')
-    await subStore.load(true).catch(() => {})
-  } catch (error) {
-    toast.error(parseApiError(error, '重置链接失败'))
-  }
-}
-
-async function handleRotateAll() {
-  try {
-    const result = await api.rotateAllSubscriptions(authStore.token)
-    toast.success(`已重置 ${result.count} 个订阅链接`)
-    // All tokens changed — must re-fetch; bypass browser cache
-    await subStore.load(true).catch(() => {})
-  } catch (error) {
-    toast.error(parseApiError(error, '重置链接失败'))
-  }
-}
-
-async function handleDeleteSub(subToken: string) {
-  try {
-    await api.deleteSubscription(authStore.token, subToken)
+    await api.deleteSubscription(sid)
     await subStore.load().catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
@@ -508,30 +272,16 @@ async function handleSyncAll() {
     await syncFeedback.run(async () => {
       const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
       const results = await Promise.allSettled(
-        personalSubs.map(sub => api.refreshSubscription(authStore.token, sub.calendar_token))
+        personalSubs.map(sub => api.refreshSubscription(sub.id))
       )
       const failures = results.filter(r => r.status === 'rejected')
       if (failures.length > 0) {
         throw failures.length === 1 ? failures[0].reason : new Error(`${failures.length} 个订阅同步失败`)
       }
       await subStore.load().catch(() => {})
-      await authStore.fetchUserInfo()
     })
   } catch (error) {
     toast.error(parseApiError(error, '同步失败'))
-  }
-}
-
-async function handleDelete() {
-  deleting.value = true
-  try {
-    await api.deleteUser(authStore.token)
-    authStore.logout()
-    router.push('/')
-  } catch {
-    toast.error('删除账号失败')
-  } finally {
-    deleting.value = false
   }
 }
 

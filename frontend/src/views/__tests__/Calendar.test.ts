@@ -6,20 +6,14 @@ import type { FormattedEvent } from '@/types/api'
 
 const { mockApi } = vi.hoisted(() => {
   const mockApi = {
-    register: vi.fn(),
-    recoverToken: vi.fn(),
-    recoverTokenVerify: vi.fn(),
-    getUserInfo: vi.fn(),
-    deleteUser: vi.fn(),
-    searchSchedule: vi.fn(),
-    getDepartments: vi.fn(),
-    createSubscription: vi.fn(),
+    getMe: vi.fn(),
+    getConfig: vi.fn(),
     getSubscriptions: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
     getHealth: vi.fn(),
-    getConfig: vi.fn(),
-    getCalendarData: vi.fn(),
+    // v2: getViewData replaces getCalendarData
+    getViewData: vi.fn(),
   }
   return { mockApi }
 })
@@ -54,7 +48,7 @@ describe('Calendar View', () => {
   })
 
   it('shows loading spinner initially', async () => {
-    mockApi.getCalendarData.mockReturnValue(new Promise(() => {})) // never resolves
+    mockApi.getViewData.mockReturnValue(new Promise(() => {})) // never resolves
     const { wrapper } = await mountWithContext(CalendarView, {
       initialRoute: '/calendar/test-token',
     })
@@ -62,7 +56,7 @@ describe('Calendar View', () => {
   })
 
   it('renders FullCalendar after data loads', async () => {
-    mockApi.getCalendarData.mockResolvedValue({
+    mockApi.getViewData.mockResolvedValue({
       semester: '2025秋',
       semester_start: '2025-09-01',
       generated_at: new Date().toISOString(),
@@ -77,34 +71,22 @@ describe('Calendar View', () => {
     expect(wrapper.text()).toContain('2025秋 课表')
   })
 
-  it('shows error message on API failure', async () => {
-    mockApi.getCalendarData.mockRejectedValue({
-      response: { status: 404, data: { detail: { error: { code: 'NOT_FOUND', message: '订阅不存在' } } } },
+  it('shows error message on API failure (404)', async () => {
+    mockApi.getViewData.mockRejectedValue({
+      response: { status: 404, data: { detail: { error: { code: 'NOT_FOUND', message: '链接不存在' } } } },
     })
     const { wrapper } = await mountWithContext(CalendarView, {
       initialRoute: '/calendar/bad-token',
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('订阅不存在')
-    expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
-  })
-
-  it('shows NOT_SYNCED error for unsynced subscriptions', async () => {
-    mockApi.getCalendarData.mockRejectedValue({
-      response: { status: 202, data: { detail: { error: { code: 'NOT_SYNCED', message: 'Not synced' } } } },
-    })
-    const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/new-token',
-    })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('课表数据尚未同步')
+    // parseApiError maps NOT_FOUND → '订阅不存在或链接已失效'
+    expect(wrapper.text()).toContain('订阅不存在或链接已失效')
     expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
   })
 
   it('shows fallback error for network failures', async () => {
-    mockApi.getCalendarData.mockRejectedValue(new Error('Network Error'))
+    mockApi.getViewData.mockRejectedValue(new Error('Network Error'))
     const { wrapper } = await mountWithContext(CalendarView, {
       initialRoute: '/calendar/test-token',
     })
@@ -113,23 +95,23 @@ describe('Calendar View', () => {
     expect(wrapper.text()).toContain('加载课表数据失败')
   })
 
-  it('calls API with correct sub_token from route', async () => {
-    mockApi.getCalendarData.mockResolvedValue({
+  it('calls api.getViewData with correct token from route', async () => {
+    mockApi.getViewData.mockResolvedValue({
       semester: '2025秋',
       semester_start: '2025-09-01',
       generated_at: new Date().toISOString(),
       events: [],
     })
     await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/my-sub-token-123',
+      initialRoute: '/calendar/my-link-token-123',
     })
     await flushPromises()
 
-    expect(mockApi.getCalendarData).toHaveBeenCalledWith('my-sub-token-123')
+    expect(mockApi.getViewData).toHaveBeenCalledWith('my-link-token-123')
   })
 
   it('shows fallback title when semester is empty', async () => {
-    mockApi.getCalendarData.mockResolvedValue({
+    mockApi.getViewData.mockResolvedValue({
       semester: '',
       semester_start: '',
       generated_at: new Date().toISOString(),

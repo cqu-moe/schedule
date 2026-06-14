@@ -14,14 +14,20 @@ import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Sonner as Toaster } from '@/components/ui/sonner'
 import { useConfigStore } from '@/stores/config'
+import { useSession } from '@/stores/session'
 
 // Initialize color mode (auto/light/dark), persists to localStorage
 useColorMode({ attribute: 'class', modes: { dark: 'dark', light: '' } })
 
-// Load backend config (public_url etc.) once on app startup
+// Load backend config (public_url) and session (user/caps) once on app startup.
+// Session load: on 401 the axios interceptor redirects to auth.cqu.moe/login.
 const configStore = useConfigStore()
+const session = useSession()
 onMounted(() => {
   configStore.load()
+  session.load().catch(() => {
+    // 401 → interceptor redirects; non-401 network errors are non-fatal here.
+  })
 })
 </script>
 

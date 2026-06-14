@@ -20,6 +20,7 @@
           </Tabs>
 
           <!-- Department tree + grade filter (admin_class only) -->
+          <!-- TODO(FE-2): wire up getDepartments() using v2 API (no auth token param) -->
           <div v-if="sourceType === 'admin_class'" class="space-y-3">
             <div class="space-y-2">
               <Label>选择学院</Label>
@@ -87,7 +88,7 @@
                 v-else
                 size="sm"
                 class="ml-3 shrink-0 cursor-pointer"
-                :disabled="subscribeFeedback.stateOf(item.id) === 'loading' || subStore.subscriptions.length >= subStore.max"
+                :disabled="subscribeFeedback.stateOf(item.id) === 'loading'"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white': subscribeFeedback.stateOf(item.id) === 'success',
                   'bg-destructive hover:bg-destructive text-white': subscribeFeedback.stateOf(item.id) === 'error'
@@ -109,16 +110,9 @@
           </p>
 
           <!-- Limit warning -->
-          <p v-if="subStore.subscriptions.length >= subStore.max" class="text-sm text-amber-600 dark:text-amber-400">
-            已达最大订阅数 ({{ subStore.max }})，请先删除不需要的订阅
+          <p v-if="atLimit" class="text-sm text-amber-600 dark:text-amber-400">
+            已达最大订阅数，请先删除不需要的订阅
           </p>
-
-          <VueHcaptcha
-            v-if="captchaEnabled && captchaMounted"
-            ref="hcaptchaRef"
-            :sitekey="captchaSitekey"
-            size="invisible"
-          />
         </CardContent>
       </Card>
 
@@ -127,15 +121,6 @@
         <Alert variant="destructive">
           <AlertDescription>
             {{ errorMessage }}
-            <Button
-              v-if="isTokenExpired"
-              variant="link"
-              size="sm"
-              class="px-0 text-destructive cursor-pointer"
-              @click="$router.push('/login')"
-            >
-              重新登录
-            </Button>
           </AlertDescription>
         </Alert>
       </div>
@@ -144,13 +129,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+// TODO(FE-2): full rewrite — this is a minimal shim that wires up the v2 API
+// (searchExternal / getDepartments / createSubscription). Captcha is removed.
+// The session caps gating (external flag, sub_limit) is deferred to FE-2.
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
-import { useCaptcha } from '@/composables/useCaptcha'
 import { toast } from 'vue-sonner'
-import VueHcaptcha from '@hcaptcha/vue3-hcaptcha'
-import { useAuthStore } from '@/stores/auth'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import api from '@/api'
 import type { SearchResult, SourceType } from '@/types/api'
@@ -167,9 +152,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { parseApiError } from '@/utils/error'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 
-const authStore = useAuthStore()
 const subStore = useSubscriptionsStore()
-const { hcaptchaRef, captchaEnabled, captchaSitekey, getCaptchaToken } = useCaptcha()
 
 const sourceType = ref<SourceType>('instructor')
 const keyword = ref('')
@@ -180,14 +163,15 @@ const searchResults = ref<SearchResult[]>([])
 const searching = ref(false)
 const searched = ref(false)
 const subscribeFeedback = useButtonFeedback()
-const captchaMounted = ref(false)
 const errorMessage = ref('')
-const isTokenExpired = ref(false)
+
+// TODO(FE-2): derive atLimit from session.quota('sub_limit')
+const atLimit = computed(() => false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const searchPlaceholder = computed(() => {
-  const map = {
+  const map: Record<string, string> = {
     instructor: '输入教师姓名或工号',
     room: '输入教室编号',
     laboratory: '输入实验室名称',
@@ -203,20 +187,8 @@ function isSubscribed(sourceId: string) {
   )
 }
 
-function handleApiError(err: unknown, fallbackMessage: string) {
-  const msg = parseApiError(err, fallbackMessage)
-  const resp = (err as { response?: { status?: number } })?.response
-  if (resp?.status === 401 || /token expired/i.test(msg)) {
-    errorMessage.value = msg
-    isTokenExpired.value = true
-  } else {
-    toast.error(msg)
-  }
-}
-
 function clearError() {
   errorMessage.value = ''
-  isTokenExpired.value = false
 }
 
 const gradeOptions = computed(() => {
@@ -243,10 +215,12 @@ function handleGradeChange() {
 
 async function loadDepartments() {
   try {
-    const data = await api.getDepartments(authStore.token)
-    departments.value = data.departments
+    // TODO(FE-2): DepartmentNode is a tree; DepartmentTreeSelect currently
+    // accepts SearchResult[] — update it to DepartmentNode[] in FE-2
+    const data = await api.getDepartments()
+    departments.value = data.departments as unknown as SearchResult[]
   } catch (err: unknown) {
-    handleApiError(err, '加载院系列表失败')
+    toast.error(parseApiError(err, '加载院系列表失败'))
   }
 }
 
@@ -272,16 +246,15 @@ async function doSearch() {
   try {
     const gradeParam = sourceType.value === 'admin_class' && selectedGrade.value !== 'all'
       ? selectedGrade.value : ''
-    const data = await api.searchSchedule(
-      authStore.token,
-      sourceType.value,
-      sourceType.value === 'admin_class' ? '' : keyword.value,
-      sourceType.value === 'admin_class' ? selectedDepartment.value : '',
-      gradeParam,
-    )
+    const data = await api.searchExternal({
+      source_type: sourceType.value,
+      keyword: sourceType.value === 'admin_class' ? '' : keyword.value,
+      department_id: sourceType.value === 'admin_class' ? selectedDepartment.value : undefined,
+      grade: gradeParam || undefined,
+    })
     searchResults.value = data.results
   } catch (err: unknown) {
-    handleApiError(err, '搜索失败')
+    errorMessage.value = parseApiError(err, '搜索失败')
     searchResults.value = []
   } finally {
     searching.value = false
@@ -291,35 +264,17 @@ async function doSearch() {
 
 async function handleSubscribe(item: SearchResult) {
   clearError()
-
-  // Mount hCaptcha on first subscribe attempt.
-  // Note: nextTick ensures the component is in the DOM, but the hCaptcha SDK
-  // may not be fully loaded yet (especially on slow networks). If executeAsync
-  // fails, the catch block below shows an actionable error message.
-  if (captchaEnabled.value && !captchaMounted.value) {
-    captchaMounted.value = true
-    await nextTick()
-  }
-
-  let captchaToken = null
-  try {
-    captchaToken = await getCaptchaToken()
-  } catch {
-    errorMessage.value = '验证码加载失败，请刷新页面重试'
-    return
-  }
-
   try {
     await subscribeFeedback.run(async () => {
-      await api.createSubscription(
-        authStore.token, sourceType.value, item.id, item.name, captchaToken
-      )
+      await api.createSubscription({
+        sourceType: sourceType.value,
+        sourceId: item.id,
+        sourceName: item.name,
+      })
       await subStore.load().catch(() => {})
     }, item.id)
   } catch (err: unknown) {
-    handleApiError(err, '订阅失败')
-  } finally {
-    hcaptchaRef.value?.reset()
+    toast.error(parseApiError(err, '订阅失败'))
   }
 }
 
