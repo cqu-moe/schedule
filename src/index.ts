@@ -8,6 +8,8 @@ import { addSecurityHeaders } from "./middleware/security-headers";
 import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
 import { createMockAuth } from "./services/auth-mock";
+import { sessionMiddleware } from "./middleware/session";
+import subscriptionsV2 from "./routes/v2/subscriptions";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -45,6 +47,12 @@ app.use(
 // Mount routes
 app.route("/api/v1", configRoutes);
 app.route("/api/v1/admin", adminRoutes);
+
+// v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
+// the AUTH service binding before exposing the current user's subscriptions.
+app.use("/api/v2/subscriptions/*", sessionMiddleware);
+app.use("/api/v2/subscriptions", sessionMiddleware);
+app.route("/api/v2/subscriptions", subscriptionsV2);
 
 // Global error handler
 app.onError((err, c) => {
