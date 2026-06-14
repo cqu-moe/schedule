@@ -2,8 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import type { Env } from "../types";
 import type { AuthService, GetCquTicketResult } from "./auth-rpc";
-import { getCquBearer } from "./cqu-bearer";
+import { getCquBearer, resolveOwnStudentId } from "./cqu-bearer";
 import * as authModule from "./auth";
+
+/** Build a fake CQU bearer JWT carrying the given `user_name` (学号) claim. */
+function fakeBearer(userName: string): string {
+  const b64url = (obj: unknown) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b64url({ alg: "none" })}.${b64url({ user_name: userName })}.sig`;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,9 +33,11 @@ function buildEnv(auth: AuthService): Env {
 
 const USER_ID = "user-abc-123";
 const BEARER_KEY = `bearer:${USER_ID}`;
+const STUDENT_KEY = `student:${USER_ID}`;
 
 beforeEach(async () => {
   await env.CACHE.delete(BEARER_KEY);
+  await env.CACHE.delete(STUDENT_KEY);
   vi.restoreAllMocks();
 });
 
@@ -101,5 +110,38 @@ describe("getCquBearer", () => {
     const bearer = await getCquBearer(buildEnv(auth), USER_ID);
 
     expect(bearer).toBeNull();
+  });
+});
+
+describe("resolveOwnStudentId", () => {
+  const auth = fakeAuth({ error: "NOT_USED" });
+
+  it("decodes the 学号 from the bearer and caches it under student:<userId>", async () => {
+    const bearer = fakeBearer("20210001");
+    const studentId = await resolveOwnStudentId(buildEnv(auth), USER_ID, bearer);
+
+    expect(studentId).toBe("20210001");
+    expect(await env.CACHE.get(STUDENT_KEY)).toBe("20210001");
+  });
+
+  it("returns the cached student ID without decoding (ignores the bearer)", async () => {
+    await env.CACHE.put(STUDENT_KEY, "cached-20259999");
+    // A bearer for a DIFFERENT student must not override the cached value.
+    const studentId = await resolveOwnStudentId(
+      buildEnv(auth),
+      USER_ID,
+      fakeBearer("20210001"),
+    );
+    expect(studentId).toBe("cached-20259999");
+  });
+
+  it("returns null (no throw) when the bearer carries no student ID", async () => {
+    const studentId = await resolveOwnStudentId(
+      buildEnv(auth),
+      USER_ID,
+      "opaque-token",
+    );
+    expect(studentId).toBeNull();
+    expect(await env.CACHE.get(STUDENT_KEY)).toBeNull();
   });
 });

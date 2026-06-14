@@ -277,6 +277,42 @@ describe("POST /api/v2/subscriptions", () => {
     expect(JSON.parse(links[0].formats)).toEqual([...LINK_FORMATS]);
   });
 
+  it("SECURITY: pins personal sourceId to the auth user.id, ignoring client input", async () => {
+    const app = buildApp("userA");
+    // Client tries to bind the personal subscription to ANOTHER student's 学号.
+    const res = await app.request(
+      "/",
+      jsonBody({ sourceType: "personal_all", sourceId: "20219999", sourceName: "我的课表" }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; source_id: string };
+    // Response and DB must store the trusted user.id, not the forged 学号.
+    expect(body.source_id).toBe("userA");
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, body.id));
+    expect(row.sourceId).toBe("userA");
+  });
+
+  it("keeps the client-supplied sourceId for explore (external) source types", async () => {
+    const app = buildApp("userA");
+    const res = await app.request(
+      "/",
+      jsonBody({ sourceType: "instructor", sourceId: "T-42", sourceName: "张老师" }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; source_id: string };
+    expect(body.source_id).toBe("T-42");
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, body.id));
+    expect(row.sourceId).toBe("T-42");
+  });
+
   it("rejects invalid sourceType → 400 INVALID_INPUT", async () => {
     const app = buildApp("userA");
     const res = await app.request("/", jsonBody({ ...VALID_CREATE, sourceType: "bogus" }));

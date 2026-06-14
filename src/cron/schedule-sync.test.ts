@@ -14,6 +14,13 @@ import type { Env } from "../types";
 
 const db = drizzle(env.DB);
 
+/** Build a fake CQU bearer JWT carrying the given `user_name` (学号) claim. */
+function fakeBearer(userName: string): string {
+  const b64url = (obj: unknown) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b64url({ alg: "none" })}.${b64url({ user_name: userName })}.sig`;
+}
+
 // ── DB setup (real D1 from cloudflare:test) ──────────────────────────────────
 
 beforeAll(async () => {
@@ -42,6 +49,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM subscriptions").run();
+  // Clear any cached student IDs so each test resolves from its own bearer.
+  await env.CACHE.delete("student:user-1");
+  await env.CACHE.delete("student:user-attacker");
 });
 
 afterEach(() => {
@@ -155,10 +165,13 @@ function makeBatch(bodies: ScheduleSyncMessage[]) {
 }
 
 describe("processScheduleSyncBatch (consumer)", () => {
-  it("syncs a personal subscription and updates its row", async () => {
-    const sid = await insertSub({ sourceType: "personal_all", sourceId: "20210001" });
+  it("syncs a personal subscription using the bearer's own 学号, not the stored sourceId", async () => {
+    // The stored sourceId is the trusted auth user.id (NOT a 学号). The personal
+    // schedule must be fetched against the bearer subject's own 学号.
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    await env.CACHE.delete("sync:personal:20210001");
 
-    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
     vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
       current_session_id: "sess-1",
       sessions: {},
@@ -169,7 +182,9 @@ describe("processScheduleSyncBatch (consumer)", () => {
       begin_date: "2024-09-01",
       end_date: "2025-01-15",
     });
-    vi.spyOn(CQUAPIClient.prototype, "getSchedule").mockResolvedValue([]);
+    const getSchedule = vi
+      .spyOn(CQUAPIClient.prototype, "getSchedule")
+      .mockResolvedValue([]);
     vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
 
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
@@ -177,6 +192,8 @@ describe("processScheduleSyncBatch (consumer)", () => {
 
     expect(messages[0].ack).toHaveBeenCalled();
     expect(messages[0].retry).not.toHaveBeenCalled();
+    // Fetched the bearer's own 学号 (20210001), not the stored sourceId (user-1).
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
 
     const [row] = await db
       .select()
@@ -185,6 +202,73 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).not.toBeNull();
     expect(row.coursesJson).toBe("[]");
     expect(row.icsContent).toContain("BEGIN:VCALENDAR");
+  });
+
+  it("SECURITY: ignores a crafted/other-student sourceId; fetches only the bearer subject's schedule", async () => {
+    // An attacker stored another student's 学号 (20219999) as sourceId hoping the
+    // sync would leak that student's private schedule via the public link. The
+    // sync must instead resolve the bearer's OWN 学号 (20210001) and never touch
+    // the stored sourceId.
+    const sid = await insertSub({
+      sourceType: "personal_all",
+      sourceId: "20219999", // forged: someone else's 学号
+    });
+    await env.CACHE.delete("sync:personal:20210001");
+    await env.CACHE.delete("sync:personal:20219999");
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi
+      .spyOn(CQUAPIClient.prototype, "getSchedule")
+      .mockResolvedValue([]);
+    vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Only the bearer's own 学号 was queried — the forged sourceId was ignored.
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
+    expect(getSchedule).not.toHaveBeenCalledWith("20219999", "sess-1");
+  });
+
+  it("skips and acks (no retry) a personal sub when the bearer has no 学号", async () => {
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    // Opaque (non-JWT) bearer → no resolvable 学号.
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("opaque-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBeNull();
   });
 
   it("syncs an explore subscription via fetchTargetSchedule", async () => {
