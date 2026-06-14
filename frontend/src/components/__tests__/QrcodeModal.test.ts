@@ -5,7 +5,7 @@ import QrcodeModal from '@/components/QrcodeModal.vue'
 describe('QrcodeModal', () => {
   const defaultProps = {
     modelValue: true,
-    url: 'https://schedule.cqu.moe/api/v1/subscriptions/abc123/calendar.ics',
+    url: 'https://schedule.cqu.moe/api/v2/calendar/abc123/calendar.ics',
   }
 
   it('renders "扫码订阅" text when modelValue is true', () => {

@@ -40,7 +40,7 @@
           <div class="text-center">
             <Lock class="h-8 w-8 text-muted-foreground mb-3 mx-auto" />
             <h3 class="font-heading font-semibold text-lg">安全加密</h3>
-            <p class="text-sm text-muted-foreground mt-1">密码加密存储，Token 认证访问</p>
+            <p class="text-sm text-muted-foreground mt-1">通过 CQU 统一身份认证登录，链接令牌控制访问</p>
           </div>
         </div>
       </div>

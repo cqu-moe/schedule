@@ -26,7 +26,7 @@ describe('Docs view', () => {
     expect(wrapper.text()).toContain('API 文档')
   })
 
-  it('renders endpoint descriptions', async () => {
+  it('renders all five endpoint cards', async () => {
     const { wrapper } = await mountWithContext(Docs, { global: { stubs } })
     const text = wrapper.text()
 
@@ -34,7 +34,29 @@ describe('Docs view', () => {
     expect(text).toContain('格式化事件 JSON')
     expect(text).toContain('CSV 导出')
     expect(text).toContain('原始数据 JSON')
-    expect(text).toContain('刷新订阅')
+    expect(text).toContain('网页查看')
+  })
+
+  it('renders v2 calendar API paths and no v1 paths', async () => {
+    const { wrapper } = await mountWithContext(Docs, { global: { stubs } })
+    const html = wrapper.html()
+
+    expect(html).toContain('/api/v2/calendar/')
+    expect(html).not.toContain('/api/v1/')
+  })
+
+  it('renders /view/{令牌} for the web format', async () => {
+    const { wrapper } = await mountWithContext(Docs, { global: { stubs } })
+    expect(wrapper.html()).toContain('/view/')
+  })
+
+  it('renders refresh info section without Authorization header snippet', async () => {
+    const { wrapper } = await mountWithContext(Docs, { global: { stubs } })
+    const html = wrapper.html()
+
+    expect(wrapper.text()).toContain('刷新订阅')
+    // No Authorization: Bearer code block (the v1 pattern) — explanatory prose is fine
+    expect(html).not.toContain('Authorization: Bearer')
   })
 
   it('renders JSON field table with expected fields', async () => {
@@ -43,5 +65,13 @@ describe('Docs view', () => {
 
     expect(text).toContain('semester')
     expect(text).toContain('events[].name')
+  })
+
+  it('renders link token explanation mentioning 默认链接 and 共享链接', async () => {
+    const { wrapper } = await mountWithContext(Docs, { global: { stubs } })
+    const text = wrapper.text()
+
+    expect(text).toContain('默认链接')
+    expect(text).toContain('共享链接')
   })
 })
