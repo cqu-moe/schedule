@@ -155,7 +155,6 @@ export async function mountWithContext(
       ...restGlobal,
       stubs: {
         Navbar: { template: '<nav data-testid="navbar" />' },
-        RiskWarning: { template: '<div data-testid="risk-warning" />' },
         QrcodeModal: { template: '<div data-testid="qrcode-modal" />' },
         ...(customStubs as Record<string, any> || {}),
       },
