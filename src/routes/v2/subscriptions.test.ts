@@ -148,6 +148,26 @@ async function insertSub(userId: string, overrides: Partial<typeof subscriptions
   return id;
 }
 
+/** Insert a calendar_links row directly (bypasses the route) for fixture setup. */
+async function insertLink(
+  subscriptionId: string,
+  overrides: Partial<typeof calendarLinks.$inferInsert> = {},
+) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(calendarLinks).values({
+    id,
+    subscriptionId,
+    token: `tok-${id}`,
+    formats: JSON.stringify(["ics"]),
+    isDefault: false,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  return id;
+}
+
 // ── GET / (list) ─────────────────────────────────────────────────────────────
 
 describe("GET /api/v2/subscriptions", () => {
@@ -380,5 +400,330 @@ describe("DELETE /api/v2/subscriptions/:sid", () => {
       .from(subscriptions)
       .where(eq(subscriptions.id, subId));
     expect(still).toHaveLength(1);
+  });
+});
+
+// ── E2: GET /:sid/links and /:sid/links/:lid ─────────────────────────────────
+
+describe("GET /api/v2/subscriptions/:sid/links", () => {
+  it("lists all links for the subscription, default first", async () => {
+    const subId = await insertSub("userA");
+    await insertLink(subId, { token: "share-1", isDefault: false });
+    await insertLink(subId, {
+      token: "default-1",
+      isDefault: true,
+      formats: JSON.stringify([...LINK_FORMATS]),
+    });
+
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      links: { token: string; is_default: boolean }[];
+      count: number;
+    };
+    expect(body.count).toBe(2);
+    expect(body.links[0].token).toBe("default-1");
+    expect(body.links[0].is_default).toBe(true);
+    expect(body.links[1].token).toBe("share-1");
+  });
+
+  it("returns 404 listing links of another user's subscription", async () => {
+    const subId = await insertSub("userB");
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`);
+    expect(res.status).toBe(404);
+  });
+
+  it("gets a single link", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { token: "single" });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; token: string };
+    expect(body.id).toBe(lid);
+    expect(body.token).toBe("single");
+  });
+
+  it("returns 404 for a link not belonging to the subscription", async () => {
+    const subId = await insertSub("userA");
+    const otherSub = await insertSub("userA", { sourceId: "999" });
+    const lid = await insertLink(otherSub);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 getting a link of another user's subscription", async () => {
+    const subId = await insertSub("userB");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── E3: POST /:sid/links (create share link) ─────────────────────────────────
+
+describe("POST /api/v2/subscriptions/:sid/links", () => {
+  it("creates a share link → 201 + Location + correct formats stored", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA");
+    const res = await app.request(
+      `/${subId}/links`,
+      jsonBody({ label: "给同学", formats: ["ics", "web"] }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      id: string;
+      token: string;
+      label: string | null;
+      formats: string[];
+      is_default: boolean;
+    };
+    expect(res.headers.get("Location")).toBe(
+      `/api/v2/subscriptions/${subId}/links/${body.id}`,
+    );
+    expect(body.label).toBe("给同学");
+    expect(body.formats).toEqual(["ics", "web"]);
+    expect(body.is_default).toBe(false);
+
+    const rows = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, body.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].isDefault).toBe(false);
+    expect(JSON.parse(rows[0].formats)).toEqual(["ics", "web"]);
+  });
+
+  it("allows a missing label (null)", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`, jsonBody({ formats: ["csv"] }));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { label: string | null };
+    expect(body.label).toBeNull();
+  });
+
+  it("without `share` cap → 403 FEATURE_NOT_ENABLED", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA", capsWith({ share: false }));
+    const res = await app.request(`/${subId}/links`, jsonBody({ formats: ["ics"] }));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+  });
+
+  it("share_limit counts across all subscriptions → 409 QUOTA_EXCEEDED", async () => {
+    // Two subscriptions for userA, one share link on each → 2 total.
+    const sub1 = await insertSub("userA", { sourceId: "111" });
+    const sub2 = await insertSub("userA", { sourceId: "222" });
+    await insertLink(sub1, { token: "s1", isDefault: false });
+    await insertLink(sub2, { token: "s2", isDefault: false });
+    // A default link must NOT count toward the limit.
+    await insertLink(sub1, { token: "d1", isDefault: true });
+
+    const app = buildApp("userA", capsWith({ share_limit: 2 }));
+    const res = await app.request(`/${sub1}/links`, jsonBody({ formats: ["ics"] }));
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("QUOTA_EXCEEDED");
+  });
+
+  it("invalid formats → 400 INVALID_FORMATS", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`, jsonBody({ formats: ["bogus"] }));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INVALID_FORMATS");
+  });
+
+  it("empty formats → 400 INVALID_FORMATS", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`, jsonBody({ formats: [] }));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INVALID_FORMATS");
+  });
+
+  it("returns 404 creating a link on another user's subscription", async () => {
+    const subId = await insertSub("userB");
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links`, jsonBody({ formats: ["ics"] }));
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an overly long label → 400", async () => {
+    const subId = await insertSub("userA");
+    const app = buildApp("userA");
+    const res = await app.request(
+      `/${subId}/links`,
+      jsonBody({ label: "x".repeat(101), formats: ["ics"] }),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+// ── E4: PATCH /:sid/links/:lid ───────────────────────────────────────────────
+
+describe("PATCH /api/v2/subscriptions/:sid/links/:lid", () => {
+  it("updates label and formats of a share link", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { label: "old", formats: JSON.stringify(["ics"]) });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "new", formats: ["web", "csv"] }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { label: string; formats: string[] };
+    expect(body.label).toBe("new");
+    expect(body.formats).toEqual(["web", "csv"]);
+
+    const [row] = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, lid));
+    expect(row.label).toBe("new");
+    expect(JSON.parse(row.formats)).toEqual(["web", "csv"]);
+  });
+
+  it("rejects patching the default link → 403 DEFAULT_LINK_IMMUTABLE", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { isDefault: true });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "x" }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("DEFAULT_LINK_IMMUTABLE");
+  });
+
+  it("rejects invalid formats on patch → 400 INVALID_FORMATS", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ formats: ["bogus"] }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INVALID_FORMATS");
+  });
+
+  it("returns 404 patching another user's link", async () => {
+    const subId = await insertSub("userB");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── E5: DELETE /:sid/links/:lid ──────────────────────────────────────────────
+
+describe("DELETE /api/v2/subscriptions/:sid/links/:lid", () => {
+  it("deletes a share link → 204", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+
+    const rows = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, lid));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("rejects deleting the default link → 403 DEFAULT_LINK_IMMUTABLE", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { isDefault: true });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, { method: "DELETE" });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("DEFAULT_LINK_IMMUTABLE");
+
+    const rows = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, lid));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("returns 404 deleting another user's link", async () => {
+    const subId = await insertSub("userB");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── E6: POST /:sid/links/:lid/rotations ──────────────────────────────────────
+
+describe("POST /api/v2/subscriptions/:sid/links/:lid/rotations", () => {
+  it("rotates the token: old token gone, new token present → 201", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { token: "old-token" });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}/rotations`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { token: string };
+    expect(body.token).not.toBe("old-token");
+
+    // Old token must be gone; new token present on the same row.
+    const [row] = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, lid));
+    expect(row.token).toBe(body.token);
+    expect(row.token).not.toBe("old-token");
+
+    const oldRows = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.token, "old-token"));
+    expect(oldRows).toHaveLength(0);
+  });
+
+  it("allows rotating the default link's token", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { token: "default-old", isDefault: true });
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}/rotations`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { token: string };
+    expect(body.token).not.toBe("default-old");
+  });
+
+  it("returns 404 rotating another user's link", async () => {
+    const subId = await insertSub("userB");
+    const lid = await insertLink(subId);
+    const app = buildApp("userA");
+    const res = await app.request(`/${subId}/links/${lid}/rotations`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
   });
 });

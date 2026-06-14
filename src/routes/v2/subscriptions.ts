@@ -13,8 +13,12 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { errorResponse } from "../../utils/error";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
+import { parseFormats } from "../../services/links";
 
 const app = new Hono<SessionEnv>();
+
+/** Max length for a user-supplied link label. */
+const LABEL_MAX_LEN = 100;
 
 const SOURCE_TYPE_SET: ReadonlySet<string> = new Set<string>(SOURCE_TYPES);
 
@@ -317,6 +321,301 @@ app.delete("/:sid", async (c) => {
   );
 
   return c.body(null, 204);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Calendar links (nested under /:sid/links) — guarded by sessionMiddleware via
+//  the parent mount. Every handler first verifies the :sid subscription belongs
+//  to the current user (404 otherwise).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Return the subscription if it belongs to `userId`, else undefined. */
+async function ownedSubscription(db: ReturnType<typeof drizzle>, sid: string, userId: string) {
+  const [sub] = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, userId)))
+    .limit(1);
+  return sub;
+}
+
+/** Return the link if it exists and belongs to the given subscription, else undefined. */
+async function linkOfSubscription(
+  db: ReturnType<typeof drizzle>,
+  lid: string,
+  sid: string,
+) {
+  const [link] = await db
+    .select()
+    .from(calendarLinks)
+    .where(and(eq(calendarLinks.id, lid), eq(calendarLinks.subscriptionId, sid)))
+    .limit(1);
+  return link;
+}
+
+// ── E2: GET /:sid/links — list links for the subscription (default first) ─────
+app.get("/:sid/links", async (c) => {
+  const user = c.get("user");
+  const sid = c.req.param("sid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+
+  const links = await db
+    .select()
+    .from(calendarLinks)
+    .where(eq(calendarLinks.subscriptionId, sid))
+    .orderBy(desc(calendarLinks.isDefault), asc(calendarLinks.createdAt));
+
+  return c.json({ links: links.map(toLinkSummary), count: links.length });
+});
+
+// ── E2: GET /:sid/links/:lid — single link ───────────────────────────────────
+app.get("/:sid/links/:lid", async (c) => {
+  const user = c.get("user");
+  const sid = c.req.param("sid");
+  const lid = c.req.param("lid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+  const link = await linkOfSubscription(db, lid, sid);
+  if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
+
+  return c.json(toLinkSummary(link));
+});
+
+// ── E3: POST /:sid/links — create a share link (caps.share + share_limit) ─────
+app.post("/:sid/links", async (c) => {
+  const user = c.get("user");
+  const caps = c.get("caps").calendar;
+  const sid = c.req.param("sid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return errorResponse("INVALID_INPUT", "无效的 JSON 请求体", 400);
+  }
+
+  // Optional label (≤ LABEL_MAX_LEN chars).
+  let label: string | null = null;
+  if (body.label !== undefined && body.label !== null) {
+    if (typeof body.label !== "string") {
+      return errorResponse("INVALID_INPUT", "label 必须为字符串", 400);
+    }
+    if (body.label.length > LABEL_MAX_LEN) {
+      return errorResponse("INVALID_INPUT", `label 长度不能超过 ${LABEL_MAX_LEN}`, 400);
+    }
+    label = body.label.length > 0 ? body.label : null;
+  }
+
+  // Formats: validated subset of LINK_FORMATS.
+  let formats: string[];
+  try {
+    formats = parseFormats(body.formats);
+  } catch {
+    return errorResponse("INVALID_FORMATS", "formats 无效", 400);
+  }
+
+  // Entitlement: share flag + per-user share_limit (across ALL subscriptions,
+  // excluding default links).
+  try {
+    assertFlag(caps, "share", "共享链接");
+
+    const [countRow] = await db
+      .select({ cnt: sql<number>`count(*)` })
+      .from(calendarLinks)
+      .innerJoin(subscriptions, eq(calendarLinks.subscriptionId, subscriptions.id))
+      .where(and(eq(subscriptions.userId, user.id), eq(calendarLinks.isDefault, false)));
+    assertQuota(caps, "share_limit", countRow?.cnt ?? 0, "共享链接");
+  } catch (e) {
+    return entitlementError(e);
+  }
+
+  const linkId = crypto.randomUUID();
+  const token = await generateUniqueToken((t) => linkTokenExists(db, t));
+  const now = new Date().toISOString();
+  const formatsJson = JSON.stringify(formats);
+
+  await db.insert(calendarLinks).values({
+    id: linkId,
+    subscriptionId: sid,
+    token,
+    label,
+    formats: formatsJson,
+    isDefault: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  console.log(
+    JSON.stringify({
+      event: "link.v2.create",
+      userId: user.id,
+      subscriptionId: sid,
+      linkId,
+      formats,
+      message: "Share link created",
+    }),
+  );
+
+  return c.json(
+    toLinkSummary({ id: linkId, token, label, formats: formatsJson, isDefault: false }),
+    201,
+    { Location: `/api/v2/subscriptions/${sid}/links/${linkId}` },
+  );
+});
+
+// ── E4: PATCH /:sid/links/:lid — update label/formats (default immutable) ─────
+app.patch("/:sid/links/:lid", async (c) => {
+  const user = c.get("user");
+  const sid = c.req.param("sid");
+  const lid = c.req.param("lid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+  const link = await linkOfSubscription(db, lid, sid);
+  if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
+  if (link.isDefault) {
+    return errorResponse("DEFAULT_LINK_IMMUTABLE", "默认链接不可修改", 403);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return errorResponse("INVALID_INPUT", "无效的 JSON 请求体", 400);
+  }
+
+  const updates: Partial<typeof calendarLinks.$inferInsert> = {};
+
+  if (body.label !== undefined) {
+    if (body.label === null) {
+      updates.label = null;
+    } else if (typeof body.label !== "string") {
+      return errorResponse("INVALID_INPUT", "label 必须为字符串", 400);
+    } else if (body.label.length > LABEL_MAX_LEN) {
+      return errorResponse("INVALID_INPUT", `label 长度不能超过 ${LABEL_MAX_LEN}`, 400);
+    } else {
+      updates.label = body.label.length > 0 ? body.label : null;
+    }
+  }
+
+  if (body.formats !== undefined) {
+    let formats: string[];
+    try {
+      formats = parseFormats(body.formats);
+    } catch {
+      return errorResponse("INVALID_FORMATS", "formats 无效", 400);
+    }
+    updates.formats = JSON.stringify(formats);
+  }
+
+  updates.updatedAt = new Date().toISOString();
+
+  await db.update(calendarLinks).set(updates).where(eq(calendarLinks.id, lid));
+
+  console.log(
+    JSON.stringify({
+      event: "link.v2.patch",
+      userId: user.id,
+      subscriptionId: sid,
+      linkId: lid,
+      message: "Share link updated",
+    }),
+  );
+
+  return c.json(
+    toLinkSummary({
+      id: link.id,
+      token: link.token,
+      label: updates.label !== undefined ? (updates.label ?? null) : link.label,
+      formats: updates.formats ?? link.formats,
+      isDefault: link.isDefault,
+    }),
+  );
+});
+
+// ── E5: DELETE /:sid/links/:lid — delete a share link (default immutable) ─────
+app.delete("/:sid/links/:lid", async (c) => {
+  const user = c.get("user");
+  const sid = c.req.param("sid");
+  const lid = c.req.param("lid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+  const link = await linkOfSubscription(db, lid, sid);
+  if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
+  if (link.isDefault) {
+    return errorResponse("DEFAULT_LINK_IMMUTABLE", "默认链接不可删除", 403);
+  }
+
+  await db.delete(calendarLinks).where(eq(calendarLinks.id, lid));
+
+  console.log(
+    JSON.stringify({
+      event: "link.v2.delete",
+      userId: user.id,
+      subscriptionId: sid,
+      linkId: lid,
+      message: "Share link deleted",
+    }),
+  );
+
+  return c.body(null, 204);
+});
+
+// ── E6: POST /:sid/links/:lid/rotations — rotate token (default allowed) ──────
+app.post("/:sid/links/:lid/rotations", async (c) => {
+  const user = c.get("user");
+  const sid = c.req.param("sid");
+  const lid = c.req.param("lid");
+  const db = drizzle(c.env.DB);
+
+  if (!(await ownedSubscription(db, sid, user.id))) {
+    return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+  const link = await linkOfSubscription(db, lid, sid);
+  if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
+
+  const token = await generateUniqueToken((t) => linkTokenExists(db, t));
+  const now = new Date().toISOString();
+
+  await db
+    .update(calendarLinks)
+    .set({ token, updatedAt: now })
+    .where(eq(calendarLinks.id, lid));
+
+  console.log(
+    JSON.stringify({
+      event: "link.v2.rotate",
+      userId: user.id,
+      subscriptionId: sid,
+      linkId: lid,
+      message: "Link token rotated",
+    }),
+  );
+
+  const publicUrl = c.env.PUBLIC_URL;
+  const responseBody: { token: string; url?: string } = { token };
+  if (publicUrl) {
+    responseBody.url = `${publicUrl.replace(/\/$/, "")}/api/v2/calendar/${token}/calendar.ics`;
+  }
+
+  return c.json(responseBody, 201);
 });
 
 /** Serialize a subscription row into the public snake_case shape (sans links). */
