@@ -296,7 +296,7 @@ describe("POST /api/v2/subscriptions", () => {
     expect(row.sourceId).toBe("userA");
   });
 
-  it("keeps the client-supplied sourceId for explore (external) source types", async () => {
+  it("keeps the client-supplied sourceId for external source types", async () => {
     const app = buildApp("userA");
     const res = await app.request(
       "/",

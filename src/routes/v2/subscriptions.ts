@@ -6,7 +6,7 @@ import {
   calendarLinks,
   LINK_FORMATS,
   SOURCE_TYPES,
-  EXPLORE_SOURCE_TYPES,
+  EXTERNAL_SOURCE_TYPES,
   PERSONAL_SOURCE_TYPES,
   type SourceType,
 } from "../../db/schema";
@@ -165,7 +165,7 @@ app.post("/", async (c) => {
   }
 
   const sourceTypeTyped = sourceType as SourceType;
-  const isExternal = EXPLORE_SOURCE_TYPES.has(sourceTypeTyped);
+  const isExternal = EXTERNAL_SOURCE_TYPES.has(sourceTypeTyped);
 
   const sessionId =
     typeof body.sessionId === "string" && body.sessionId.length > 0
@@ -188,7 +188,7 @@ app.post("/", async (c) => {
   //  the stored sourceId never reaches the CQU API. We therefore IGNORE any
   //  client-supplied sourceId and pin it to the trusted auth `user.id` so it is
   //  a stable per-user identifier (uniqueness/ICS UID namespace) that cannot be
-  //  abused to reference another student. Explore types keep the client
+  //  abused to reference another student. External types keep the client
   //  sourceId — those are public timetables and the target id is meant to vary.
   const effectiveSourceId = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped)
     ? user.id

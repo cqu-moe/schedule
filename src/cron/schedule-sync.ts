@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
-  type ExploreSourceType,
+  type ExternalSourceType,
 } from "../db/schema";
 import type { Env } from "../types";
 import { CQUAPIClient } from "../services/cqu-api";
@@ -13,7 +13,7 @@ import {
   fetchSessionContextCached,
   fetchPersonalScheduleCached,
   buildPersonalSyncResult,
-  buildExploreSyncResult,
+  buildExternalSyncResult,
   applySyncResult,
   preGenerateIcs,
 } from "../services/sync";
@@ -206,11 +206,11 @@ export async function processScheduleSyncBatch(
           const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
           await applySyncResult(db, sub.id, result, ctx, fallback);
         } else {
-          // Explore subscription: sourceId is the target ID; use it as the ICS
+          // External subscription: sourceId is the target ID; use it as the ICS
           // UID namespace (stable per subscription).
-          const result = await buildExploreSyncResult(
+          const result = await buildExternalSyncResult(
             api,
-            sub.sourceType as ExploreSourceType,
+            sub.sourceType as ExternalSourceType,
             sub.sourceId,
             sub.sourceId,
             ctx,

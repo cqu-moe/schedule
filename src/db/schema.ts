@@ -102,7 +102,7 @@ export const SOURCE_TYPES = [
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 export type PersonalSourceType = Extract<SourceType, "personal_all" | "personal_courses" | "personal_exams">;
-export type ExploreSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
+export type ExternalSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
 
 export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSourceType>([
   "personal_all",
@@ -110,7 +110,7 @@ export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSo
   "personal_exams",
 ]);
 
-export const EXPLORE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExploreSourceType>([
+export const EXTERNAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExternalSourceType>([
   "instructor",
   "room",
   "laboratory",

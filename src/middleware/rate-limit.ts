@@ -4,7 +4,7 @@ import { errorResponse } from "../utils/error";
 
 type RateLimitEnv = { Bindings: Env };
 
-export function rateLimit(limiterName: "UNAUTH_LIMITER" | "AUTH_LIMITER" | "EXPLORE_LIMITER") {
+export function rateLimit(limiterName: "UNAUTH_LIMITER" | "AUTH_LIMITER" | "EXTERNAL_LIMITER") {
   return createMiddleware<RateLimitEnv>(async (c, next) => {
     const limiter = c.env[limiterName];
     const key = c.req.header("CF-Connecting-IP") ?? "unknown";

@@ -271,7 +271,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).toBeNull();
   });
 
-  it("syncs an explore subscription via fetchTargetSchedule", async () => {
+  it("syncs an external subscription via fetchTargetSchedule", async () => {
     const sid = await insertSub({
       sourceType: "instructor",
       sourceId: "T-42",

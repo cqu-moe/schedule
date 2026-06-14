@@ -4,7 +4,7 @@ import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
   type SourceType,
-  type ExploreSourceType,
+  type ExternalSourceType,
 } from "../db/schema";
 import {
   CQUAPIClient,
@@ -143,10 +143,10 @@ export function buildPersonalSyncResult(
   return { icsContent, coursesJson, examsJson, semesterStart: data.semesterStart };
 }
 
-/** Fetch target schedule and generate ICS for an explore subscription */
-export async function buildExploreSyncResult(
+/** Fetch target schedule and generate ICS for an external subscription */
+export async function buildExternalSyncResult(
   api: CQUAPIClient,
-  sourceType: ExploreSourceType,
+  sourceType: ExternalSourceType,
   sourceId: string,
   studentId: string,
   ctx: SessionContext,

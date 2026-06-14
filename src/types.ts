@@ -13,7 +13,7 @@ export interface Env {
   // Rate Limiting
   UNAUTH_LIMITER: RateLimit;
   AUTH_LIMITER: RateLimit;
-  EXPLORE_LIMITER: RateLimit;
+  EXTERNAL_LIMITER: RateLimit;
 
   // Queues
   SCHEDULE_SYNC_QUEUE: Queue<ScheduleSyncMessage>;

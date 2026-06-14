@@ -1,4 +1,4 @@
-import type { ExploreSourceType } from "../db/schema";
+import type { ExternalSourceType } from "../db/schema";
 import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
 
 // CQU API endpoints
@@ -27,7 +27,7 @@ const ADMIN_CLASS_SEARCH_URL =
 const DEPARTMENT_LIST_URL =
   "https://my.cqu.edu.cn/api/resourceapi/department/list";
 
-const TABLE_DETAIL_URLS: Record<ExploreSourceType, string> = {
+const TABLE_DETAIL_URLS: Record<ExternalSourceType, string> = {
   instructor:
     "https://my.cqu.edu.cn/api/timetable/class/timetable/instructor/table-detail?sessionId={}",
   room: "https://my.cqu.edu.cn/api/timetable/class/timetable/room/table-detail?sessionId={}",
@@ -604,7 +604,7 @@ export class CQUAPIClient {
   }
 
   async fetchTargetSchedule(
-    sourceType: ExploreSourceType,
+    sourceType: ExternalSourceType,
     sourceId: string,
     sessionId: string,
   ): Promise<CourseEntry[]> {
