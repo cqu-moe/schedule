@@ -501,10 +501,31 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('下载 CSV')
   })
 
-  // ── FE-3 seam ─────────────────────────────────────────────────────────────────
+  // ── FE-3: Share links ─────────────────────────────────────────────────────────
 
-  it('shows placeholder "管理共享链接" item (disabled, FE-3 seam)', async () => {
+  it('shows "管理共享链接" menu item for every subscription', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
     expect(wrapper.text()).toContain('管理共享链接')
+  })
+
+  it('"管理共享链接" menu item is clickable (not disabled)', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    // Under the DropdownMenuItem stub, items render as <div @click="...">
+    const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
+    expect(shareItem).toBeDefined()
+    // The item should not have disabled attribute
+    expect(shareItem!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('opens ShareLinksDialog when "管理共享链接" is clicked', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
+    expect(shareItem).toBeDefined()
+    await shareItem!.trigger('click')
+    await flushPromises()
+    // The stub renders only when open; the vm should now have shareLinksDialog.open = true
+    const vm = wrapper.vm as unknown as { shareLinksDialog: { open: boolean; sub: unknown } }
+    expect(vm.shareLinksDialog.open).toBe(true)
+    expect(vm.shareLinksDialog.sub).not.toBeNull()
   })
 })

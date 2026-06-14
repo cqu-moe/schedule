@@ -78,16 +78,16 @@
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
 
-        <!-- Subscription cards -->
-        <Card v-for="sub in subStore.subscriptions" :key="sub.id" class="mb-4">
+        <!-- M4: Iterate enriched list — each card derives its defaultLink once -->
+        <Card v-for="item in enrichedSubs" :key="item.sub.id" class="mb-4">
           <CardHeader>
             <CardTitle class="text-base flex items-center gap-2 flex-wrap">
               <Badge variant="secondary" class="text-xs">
-                {{ sourceTypeLabel(sub.source_type) }}
+                {{ sourceTypeLabel(item.sub.source_type) }}
               </Badge>
-              {{ sub.source_name }}
+              {{ item.sub.source_name }}
               <Badge
-                v-if="sub.is_personal"
+                v-if="item.sub.is_personal"
                 variant="outline"
                 class="text-xs ml-auto shrink-0"
               >
@@ -95,18 +95,18 @@
               </Badge>
             </CardTitle>
             <div class="flex items-center gap-2 flex-wrap mt-1">
-              <Badge v-if="sub.session_name" variant="outline" class="text-xs">
-                {{ sub.session_name }}
+              <Badge v-if="item.sub.session_name" variant="outline" class="text-xs">
+                {{ item.sub.session_name }}
               </Badge>
               <span
-                v-if="sub.id in pendingRefresh"
+                v-if="item.sub.id in pendingRefresh"
                 class="text-xs text-muted-foreground inline-flex items-center gap-1"
               >
                 <Loader2 class="h-3 w-3 animate-spin" />
                 同步中...
               </span>
-              <span v-else-if="sub.last_synced_at" class="text-xs text-muted-foreground">
-                同步于 {{ formatDate(sub.last_synced_at) }}
+              <span v-else-if="item.sub.last_synced_at" class="text-xs text-muted-foreground">
+                同步于 {{ formatDate(item.sub.last_synced_at) }}
               </span>
               <span v-else class="text-xs text-muted-foreground">
                 尚未同步
@@ -122,53 +122,53 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="refreshFeedback.stateOf(sub.id) === 'loading'"
+                :disabled="refreshFeedback.stateOf(item.sub.id) === 'loading'"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white border-transparent':
-                    refreshFeedback.stateOf(sub.id) === 'success',
+                    refreshFeedback.stateOf(item.sub.id) === 'success',
                   'bg-destructive hover:bg-destructive text-white border-transparent':
-                    refreshFeedback.stateOf(sub.id) === 'error',
+                    refreshFeedback.stateOf(item.sub.id) === 'error',
                 }"
-                @click="handleRefreshSub(sub.id)"
+                @click="handleRefreshSub(item.sub.id)"
               >
                 <Loader2
-                  v-if="refreshFeedback.stateOf(sub.id) === 'loading'"
+                  v-if="refreshFeedback.stateOf(item.sub.id) === 'loading'"
                   class="h-4 w-4 animate-spin mr-1.5"
                 />
                 <Check
-                  v-else-if="refreshFeedback.stateOf(sub.id) === 'success'"
+                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'success'"
                   class="h-4 w-4 mr-1.5"
                 />
                 <X
-                  v-else-if="refreshFeedback.stateOf(sub.id) === 'error'"
+                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'error'"
                   class="h-4 w-4 mr-1.5"
                 />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
                 {{
                   { loading: '同步中', success: '已刷新', error: '失败' }[
-                    refreshFeedback.stateOf(sub.id)
+                    refreshFeedback.stateOf(item.sub.id)
                   ] || '同步'
                 }}
               </Button>
 
               <!-- Copy subscribe URL (ICS) -->
-              <template v-if="subStore.defaultLink(sub)">
+              <template v-if="item.defaultLink">
                 <Button
                   variant="outline"
                   size="sm"
                   class="cursor-pointer"
                   :class="{
                     'bg-green-600 hover:bg-green-600 text-white border-transparent':
-                      copyFeedback.stateOf(sub.id) === 'success',
+                      copyFeedback.stateOf(item.sub.id) === 'success',
                   }"
-                  @click="handleCopyIcs(sub)"
+                  @click="handleCopyIcs(item)"
                 >
                   <Check
-                    v-if="copyFeedback.stateOf(sub.id) === 'success'"
+                    v-if="copyFeedback.stateOf(item.sub.id) === 'success'"
                     class="h-4 w-4 mr-1.5"
                   />
                   <Copy v-else class="h-4 w-4 mr-1.5" />
-                  {{ copyFeedback.stateOf(sub.id) === 'success' ? '已复制' : '复制订阅链接' }}
+                  {{ copyFeedback.stateOf(item.sub.id) === 'success' ? '已复制' : '复制订阅链接' }}
                 </Button>
 
                 <!-- QR code modal -->
@@ -177,14 +177,14 @@
                   size="icon"
                   class="cursor-pointer h-8 w-8"
                   title="二维码"
-                  @click="openQrModal(sub)"
+                  @click="openQrModal(item)"
                 >
                   <QrCode class="h-4 w-4" />
                 </Button>
 
                 <!-- Open web view -->
                 <a
-                  :href="buildLinkUrl(configStore.publicUrl, subStore.defaultLink(sub)!.token, 'web')"
+                  :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'web')"
                   target="_blank"
                   rel="noopener"
                 >
@@ -213,10 +213,10 @@
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <!-- Download links -->
-                  <template v-if="subStore.defaultLink(sub)">
+                  <template v-if="item.defaultLink">
                     <DropdownMenuItem
                       as="a"
-                      :href="buildLinkUrl(configStore.publicUrl, subStore.defaultLink(sub)!.token, 'ics')"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics')"
                       download
                       class="cursor-pointer"
                     >
@@ -225,7 +225,7 @@
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       as="a"
-                      :href="buildLinkUrl(configStore.publicUrl, subStore.defaultLink(sub)!.token, 'data_json')"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'data_json')"
                       download
                       class="cursor-pointer"
                     >
@@ -234,7 +234,7 @@
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       as="a"
-                      :href="buildLinkUrl(configStore.publicUrl, subStore.defaultLink(sub)!.token, 'origin_json')"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'origin_json')"
                       download
                       class="cursor-pointer"
                     >
@@ -243,7 +243,7 @@
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       as="a"
-                      :href="buildLinkUrl(configStore.publicUrl, subStore.defaultLink(sub)!.token, 'csv')"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'csv')"
                       download
                       class="cursor-pointer"
                     >
@@ -252,25 +252,20 @@
                     </DropdownMenuItem>
                   </template>
 
-                  <!-- TODO(FE-3): share-link management -->
-                  <!-- Seam: FE-3 will add a "管理共享链接" item here that opens
-                       a ShareLinksDialog (which handles create/patch/delete/rotate
-                       on non-default CalendarLink objects). The sub.id and
-                       sub.links are already available in this scope. -->
+                  <!-- FE-3: Share-link management -->
                   <DropdownMenuItem
-                    disabled
-                    class="cursor-not-allowed opacity-50"
-                    title="即将推出"
+                    class="cursor-pointer"
+                    @click="openShareLinks(item.sub)"
                   >
                     <Share2 class="h-4 w-4 mr-2" />
                     管理共享链接
                   </DropdownMenuItem>
 
                   <!-- Delete (non-personal only) -->
-                  <template v-if="!sub.is_personal">
+                  <template v-if="!item.sub.is_personal">
                     <DropdownMenuItem
                       class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
-                      @click="openDeleteSubDialog(sub)"
+                      @click="openDeleteSubDialog(item.sub)"
                     >
                       <Trash2 class="h-4 w-4 mr-2" />
                       删除
@@ -297,6 +292,15 @@
 
     <!-- QR code modal -->
     <QrcodeModal v-model="qrModal.open" :url="qrModal.url" />
+
+    <!-- Share links dialog (FE-3) -->
+    <ShareLinksDialog
+      v-if="shareLinksDialog.sub"
+      :open="shareLinksDialog.open"
+      :subscription="shareLinksDialog.sub"
+      @update:open="v => { if (!v) shareLinksDialog.open = false }"
+      @changed="subStore.load(true).catch(() => {})"
+    />
 
     <!-- Delete subscription confirmation dialog -->
     <AlertDialog
@@ -345,12 +349,13 @@ import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { useSession } from '@/stores/session'
 import { useConfigStore } from '@/stores/config'
 import { toast } from 'vue-sonner'
-import type { SourceType, Subscription } from '@/types/api'
+import type { SourceType, Subscription, CalendarLink } from '@/types/api'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import { buildLinkUrl } from '@/utils/links'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
+import ShareLinksDialog from '@/components/ShareLinksDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -377,11 +382,33 @@ const subStore = useSubscriptionsStore()
 const session = useSession()
 const configStore = useConfigStore()
 
+// ── M4: Enriched subscription list ────────────────────────────────────────────
+
+/**
+ * Each entry pairs a subscription with its pre-computed defaultLink so the
+ * template never calls subStore.defaultLink(sub) more than once per card.
+ */
+interface EnrichedSub {
+  sub: Subscription
+  defaultLink: CalendarLink | undefined
+}
+
+const enrichedSubs = computed<EnrichedSub[]>(() =>
+  subStore.subscriptions.map(sub => ({
+    sub,
+    defaultLink: subStore.defaultLink(sub),
+  })),
+)
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const loading = ref(true)
 const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
 const qrModal = ref<{ open: boolean; url: string }>({ open: false, url: '' })
+const shareLinksDialog = reactive<{ open: boolean; sub: Subscription | null }>({
+  open: false,
+  sub: null,
+})
 
 /**
  * Maps sub.id → the last_synced_at value captured AT THE MOMENT of manual
@@ -511,25 +538,28 @@ function openDeleteSubDialog(sub: Subscription) {
   deleteSubDialog.value = { id: sub.id, name: sub.source_name }
 }
 
-async function handleCopyIcs(sub: Subscription) {
-  const link = subStore.defaultLink(sub)
-  if (!link) return
-  const url = buildLinkUrl(configStore.publicUrl, link.token, 'ics')
+function openShareLinks(sub: Subscription) {
+  shareLinksDialog.sub = sub
+  shareLinksDialog.open = true
+}
+
+async function handleCopyIcs(item: EnrichedSub) {
+  if (!item.defaultLink) return
+  const url = buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics')
   try {
     await copyFeedback.run(async () => {
       await navigator.clipboard.writeText(url)
-    }, sub.id)
+    }, item.sub.id)
   } catch {
     toast.error('复制失败，请手动复制链接')
   }
 }
 
-function openQrModal(sub: Subscription) {
-  const link = subStore.defaultLink(sub)
-  if (!link) return
+function openQrModal(item: EnrichedSub) {
+  if (!item.defaultLink) return
   qrModal.value = {
     open: true,
-    url: buildLinkUrl(configStore.publicUrl, link.token, 'ics'),
+    url: buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics'),
   }
 }
 
