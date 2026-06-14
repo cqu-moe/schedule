@@ -1,26 +1,47 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import api from '@/api'
-import type { Subscription } from '@/types/api'
+import type { Subscription, CalendarLink } from '@/types/api'
+import { useSession } from '@/stores/session'
 
-// TODO(FE-2): This store will be fully rewritten for the v2 Dashboard.
-// For now it provides a minimal shim so Dashboard.vue compiles.
 export const useSubscriptionsStore = defineStore('subscriptions', () => {
   const subscriptions = ref<Subscription[]>([])
-  // v2: cap comes from session caps.sub_limit (null = unlimited); use 99 as placeholder
-  const max = ref(99)
+
+  // ── Getters ────────────────────────────────────────────────────────────────
+
+  const count = computed(() => subscriptions.value.length)
+
+  /**
+   * True when the user has reached their subscription cap.
+   * null sub_limit means unlimited → never at limit.
+   */
+  const atLimit = computed<boolean>(() => {
+    const session = useSession()
+    const limit = session.quota('sub_limit')
+    if (limit === null) return false
+    return count.value >= limit
+  })
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the default CalendarLink for a subscription, or undefined if none
+   * exists (shouldn't happen after subscription creation, but guard anyway).
+   */
+  function defaultLink(sub: Subscription): CalendarLink | undefined {
+    return sub.links.find(l => l.is_default)
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
 
   async function load(noCache = false) {
     const data = await api.getSubscriptions(noCache)
     subscriptions.value = data.subscriptions
-    // TODO(FE-2): derive max from session.quota('sub_limit') instead
-    max.value = 99
   }
 
   function $reset() {
     subscriptions.value = []
-    max.value = 99
   }
 
-  return { subscriptions, max, load, $reset }
+  return { subscriptions, count, atLimit, defaultLink, load, $reset }
 })
