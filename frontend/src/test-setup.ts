@@ -42,20 +42,6 @@ config.global.stubs = {
   DropdownMenuTrigger: { template: '<span><slot /></span>', props: ['asChild'] },
 }
 
-// Mock @hcaptcha/vue3-hcaptcha globally
-vi.mock('@hcaptcha/vue3-hcaptcha', () => ({
-  default: {
-    name: 'VueHcaptcha',
-    template: '<div data-testid="hcaptcha" />',
-    props: ['sitekey', 'size'],
-    setup() {
-      const executeAsync = vi.fn().mockResolvedValue({ response: 'mock-captcha-token' })
-      const reset = vi.fn()
-      return { executeAsync, reset }
-    },
-  },
-}))
-
 // Mock qrcode.vue globally
 vi.mock('qrcode.vue', () => ({
   default: {

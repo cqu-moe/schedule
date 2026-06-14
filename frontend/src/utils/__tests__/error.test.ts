@@ -7,16 +7,6 @@ describe('parseApiError', () => {
     expect(parseApiError(error)).toBe('自定义错误')
   })
 
-  it('maps CAPTCHA_REQUIRED code to message', () => {
-    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA_REQUIRED' } } } } }
-    expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
-  })
-
-  it('maps CAPTCHA_FAILED code to message', () => {
-    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_FAILED', message: 'CAPTCHA_FAILED' } } } } }
-    expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
-  })
-
   it('maps RATE_LIMITED code to message', () => {
     const error = { response: { data: { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } } } }
     expect(parseApiError(error)).toBe('操作过于频繁，请稍后再试')
