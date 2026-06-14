@@ -8,8 +8,7 @@ export const RouteNames = {
   Add: 'Add',
   ApiDocs: 'ApiDocs',
   Changelog: 'Changelog',
-  // /calendar/:sub_token kept for backward compat; FE-4 will replace with /view/:token
-  Calendar: 'Calendar',
+  View: 'View',
 } as const
 
 // Removed: Login, Register, Recover (auth is now delegated to auth.cqu.moe via cookie;
@@ -47,12 +46,17 @@ const routes = [
     meta: { title: `更新日志 | ${SITE_NAME}` },
   },
   {
-    // Kept for backward compat. FE-4 will introduce /view/:token for the new
-    // public share-link view. At that point, this route can be retired.
-    path: '/calendar/:sub_token',
-    name: RouteNames.Calendar,
+    // Public read-only calendar page for share links (FE-4).
+    // The "web" format in buildLinkUrl generates /view/{token}.
+    path: '/view/:token',
+    name: RouteNames.View,
     component: () => import('@/views/Calendar.vue'),
-    meta: { title: `课表日历 | ${SITE_NAME}` },
+    meta: { title: `课表 | ${SITE_NAME}` },
+  },
+  {
+    // Redirect old /calendar/:sub_token links to /view/:sub_token (harmless safety net).
+    path: '/calendar/:sub_token',
+    redirect: (to) => ({ path: `/view/${to.params.sub_token}` }),
   },
 ]
 

@@ -57,9 +57,15 @@ describe('Router (v2)', () => {
     expect(names).not.toContain('Recover')
   })
 
-  it('calendar route resolves with sub_token param', async () => {
+  it('/view/:token route resolves with token param', async () => {
+    await router.push('/view/my-link-token')
+    expect(router.currentRoute.value.name).toBe(RouteNames.View)
+    expect(router.currentRoute.value.params.token).toBe('my-link-token')
+  })
+
+  it('/calendar/:sub_token redirects to /view/:sub_token', async () => {
     await router.push('/calendar/my-link-token')
-    expect(router.currentRoute.value.name).toBe(RouteNames.Calendar)
-    expect(router.currentRoute.value.params.sub_token).toBe('my-link-token')
+    expect(router.currentRoute.value.path).toBe('/view/my-link-token')
+    expect(router.currentRoute.value.name).toBe(RouteNames.View)
   })
 })

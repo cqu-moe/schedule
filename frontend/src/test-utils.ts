@@ -110,7 +110,8 @@ const routes = [
   { path: '/add', name: RouteNames.Add, component: { template: '<div>Add</div>' } },
   { path: '/api-docs', name: RouteNames.ApiDocs, component: { template: '<div>Docs</div>' } },
   { path: '/changelog', name: RouteNames.Changelog, component: { template: '<div>Changelog</div>' } },
-  { path: '/calendar/:sub_token', name: RouteNames.Calendar, component: { template: '<div>Calendar</div>' } },
+  { path: '/view/:token', name: RouteNames.View, component: { template: '<div>View</div>' } },
+  { path: '/calendar/:sub_token', redirect: (to: any) => ({ path: `/view/${to.params.sub_token}` }) },
 ]
 
 export function createTestRouter() {

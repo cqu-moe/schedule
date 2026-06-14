@@ -42,7 +42,7 @@ const mockEvents: FormattedEvent[] = [
   },
 ]
 
-describe('Calendar View', () => {
+describe('Calendar View (/view/:token)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -50,7 +50,7 @@ describe('Calendar View', () => {
   it('shows loading spinner initially', async () => {
     mockApi.getViewData.mockReturnValue(new Promise(() => {})) // never resolves
     const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/test-token',
+      initialRoute: '/view/test-token',
     })
     expect(wrapper.find('.animate-spin').exists()).toBe(true)
   })
@@ -63,7 +63,7 @@ describe('Calendar View', () => {
       events: mockEvents,
     })
     const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/test-token',
+      initialRoute: '/view/test-token',
     })
     await flushPromises()
 
@@ -71,31 +71,46 @@ describe('Calendar View', () => {
     expect(wrapper.text()).toContain('2025秋 课表')
   })
 
-  it('shows error message on API failure (404)', async () => {
+  it('shows "链接不存在或已失效" on 404 (token not found)', async () => {
     mockApi.getViewData.mockRejectedValue({
       response: { status: 404, data: { detail: { error: { code: 'NOT_FOUND', message: '链接不存在' } } } },
     })
     const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/bad-token',
+      initialRoute: '/view/bad-token',
     })
     await flushPromises()
 
-    // parseApiError maps NOT_FOUND → '订阅不存在或链接已失效'
-    expect(wrapper.text()).toContain('订阅不存在或链接已失效')
+    expect(wrapper.text()).toContain('链接不存在或已失效')
+    expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
+  })
+
+  it('shows "该分享链接未开启网页查看" on 403 FORMAT_NOT_ALLOWED', async () => {
+    mockApi.getViewData.mockRejectedValue({
+      response: {
+        status: 403,
+        data: { detail: { error: { code: 'FORMAT_NOT_ALLOWED', message: '该链接不允许此格式' } } },
+      },
+    })
+    const { wrapper } = await mountWithContext(CalendarView, {
+      initialRoute: '/view/no-web-token',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('该分享链接未开启网页查看')
     expect(wrapper.find('[data-testid="fullcalendar"]').exists()).toBe(false)
   })
 
   it('shows fallback error for network failures', async () => {
     mockApi.getViewData.mockRejectedValue(new Error('Network Error'))
     const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/test-token',
+      initialRoute: '/view/test-token',
     })
     await flushPromises()
 
     expect(wrapper.text()).toContain('加载课表数据失败')
   })
 
-  it('calls api.getViewData with correct token from route', async () => {
+  it('calls api.getViewData with correct token from route param', async () => {
     mockApi.getViewData.mockResolvedValue({
       semester: '2025秋',
       semester_start: '2025-09-01',
@@ -103,7 +118,7 @@ describe('Calendar View', () => {
       events: [],
     })
     await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/my-link-token-123',
+      initialRoute: '/view/my-link-token-123',
     })
     await flushPromises()
 
@@ -118,7 +133,7 @@ describe('Calendar View', () => {
       events: [],
     })
     const { wrapper } = await mountWithContext(CalendarView, {
-      initialRoute: '/calendar/test-token',
+      initialRoute: '/view/test-token',
     })
     await flushPromises()
 
