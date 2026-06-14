@@ -13,6 +13,7 @@ import type {
   HealthStatus,
   CalendarData,
 } from '@/types/api'
+import { authLoginUrl } from '@/config/auth'
 
 const client = axios.create({
   baseURL: '/api/v2',
@@ -23,18 +24,28 @@ const client = axios.create({
 })
 
 /**
- * Extracted for testability — jsdom prevents direct window.location.href
- * assignment spying. Tests can mock this export to assert redirect behaviour.
+ * Mutable redirect seam — extracted so tests can replace `.fn` with a spy and
+ * assert the exact URL the 401 interceptor passes, without touching
+ * window.location.href (non-configurable in jsdom).
+ *
+ * @example (test)
+ *   import { redirect } from '@/api'
+ *   redirect.fn = vi.fn()
+ *   // … trigger 401 …
+ *   expect(redirect.fn).toHaveBeenCalledWith('https://auth.cqu.moe/login?redirect=...')
+ *   redirect.fn = (url) => { window.location.href = url } // restore
  */
-export function navigateTo(url: string) {
-  window.location.href = url
+export const redirect = {
+  fn: (url: string) => {
+    window.location.href = url
+  },
 }
 
 // 429 interceptor: normalise into the standard { detail: "..." } shape.
 // 401 interceptor: redirect to auth login.
 client.interceptors.response.use(undefined, (error: AxiosError) => {
   if (error.response?.status === 401) {
-    navigateTo('https://auth.cqu.moe/login?redirect=' + encodeURIComponent(window.location.href))
+    redirect.fn(authLoginUrl(window.location.href))
     return Promise.reject(error)
   }
 

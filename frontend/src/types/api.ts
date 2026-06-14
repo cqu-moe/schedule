@@ -32,7 +32,7 @@ export interface CalendarLink {
   id: string
   token: string
   label: string | null
-  formats: string[]
+  formats: LinkFormat[]
   is_default: boolean
 }
 
@@ -85,12 +85,12 @@ export interface DepartmentNode {
 
 export interface CreateLinkBody {
   label?: string
-  formats: string[]
+  formats: LinkFormat[]
 }
 
 export interface PatchLinkBody {
   label?: string | null
-  formats?: string[]
+  formats?: LinkFormat[]
 }
 
 // ── v2 link rotation response ─────────────────────────────────────────────────

@@ -25,7 +25,7 @@
             </router-link>
             <!-- Link to auth.cqu.moe for account management and logout -->
             <a
-              href="https://auth.cqu.moe"
+              :href="AUTH_BASE_URL"
               target="_blank"
               rel="noopener noreferrer"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
@@ -38,7 +38,7 @@
           <!-- Not authenticated: prompt via auth.cqu.moe -->
           <template v-else>
             <a
-              href="https://auth.cqu.moe/login"
+              :href="`${AUTH_BASE_URL}/login`"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               登录
@@ -76,6 +76,7 @@ import { useColorMode } from '@vueuse/core'
 import { Monitor, Sun, Moon } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
+import { AUTH_BASE_URL } from '@/config/auth'
 
 const session = useSession()
 const colorMode = useColorMode()

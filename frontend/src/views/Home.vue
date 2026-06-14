@@ -16,7 +16,7 @@
           <router-link v-if="session.isAuthenticated" to="/dashboard">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
-          <a v-else href="https://auth.cqu.moe/login" class="inline-block">
+          <a v-else :href="`${AUTH_BASE_URL}/login`" class="inline-block">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </a>
         </div>
@@ -63,6 +63,7 @@ import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
+import { AUTH_BASE_URL } from '@/config/auth'
 
 const session = useSession()
 

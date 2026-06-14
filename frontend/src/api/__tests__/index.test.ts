@@ -22,7 +22,8 @@ vi.mock('axios', () => ({
 
 // Import after mock is set up — this triggers axios.create() and interceptors.response.use()
 import axios from 'axios'
-import api, { navigateTo } from '../index'
+import api, { redirect } from '../index'
+import { authLoginUrl } from '@/config/auth'
 
 // Capture setup-time calls before any test's beforeEach can clear them
 const createCallArgs = (axios.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
@@ -55,27 +56,24 @@ describe('API module (v2)', () => {
   // ── Response interceptor ──
 
   describe('response interceptor', () => {
-    it('redirects to auth.cqu.moe on 401', async () => {
-      // jsdom in vitest's vmForks pool makes window.location non-configurable,
-      // so we cannot spy on href assignment directly. Instead, navigateTo() is
-      // exported from the module specifically to make this testable. We verify:
-      //   1. navigateTo is exported and callable
-      //   2. The interceptor rejects with the original error (redirect then reject)
-      //   3. The URL built by navigateTo contains the expected prefix (unit-tested
-      //      via navigateTo export directly)
+    it('redirects to auth.cqu.moe on 401 with exact redirect URL', async () => {
+      // `redirect.fn` is a mutable property on the exported `redirect` object —
+      // the interceptor reads it at call time, so replacing it here is effective.
+      const redirectSpy = vi.fn()
+      const originalFn = redirect.fn
+      redirect.fn = redirectSpy
+
       const error = { response: { status: 401, data: {} } }
-      // The interceptor calls navigateTo which sets window.location.href.
-      // jsdom silently swallows the navigation; what matters is the rejection.
       await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
 
-      // Verify navigateTo is exported (it constructs the redirect URL).
-      expect(typeof navigateTo).toBe('function')
-      // Direct unit test of the URL format navigateTo receives:
-      const expectedRedirectUrl =
-        'https://auth.cqu.moe/login?redirect=' + encodeURIComponent(window.location.href)
-      // navigateTo itself just wraps window.location.href assignment; the
-      // correctness of the URL template is confirmed by code inspection and the
-      // export existing. This test validates the interceptor wires up correctly.
+      // Assert the exact URL passed to redirect.fn by the interceptor.
+      // jsdom's window.location.href defaults to 'http://localhost:3000/'.
+      const expectedUrl = authLoginUrl(window.location.href)
+      // expectedUrl === 'https://auth.cqu.moe/login?redirect=http%3A%2F%2Flocalhost%3A3000%2F'
+      expect(redirectSpy).toHaveBeenCalledOnce()
+      expect(redirectSpy).toHaveBeenCalledWith(expectedUrl)
+
+      redirect.fn = originalFn
     })
 
     it('injects rate-limit detail on 429 with no body', async () => {
