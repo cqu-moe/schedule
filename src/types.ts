@@ -22,16 +22,10 @@ export interface Env {
   AUTH: import("./services/auth-rpc").AuthService;
 
   // Secrets
-  ENCRYPTION_KEY: string;
-  HCAPTCHA_SECRET: string;
   ADMIN_SECRET: string;
 
   // Environment Variables
   PUBLIC_URL: string;
-  HCAPTCHA_ENABLED: string;
-  HCAPTCHA_SITEKEY: string;
-  CAPTCHA_FAIL_CLOSED?: string;
-  MAX_SUBSCRIPTIONS: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
 }
