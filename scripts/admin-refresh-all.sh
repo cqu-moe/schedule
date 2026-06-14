@@ -13,6 +13,6 @@ fi
 
 URL="${1:-https://schedule.cqu.moe}"
 
-curl -s -X POST "$URL/api/v1/admin/refresh-all" \
+curl -s -X POST "$URL/api/v2/admin/refresh-all" \
   -H "Authorization: Bearer $ADMIN_SECRET" \
   -H "Content-Type: application/json" | python3 -m json.tool

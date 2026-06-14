@@ -9,11 +9,12 @@ import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
 import { createMockAuth } from "./services/auth-mock";
 import { sessionMiddleware } from "./middleware/session";
+import meV2 from "./routes/v2/me";
 import subscriptionsV2 from "./routes/v2/subscriptions";
 import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
 
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 
 // Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
 // 生产环境 binding 存在故不触发。
@@ -41,17 +42,22 @@ app.use(
       }
       return "";
     },
-    allowHeaders: ["Authorization", "Content-Type", "X-Captcha-Token"],
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type"],
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
-// Mount routes
-app.route("/api/v1", configRoutes);
-app.route("/api/v1/admin", adminRoutes);
+// Mount routes (v2 topology①: everything lives under /api/v2; /api/v1 is gone).
+// config (health + config) and admin keep their own auth: config is public,
+// admin uses its own ADMIN_SECRET bearer middleware (NOT sessionMiddleware).
+app.route("/api/v2", configRoutes);
+app.route("/api/v2/admin", adminRoutes);
 
 // v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
 // the AUTH service binding before exposing the current user's subscriptions.
+app.use("/api/v2/me", sessionMiddleware);
+app.route("/api/v2/me", meV2);
+
 app.use("/api/v2/subscriptions/*", sessionMiddleware);
 app.use("/api/v2/subscriptions", sessionMiddleware);
 app.route("/api/v2/subscriptions", subscriptionsV2);
@@ -63,6 +69,10 @@ app.route("/api/v2/external", externalV2);
 // v2 public calendar endpoints: addressed by link token, no login required, so
 // NOT guarded by sessionMiddleware. Access control is the per-link format gate.
 app.route("/api/v2/calendar", calendarV2);
+
+// v1 is fully retired (拓扑① rebuild). Any stale frontend hitting /api/v1/* gets
+// a 410 telling it to refresh. Defined after v2 mounts so it never shadows them.
+app.all("/api/v1/*", (c) => errorResponse("GONE", "接口已升级，请刷新页面", 410));
 
 // Global error handler
 app.onError((err, c) => {
@@ -78,6 +88,9 @@ export default {
       response = await app.fetch(request, env, ctx);
       response.headers.set("X-Robots-Tag", "noindex, nofollow");
     } else {
+      // Non-/api/ paths (including SPA routes like /view/:token) are served by
+      // ASSETS; wrangler's not_found_handling: "single-page-application" returns
+      // index.html for client-side routes. No server-side special-casing needed.
       response = await env.ASSETS.fetch(request);
       try {
         response = rewriteHtmlMeta(response, url.pathname);
