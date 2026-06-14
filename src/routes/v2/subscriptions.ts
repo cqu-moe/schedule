@@ -13,7 +13,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { errorResponse } from "../../utils/error";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
-import { parseFormats } from "../../services/links";
+import { parseFormats, buildCalendarUrl } from "../../services/links";
 
 const app = new Hono<SessionEnv>();
 
@@ -431,6 +431,7 @@ app.post("/:sid/links", async (c) => {
   try {
     assertFlag(caps, "share", "共享链接");
 
+    // best-effort 配额：count-then-insert 存在 TOCTOU，并发下可能 +1 超配；无 DB 层兜底（软业务限制，可接受）
     const [countRow] = await db
       .select({ cnt: sql<number>`count(*)` })
       .from(calendarLinks)
@@ -609,10 +610,10 @@ app.post("/:sid/links/:lid/rotations", async (c) => {
     }),
   );
 
-  const publicUrl = c.env.PUBLIC_URL;
   const responseBody: { token: string; url?: string } = { token };
-  if (publicUrl) {
-    responseBody.url = `${publicUrl.replace(/\/$/, "")}/api/v2/calendar/${token}/calendar.ics`;
+  const url = buildCalendarUrl(c.env.PUBLIC_URL, token);
+  if (url) {
+    responseBody.url = url;
   }
 
   return c.json(responseBody, 201);
