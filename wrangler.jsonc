@@ -37,6 +37,11 @@
     }
   ],
 
+  // Service Bindings (拓扑①: RPC to cqu-moe-auth)
+  "services": [
+    { "binding": "AUTH", "service": "cqu-moe-auth" }
+  ],
+
   // Rate Limiting
   "ratelimits": [
     {

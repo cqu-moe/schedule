@@ -20,6 +20,9 @@ export interface Env {
   TOKEN_REFRESH_QUEUE: Queue<TokenRefreshMessage>;
   SCHEDULE_SYNC_QUEUE: Queue<ScheduleSyncMessage>;
 
+  // Auth service (拓扑①: Service Binding RPC to cqu-moe-auth)
+  AUTH: import("./services/auth-rpc").AuthService;
+
   // Secrets
   ENCRYPTION_KEY: string;
   HCAPTCHA_SECRET: string;
