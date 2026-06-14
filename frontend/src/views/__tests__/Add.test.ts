@@ -435,6 +435,65 @@ describe('Add view (v2)', () => {
     expect(mockApi.getDepartments).toHaveBeenCalled()
   })
 
+  // ── Race condition: out-of-order search responses ─────────────────────────────
+
+  it('discards stale out-of-order search response via searchSeq guard', async () => {
+    vi.useFakeTimers()
+
+    // Helper to create a manually-resolved promise
+    function deferred<T>() {
+      let resolve!: (v: T) => void
+      const promise = new Promise<T>(r => { resolve = r })
+      return { promise, resolve }
+    }
+
+    const deferredA = deferred<{ results: { id: string; name: string; extra: string }[] }>()
+    const deferredB = deferred<{ results: { id: string; name: string; extra: string }[] }>()
+
+    // First call → search A's promise; second call → search B's promise
+    mockApi.searchExternal
+      .mockImplementationOnce(() => deferredA.promise)
+      .mockImplementationOnce(() => deferredB.promise)
+
+    const { wrapper } = await mountAdd()
+    const input = wrapper.find('input')
+    expect(input.exists()).toBe(true)
+
+    // Trigger search A: keyword "李四" (2 chars), advance debounce → searchExternal called once
+    await input.setValue('李四')
+    await input.trigger('input')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(mockApi.searchExternal).toHaveBeenCalledTimes(1)
+
+    // Trigger search B: keyword "张三", advance debounce → searchExternal called a second time
+    // Both A and B are now in-flight (promises not yet resolved)
+    await input.setValue('张三')
+    await input.trigger('input')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(mockApi.searchExternal).toHaveBeenCalledTimes(2)
+
+    // Resolve OUT OF ORDER: B (newer) first, then A (older/slow)
+    deferredB.resolve({ results: [{ id: 'b-1', name: 'B结果', extra: '新搜索' }] })
+    await flushPromises()
+
+    // After B resolves, the UI should show B's results
+    expect(wrapper.text()).toContain('B结果')
+
+    // Now resolve A (stale) — the seq guard should discard it
+    deferredA.resolve({ results: [{ id: 'a-1', name: 'A结果', extra: '旧搜索' }] })
+    await flushPromises()
+
+    // B's results must still be shown; A's stale response must NOT clobber them
+    expect(wrapper.text()).toContain('B结果')
+    expect(wrapper.text()).not.toContain('A结果')
+
+    // No error state should have been triggered by the stale A resolution
+    expect(wrapper.text()).not.toContain('搜索失败')
+    expect(wrapper.text()).not.toContain('未找到结果')
+  })
+
   // ── Load error ────────────────────────────────────────────────────────────────
 
   it('shows toast error when initial subscription load fails', async () => {
