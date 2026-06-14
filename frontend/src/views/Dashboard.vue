@@ -294,10 +294,11 @@
     <QrcodeModal v-model="qrModal.open" :url="qrModal.url" />
 
     <!-- Share links dialog (FE-3) -->
+    <!-- activeShareSub is store-derived so it updates after subStore.load() replaces objects -->
     <ShareLinksDialog
-      v-if="shareLinksDialog.sub"
+      v-if="activeShareSub"
       :open="shareLinksDialog.open"
-      :subscription="shareLinksDialog.sub"
+      :subscription="activeShareSub"
       @update:open="v => { if (!v) shareLinksDialog.open = false }"
       @changed="subStore.load(true).catch(() => {})"
     />
@@ -405,10 +406,21 @@ const enrichedSubs = computed<EnrichedSub[]>(() =>
 const loading = ref(true)
 const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
 const qrModal = ref<{ open: boolean; url: string }>({ open: false, url: '' })
-const shareLinksDialog = reactive<{ open: boolean; sub: Subscription | null }>({
+const shareLinksDialog = reactive<{ open: boolean; subId: string | null }>({
   open: false,
-  sub: null,
+  subId: null,
 })
+
+/**
+ * Store-derived computed so the reference updates after subStore.load() replaces
+ * subscription objects. ShareLinksDialog receives the fresh object and its watch
+ * re-seeds localLinks from the reloaded links.
+ */
+const activeShareSub = computed(() =>
+  shareLinksDialog.subId
+    ? subStore.subscriptions.find(s => s.id === shareLinksDialog.subId) ?? null
+    : null,
+)
 
 /**
  * Maps sub.id → the last_synced_at value captured AT THE MOMENT of manual
@@ -539,7 +551,7 @@ function openDeleteSubDialog(sub: Subscription) {
 }
 
 function openShareLinks(sub: Subscription) {
-  shareLinksDialog.sub = sub
+  shareLinksDialog.subId = sub.id
   shareLinksDialog.open = true
 }
 

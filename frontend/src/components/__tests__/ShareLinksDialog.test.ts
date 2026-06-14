@@ -483,26 +483,6 @@ describe('ShareLinksDialog', () => {
     expect(mockApi.createLink).not.toHaveBeenCalled()
   })
 
-  it('does not call api.createLink when no format is selected (button disabled guard)', async () => {
-    // The submit button is disabled when formats is empty, preventing API calls.
-    // This tests the same guard as the disabled-button test above, but from the API perspective.
-    const { wrapper } = await mountDialog()
-
-    // Open the create form
-    const createBtn = wrapper.findAll('button').find(b => b.text().includes('新建共享链接'))
-    await createBtn!.trigger('click')
-    await flushPromises()
-
-    // Deselect 'ics' and 'web' (the two default selected formats)
-    await wrapper.find('button[data-format="ics"]').trigger('click')
-    await flushPromises()
-    await wrapper.find('button[data-format="web"]').trigger('click')
-    await flushPromises()
-
-    // The button is disabled — API is not called even if we attempt interaction
-    expect(mockApi.createLink).not.toHaveBeenCalled()
-  })
-
   // ── Edit share link ───────────────────────────────────────────────────────────
 
   it('opens edit form with existing label and formats pre-filled', async () => {
@@ -567,5 +547,56 @@ describe('ShareLinksDialog', () => {
 
     // After toggle: ics is not selected, class changes
     expect(icsBtn.classes()).not.toContain('bg-primary')
+  })
+
+  // ── I-1: store-derived prop change re-seeds localLinks ───────────────────────
+
+  it('re-seeds localLinks when the subscription prop changes (simulating store reload via Dashboard computed)', async () => {
+    // Start with one share link
+    const initialLink = makeShareLink({ id: 'sl-1', token: 't1', label: '初始链接' })
+    const { wrapper } = await mountDialog([makeDefaultLink(), initialLink])
+
+    // Confirm initial link appears
+    expect(wrapper.text()).toContain('初始链接')
+
+    // Simulate what happens in Dashboard after subStore.load() replaces objects:
+    // activeShareSub computed returns a new subscription object with updated links.
+    // We replicate this by calling setProps with a fresh subscription object.
+    const newLink = makeShareLink({ id: 'sl-2', token: 't2', label: '新增链接' })
+    const updatedSub = mockSubscription({
+      links: [makeDefaultLink(), initialLink, newLink],
+    })
+    await wrapper.setProps({ subscription: updatedSub })
+    await flushPromises()
+
+    // The watch on props.subscription.links re-seeds localLinks with the new array
+    expect(wrapper.text()).toContain('初始链接')
+    expect(wrapper.text()).toContain('新增链接')
+  })
+
+  // ── I-2: closing the outer dialog resets inner dialog open flags ──────────────
+
+  it('resets inner confirm open flags when the outer dialog is closed', async () => {
+    const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
+
+    // Note: the AlertDialog stub always renders its slot regardless of `open`,
+    // so we verify the internal reactive state via vm.$.setupState.
+    const setupState = (wrapper.vm as any).$.setupState
+
+    // Open the rotate confirm by clicking the rotate trigger
+    const rotateBtn = wrapper.findAll('button').find(b => b.text().trim() === '轮换')
+    await rotateBtn!.trigger('click')
+    await flushPromises()
+    // rotateConfirm should now be open
+    expect(setupState.rotateConfirm.open).toBe(true)
+
+    // Close the outer dialog
+    await wrapper.setProps({ open: false })
+    await flushPromises()
+
+    // The watch resets all inner open flags
+    expect(setupState.rotateConfirm.open).toBe(false)
+    expect(setupState.deleteConfirm.open).toBe(false)
+    expect(setupState.linkForm.open).toBe(false)
   })
 })

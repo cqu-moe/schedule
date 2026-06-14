@@ -324,6 +324,8 @@ const emit = defineEmits<{
 
 const ALL_FORMATS: LinkFormat[] = ['ics', 'web', 'data_json', 'origin_json', 'csv']
 
+const DEFAULT_CREATE_FORMATS: LinkFormat[] = ['ics', 'web']
+
 const FORMAT_LABELS: Record<LinkFormat, string> = {
   ics: '日历订阅 (ICS)',
   web: '网页查看',
@@ -354,7 +356,9 @@ const configStore = useConfigStore()
  */
 const localLinks = ref<CalendarLink[]>([...props.subscription.links])
 
-// Sync when the subscription prop changes (e.g., store reloads)
+// Re-seed localLinks when the store-derived subscription prop changes identity
+// (covers store reloads after mutation AND reopen for a different subscription).
+// In-place localLinks mutations remain the optimistic layer; the reload reconciles.
 watch(
   () => props.subscription.links,
   (links) => {
@@ -451,7 +455,7 @@ const linkForm = reactive<LinkFormState>({
   open: false,
   editingId: null,
   label: '',
-  formats: ['ics', 'web'],
+  formats: [...DEFAULT_CREATE_FORMATS],
   submitting: false,
 })
 
@@ -460,7 +464,7 @@ const linkFormError = ref<string | null>(null)
 function openCreateForm() {
   linkForm.editingId = null
   linkForm.label = ''
-  linkForm.formats = ['ics', 'web']
+  linkForm.formats = [...DEFAULT_CREATE_FORMATS]
   linkFormError.value = null
   linkForm.open = true
 }
@@ -536,6 +540,21 @@ async function handleSubmitLinkForm() {
     linkForm.submitting = false
   }
 }
+
+// ── Close-reset ───────────────────────────────────────────────────────────────
+
+// Reset transient inner-dialog open flags when the outer dialog closes so they
+// don't linger and reappear the next time the outer dialog is opened.
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) {
+      rotateConfirm.open = false
+      deleteConfirm.open = false
+      linkForm.open = false
+    }
+  },
+)
 
 // ── Dialog open/close ─────────────────────────────────────────────────────────
 
