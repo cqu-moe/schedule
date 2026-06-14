@@ -11,8 +11,18 @@ import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage
 import { addSecurityHeaders } from "./middleware/security-headers";
 import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
+import { createMockAuth } from "./services/auth-mock";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
+// 生产环境 binding 存在故不触发。
+app.use("*", async (c, next) => {
+  if (!c.env.AUTH) {
+    c.env.AUTH = createMockAuth();
+  }
+  await next();
+});
 
 // CORS: restrict to same-origin; allow local dev origins
 app.use(
