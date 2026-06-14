@@ -146,6 +146,16 @@ app.post("/", async (c) => {
     return errorResponse("INVALID_INPUT", "sourceName 长度不能超过 200", 400);
   }
 
+  if (typeof body.sessionId === "string" && body.sessionId.length > 100) {
+    return errorResponse("INVALID_INPUT", "sessionId 长度不能超过 100", 400);
+  }
+  if (typeof body.sessionName === "string" && body.sessionName.length > 200) {
+    return errorResponse("INVALID_INPUT", "sessionName 长度不能超过 200", 400);
+  }
+  if (typeof body.semesterStart === "string" && body.semesterStart.length > 10) {
+    return errorResponse("INVALID_INPUT", "semesterStart 长度不能超过 10", 400);
+  }
+
   const sourceTypeTyped = sourceType as SourceType;
   const isExternal = EXPLORE_SOURCE_TYPES.has(sourceTypeTyped);
 
@@ -172,6 +182,7 @@ app.post("/", async (c) => {
       assertFlag(caps, "sync", "日历同步");
     }
 
+    // best-effort 配额：count-then-insert 存在 TOCTOU，并发下可能 +1 超配；无 DB 层兜底（软业务限制，可接受）
     const [countRow] = await db
       .select({ cnt: sql<number>`count(*)` })
       .from(subscriptions)

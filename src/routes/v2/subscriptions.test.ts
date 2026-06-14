@@ -273,6 +273,17 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
+  it("rejects overly long session fields → 400 INVALID_INPUT", async () => {
+    const app = buildApp("userA");
+    const res = await app.request(
+      "/",
+      jsonBody({ ...VALID_CREATE, sessionName: "x".repeat(201) }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INVALID_INPUT");
+  });
+
   it("external source without `external` cap → 403", async () => {
     const app = buildApp("userA", capsWith({ external: false }));
     const res = await app.request(
