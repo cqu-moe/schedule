@@ -1,44 +1,4 @@
 import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
-
-// ── Users table ──────────────────────────────────────────────────────────────
-
-export const users = sqliteTable("users", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-
-  studentId: text("student_id").unique().notNull(),
-
-  /** AES-256-GCM encrypted password stored as base64 text */
-  encryptedPassword: text("encrypted_password").notNull(),
-
-  // OAuth Tokens
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  /** ISO 8601 datetime string */
-  tokenExpiresAt: text("token_expires_at"),
-
-  /** 64-char random token for calendar subscription URL */
-  calendarToken: text("calendar_token").unique().notNull(),
-  pendingCalendarToken: text("pending_calendar_token").unique(),
-  pendingTokenExpiresAt: text("pending_token_expires_at"),
-
-  // Status tracking
-  /** ISO 8601 datetime string */
-  lastLoginAt: text("last_login_at"),
-  /** ISO 8601 datetime string */
-  lastRefreshAt: text("last_refresh_at"),
-  loginError: text("login_error"),
-
-  // Timestamps (ISO 8601 strings)
-  createdAt: text("created_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-  updatedAt: text("updated_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-});
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
 
@@ -49,17 +9,13 @@ export const subscriptions = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
 
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    /** auth user.id（来自 cqu-moe-auth，~32 字符随机串，非 UUID） */
+    userId: text("user_id").notNull(),
 
     /** Source type: see SourceType union */
     sourceType: text("source_type").notNull().$type<SourceType>(),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
-
-    /** 64-char random token for subscription calendar URL */
-    calendarToken: text("calendar_token").unique().notNull(),
 
     sessionId: text("session_id"),
     sessionName: text("session_name"),
@@ -101,6 +57,35 @@ export const subscriptions = sqliteTable(
   ],
 );
 
+// ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
+
+export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
+export type LinkFormat = (typeof LINK_FORMATS)[number];
+
+export const calendarLinks = sqliteTable(
+  "calendar_links",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    token: text("token").unique().notNull(),
+    label: text("label"),
+    /** JSON array of LinkFormat */
+    formats: text("formats").notNull(),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [index("idx_calendar_links_subscription_id").on(t.subscriptionId)],
+);
+
 // ── Source type constants ────────────────────────────────────────────────────
 
 export const SOURCE_TYPES = [
@@ -135,7 +120,7 @@ export const EXPLORE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExploreSour
 
 // ── Type exports ─────────────────────────────────────────────────────────────
 
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
+export type CalendarLink = typeof calendarLinks.$inferSelect;
+export type NewCalendarLink = typeof calendarLinks.$inferInsert;
