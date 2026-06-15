@@ -47,6 +47,20 @@ export async function fetchSessionContext(
   return { sessionId, semesterInfo };
 }
 
+/**
+ * Build a {@link SessionContext} for a specific (possibly non-current) session.
+ *
+ * Used when an external subscription pins an explicit `sessionId` so its sync
+ * targets that semester instead of the always-current cached context.
+ */
+export async function fetchSessionContextFor(
+  api: CQUAPIClient,
+  sessionId: string,
+): Promise<SessionContext> {
+  const semesterInfo = await api.getSemesterInfo(sessionId);
+  return { sessionId, semesterInfo };
+}
+
 const SESSION_CACHE_KEY = "session:current";
 const SESSION_CACHE_TTL = 86400; // 24 hours
 

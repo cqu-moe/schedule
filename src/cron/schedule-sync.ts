@@ -11,6 +11,7 @@ import { getCquBearer, resolveOwnStudentId } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
 import {
   fetchSessionContextCached,
+  fetchSessionContextFor,
   fetchPersonalScheduleCached,
   buildPersonalSyncResult,
   buildExternalSyncResult,
@@ -27,9 +28,10 @@ export interface ScheduleSyncMessage {
    * the consumer — the hourly producer spreads each due batch over
    * {@link SYNC_SPREAD_SECONDS} (> the 1h cron period), so intervening cron runs
    * re-enqueue subscriptions whose delayed message has not executed yet.
-   * `"manual"` (and legacy/undefined) always sync, bypassing the due re-check.
+   * `"manual"` (user refresh), `"initial"` (just-created subscription), and
+   * legacy/undefined always sync, bypassing the due re-check.
    */
-  trigger?: "cron" | "manual";
+  trigger?: "cron" | "manual" | "initial";
 }
 
 /** Default sync interval (minutes) when caps are missing/unparseable. */
@@ -265,15 +267,22 @@ export async function processScheduleSyncBatch(
           await applySyncResult(db, sub.id, result, ctx, fallback);
         } else {
           // External subscription: sourceId is the target ID; use it as the ICS
-          // UID namespace (stable per subscription).
+          // UID namespace (stable per subscription). Honor the subscription's
+          // requested session when set (else current) so a past-semester sub
+          // exports THAT semester and keeps its session, instead of silently
+          // switching to current and colliding with sibling-session subs.
+          const targetCtx =
+            sub.sessionId && sub.sessionId !== ctx.sessionId
+              ? await fetchSessionContextFor(api, sub.sessionId)
+              : ctx;
           const result = await buildExternalSyncResult(
             api,
             sub.sourceType as ExternalSourceType,
             sub.sourceId,
             sub.sourceId,
-            ctx,
+            targetCtx,
           );
-          await applySyncResult(db, sub.id, result, ctx, fallback);
+          await applySyncResult(db, sub.id, result, targetCtx, fallback);
         }
 
         console.log(

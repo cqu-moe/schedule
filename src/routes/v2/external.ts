@@ -60,7 +60,10 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
   const departmentId = c.req.query("department_id") ?? "";
   const grade = c.req.query("grade") ?? "";
 
-  if (!keyword.trim()) {
+  // admin_class browses a whole department, so its keyword (class name) is
+  // optional — the frontend searches as soon as a department is picked. All
+  // other source types require a keyword.
+  if (sourceType !== "admin_class" && !keyword.trim()) {
     return errorResponse("BAD_REQUEST", "keyword 必填", 400);
   }
   if (keyword.length > KEYWORD_MAX_LEN) {

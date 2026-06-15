@@ -338,6 +338,47 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).not.toBeNull();
   });
 
+  it("external sub with an explicit non-current session syncs THAT session and keeps it", async () => {
+    // Created for a past semester (sess-old), not the current one (sess-1). The
+    // consumer must fetch sess-old's schedule and preserve sess-old on the row,
+    // not silently switch the subscription to the current semester.
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-42",
+      isPersonal: false,
+      sessionId: "sess-old",
+      sessionName: "2023春",
+    });
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockImplementation(
+      async (id: string) => ({
+        id,
+        name: id === "sess-old" ? "2023春" : "2024秋",
+        begin_date: id === "sess-old" ? "2023-02-20" : "2024-09-01",
+        end_date: id === "sess-old" ? "2023-07-01" : "2025-01-15",
+      }),
+    );
+    const fetchTarget = vi
+      .spyOn(CQUAPIClient.prototype, "fetchTargetSchedule")
+      .mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Fetched the requested session, NOT the current one.
+    expect(fetchTarget).toHaveBeenCalledWith("instructor", "T-42", "sess-old");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.sessionId).toBe("sess-old"); // preserved, not overwritten to sess-1
+  });
+
   it("skips and acks (does not retry) when getCquBearer returns null", async () => {
     const sid = await insertSub();
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(null);

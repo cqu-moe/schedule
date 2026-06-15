@@ -218,6 +218,25 @@ describe("GET /api/v2/external/search", () => {
     expect(searchAdminClass).toHaveBeenCalledWith("D-7", "2021", "软件");
   });
 
+  it("admin_class search with blank keyword + department_id → 200 (browse whole department)", async () => {
+    // The frontend treats the class keyword as optional and fires a search right
+    // after a department is picked; an empty keyword must browse all classes.
+    const fixture: SearchResult[] = [{ id: "AC-9", name: "软件1班", extra: "2021级 / 30人" }];
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const searchAdminClass = vi
+      .spyOn(CQUAPIClient.prototype, "searchAdminClass")
+      .mockResolvedValue(fixture);
+
+    const app = buildApp("userA");
+    const res = await app.request(
+      "/search?source_type=admin_class&department_id=D-7&grade=2021",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: SearchResult[] };
+    expect(body.results).toEqual(fixture);
+    expect(searchAdminClass).toHaveBeenCalledWith("D-7", "2021", "");
+  });
+
   it("admin_class search without department_id → 400 BAD_REQUEST (no searchAdminClass call)", async () => {
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
     const searchAdminClass = vi.spyOn(CQUAPIClient.prototype, "searchAdminClass");

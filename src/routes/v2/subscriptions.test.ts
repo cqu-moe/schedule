@@ -46,11 +46,13 @@ function fakeAuth(userId: string, caps: CalendarCaps): AuthService {
 
 /** Build a Hono app: sessionMiddleware (with the given AUTH) → v2 subscriptions. */
 function buildApp(userId: string, caps: CalendarCaps = FULL_CAPS) {
+  const send = vi.fn().mockResolvedValue(undefined);
   const app = new Hono<SessionEnv>();
   app.use("*", sessionMiddleware);
   app.route("/", subscriptionsV2);
-  const testEnv = { ...env, AUTH: fakeAuth(userId, caps) };
+  const testEnv = { ...env, AUTH: fakeAuth(userId, caps), SCHEDULE_SYNC_QUEUE: { send } };
   return {
+    send,
     request(path: string, init?: RequestInit) {
       return app.request(path, init, testEnv);
     },
@@ -280,6 +282,20 @@ describe("POST /api/v2/subscriptions", () => {
     expect(links).toHaveLength(1);
     expect(links[0].isDefault).toBe(true);
     expect(JSON.parse(links[0].formats)).toEqual([...LINK_FORMATS]);
+  });
+
+  it("enqueues an initial sync for the new subscription", async () => {
+    // A fresh subscription must be populated promptly, not left empty until the
+    // next hourly cron (which spreads deliveries over 6h).
+    const app = buildApp("userA");
+    const res = await app.request("/", jsonBody(VALID_CREATE));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string };
+    expect(app.send).toHaveBeenCalledWith({
+      subscriptionId: body.id,
+      userId: "userA",
+      trigger: "initial",
+    });
   });
 
   it("SECURITY: pins personal sourceId to the auth user.id, ignoring client input", async () => {

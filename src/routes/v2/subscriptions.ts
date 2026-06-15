@@ -276,6 +276,25 @@ app.post("/", async (c) => {
     throw e;
   }
 
+  // Kick off an initial sync so the new subscription's links serve real data
+  // promptly instead of EMPTY_ICS until the next hourly cron (deliveries spread
+  // over 6h). Best-effort: the row is already committed, and the cron will pick
+  // it up (lastSyncedAt is null → due) if this enqueue fails.
+  await c.env.SCHEDULE_SYNC_QUEUE.send({
+    subscriptionId: subId,
+    userId: user.id,
+    trigger: "initial",
+  } satisfies ScheduleSyncMessage).catch((e) =>
+    console.warn(
+      JSON.stringify({
+        event: "subscription.v2.initial_sync_enqueue_failed",
+        subscriptionId: subId,
+        error: e instanceof Error ? e.message : String(e),
+        message: "Failed to enqueue initial sync; cron will sync later",
+      }),
+    ),
+  );
+
   console.log(
     JSON.stringify({
       event: "subscription.v2.create",
