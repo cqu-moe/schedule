@@ -53,7 +53,12 @@ export const DENY_CAPS: CalendarCaps = {
   manual_refresh: 0,
 };
 
-/** 把可空配额值解析为可比较的数值：null（无限）→ Infinity，其余原样返回 */
-export function resolveQuota(limit: number | null): number {
-  return limit === null ? Infinity : limit;
+/**
+ * 把配额值解析为可比较的数值：null（明确无限）→ Infinity，正常数字原样返回，
+ * 其余（undefined/NaN 等残缺 caps）→ 0（fail closed），绝不因字段缺失而放行。
+ */
+export function resolveQuota(limit: number | null | undefined): number {
+  if (limit === null) return Infinity;
+  if (typeof limit !== "number" || Number.isNaN(limit)) return 0;
+  return limit;
 }
