@@ -6,10 +6,12 @@ import { decodeStudentIdFromBearer } from "./cqu-api";
 const BEARER_KEY_PREFIX = "bearer:";
 
 /**
- * TTL (seconds) for the cached bearer. CQU OAuth tokens last ~4h; cache for ~3h
- * to refresh ahead of expiry while still cutting most ticket exchanges.
+ * TTL (seconds) for the cached bearer. CQU OAuth tokens last ~4h; cache for ~1h
+ * so a re-bound / revoked CQU account can't keep being used much past that, while
+ * still cutting most ticket exchanges. Revocation also self-heals faster via
+ * {@link invalidateCquBearer} on a 401.
  */
-const BEARER_TTL = 3 * 3600;
+const BEARER_TTL = 1 * 3600;
 
 /**
  * Resolve a CQU教务 bearer token for a user via the auth service (拓扑①).
@@ -87,6 +89,25 @@ export async function getCquBearer(
   );
 
   return bearer;
+}
+
+/**
+ * Drop the cached bearer for a user so the next {@link getCquBearer} re-mints via
+ * auth. Call this when CQU rejects the bearer (401): a revoked/unbound account
+ * then resolves to `SESSION_INACTIVE` on the next mint instead of silently reusing
+ * a stale token until TTL. Best-effort; never throws.
+ */
+export async function invalidateCquBearer(env: Env, userId: string): Promise<void> {
+  await env.CACHE.delete(`${BEARER_KEY_PREFIX}${userId}`).catch((e) =>
+    console.warn(
+      JSON.stringify({
+        event: "cqu_bearer.invalidate.failed",
+        userId,
+        error: e instanceof Error ? e.message : String(e),
+        message: "Failed to delete cached bearer",
+      }),
+    ),
+  );
 }
 
 /**

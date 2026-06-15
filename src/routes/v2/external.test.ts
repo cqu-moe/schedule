@@ -258,9 +258,12 @@ describe("GET /api/v2/external/search", () => {
     expect(body.detail.error.code).toBe("BAD_REQUEST");
   });
 
-  it("CQU upstream error (401) → 401 TOKEN_EXPIRED", async () => {
+  it("CQU upstream error (401) → 401 TOKEN_EXPIRED and invalidates the bearer", async () => {
     const { CQUAPIError } = await import("../../services/cqu-api");
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const invalidate = vi
+      .spyOn(bearerModule, "invalidateCquBearer")
+      .mockResolvedValue();
     vi.spyOn(CQUAPIClient.prototype, "searchInstructor").mockRejectedValue(
       new CQUAPIError("Access Token 无效或已过期", 401),
     );
@@ -270,6 +273,8 @@ describe("GET /api/v2/external/search", () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("TOKEN_EXPIRED");
+    // A rejected bearer is dropped so the next request re-mints (revocation heals).
+    expect(invalidate).toHaveBeenCalledWith(expect.anything(), "userA");
   });
 });
 

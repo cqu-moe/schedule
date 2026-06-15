@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import type { Env } from "../types";
 import type { AuthService, GetCquTicketResult } from "./auth-rpc";
-import { getCquBearer, resolveOwnStudentId } from "./cqu-bearer";
+import { getCquBearer, resolveOwnStudentId, invalidateCquBearer } from "./cqu-bearer";
 import * as authModule from "./auth";
 
 /** Build a fake CQU bearer JWT carrying the given `user_name` (学号) claim. */
@@ -110,6 +110,14 @@ describe("getCquBearer", () => {
     const bearer = await getCquBearer(buildEnv(auth), USER_ID);
 
     expect(bearer).toBeNull();
+  });
+});
+
+describe("invalidateCquBearer", () => {
+  it("deletes the cached bearer so the next call re-mints", async () => {
+    await env.CACHE.put(BEARER_KEY, "stale-bearer");
+    await invalidateCquBearer(buildEnv(fakeAuth({ error: "X" })), USER_ID);
+    expect(await env.CACHE.get(BEARER_KEY)).toBeNull();
   });
 });
 

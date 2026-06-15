@@ -8,8 +8,8 @@ import {
 } from "../db/schema";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
-import { CQUAPIClient } from "../services/cqu-api";
-import { getCquBearer, resolveOwnStudentId } from "../services/cqu-bearer";
+import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
+import { getCquBearer, resolveOwnStudentId, invalidateCquBearer } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
 import {
   fetchSessionContextCached,
@@ -344,6 +344,12 @@ export async function processScheduleSyncBatch(
 
         message.ack();
       } catch (e) {
+        // A 401 means CQU rejected the bearer (expired/revoked/rebound) — drop the
+        // cached bearer so the retry re-mints (a revoked account then resolves to
+        // SESSION_INACTIVE and is skipped instead of looping on a stale token).
+        if (e instanceof CQUAPIError && e.statusCode === 401) {
+          await invalidateCquBearer(env, userId);
+        }
         const msg = e instanceof Error ? e.message : String(e);
         console.error(
           JSON.stringify({

@@ -9,7 +9,7 @@ import {
   type ScheduleSyncMessage,
 } from "./schedule-sync";
 import * as bearerModule from "../services/cqu-bearer";
-import { CQUAPIClient } from "../services/cqu-api";
+import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
 import type { Env } from "../types";
 
 const db = drizzle(env.DB);
@@ -454,6 +454,25 @@ describe("processScheduleSyncBatch (consumer)", () => {
     await processScheduleSyncBatch(batch, env as unknown as Env);
     expect(messages[0].ack).toHaveBeenCalled();
     expect(messages[0].retry).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the cached bearer and retries on a CQU 401", async () => {
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub();
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const invalidate = vi
+      .spyOn(bearerModule, "invalidateCquBearer")
+      .mockResolvedValue();
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockRejectedValue(
+      new CQUAPIError("Access Token 无效或已过期", 401),
+    );
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(invalidate).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(messages[0].retry).toHaveBeenCalled();
+    expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
   it("retries when the CQU fetch throws", async () => {

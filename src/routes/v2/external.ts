@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import type { SessionEnv } from "../../middleware/session";
 import { rateLimit } from "../../middleware/rate-limit";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
-import { getCquBearer } from "../../services/cqu-bearer";
+import { getCquBearer, invalidateCquBearer } from "../../services/cqu-bearer";
 import { CQUAPIClient, CQUAPIError, type SearchResult } from "../../services/cqu-api";
 import { errorResponse, handleCquApiError } from "../../utils/error";
 
@@ -104,7 +104,11 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
     }
     return c.json({ results });
   } catch (e) {
-    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Search failed");
+    if (e instanceof CQUAPIError) {
+      // 401 → bearer rejected by CQU; drop it so the next request re-mints.
+      if (e.statusCode === 401) await invalidateCquBearer(c.env, c.get("user").id);
+      return handleCquApiError(c, e, "Search failed");
+    }
     throw e;
   }
 });
@@ -118,7 +122,10 @@ app.get("/departments", rateLimit("EXTERNAL_LIMITER"), async (c) => {
     const departments = await api.getDepartments();
     return c.json({ departments });
   } catch (e) {
-    if (e instanceof CQUAPIError) return handleCquApiError(c, e, "Failed to load departments");
+    if (e instanceof CQUAPIError) {
+      if (e.statusCode === 401) await invalidateCquBearer(c.env, c.get("user").id);
+      return handleCquApiError(c, e, "Failed to load departments");
+    }
     throw e;
   }
 });
