@@ -182,8 +182,11 @@ app.post("/", async (c) => {
     typeof body.semesterStart === "string" && body.semesterStart.length > 0
       ? body.semesterStart
       : null;
-  const isPersonal =
-    typeof body.isPersonal === "boolean" ? body.isPersonal : !isExternal;
+  // is_personal is DERIVED from the validated sourceType — never trusted from the
+  // client. Sync/entitlement classify by sourceType, and the frontend relies on
+  // is_personal for dedup/grouping/Sync All, so a client-supplied value (e.g.
+  // instructor + isPersonal:true) would misclassify the subscription.
+  const isPersonal = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped);
 
   // ── Personal-subscription identity binding (security invariant) ───────────
   //  For personal source types, the personal schedule is fetched against the

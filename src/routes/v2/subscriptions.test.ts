@@ -300,6 +300,31 @@ describe("POST /api/v2/subscriptions", () => {
     });
   });
 
+  it("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
+    const app = buildApp("userA");
+    // Client lies: an external type (instructor) but claims isPersonal=true.
+    const res = await app.request(
+      "/",
+      jsonBody({ sourceType: "instructor", sourceId: "T-1", sourceName: "张老师", isPersonal: true }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; is_personal: boolean };
+    expect(body.is_personal).toBe(false); // instructor → external → not personal
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, body.id));
+    expect(row.isPersonal).toBe(false);
+  });
+
+  it("derives is_personal=true for a personal type even if the client sends false", async () => {
+    const app = buildApp("userA");
+    const res = await app.request(
+      "/",
+      jsonBody({ sourceType: "personal_all", sourceName: "我的课表", isPersonal: false }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { is_personal: boolean };
+    expect(body.is_personal).toBe(true);
+  });
+
   it("SECURITY: pins personal sourceId to the auth user.id, ignoring client input", async () => {
     const app = buildApp("userA");
     // Client tries to bind the personal subscription to ANOTHER student's 学号.
