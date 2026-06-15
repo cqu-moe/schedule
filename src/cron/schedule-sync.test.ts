@@ -463,6 +463,8 @@ describe("processScheduleSyncBatch (consumer)", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.lastSyncedAt).toBeNull();
+    // Revocation flips it inactive immediately (don't wait for the producer cron).
+    expect(row.isActive).toBe(false);
   });
 
   it("external sub WITHOUT a pinned session stays unpinned after sync (follows current next term)", async () => {

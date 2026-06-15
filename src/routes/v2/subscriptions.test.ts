@@ -881,6 +881,18 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(app.send).not.toHaveBeenCalled();
   });
 
+  it("reactivates a previously-revoked sub when the cap is restored", async () => {
+    // isActive=false from an earlier revocation; cap now granted → manual refresh
+    // should flip it back active immediately (not wait for the hourly cron).
+    const sid = await insertSub("userA", { isActive: false });
+    const app = buildSyncApp("userA"); // FULL_CAPS → sync granted
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    expect(app.send).toHaveBeenCalledOnce();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
   it("revoked sync cap → 403, marks inactive, no enqueue, no quota consumed", async () => {
     const sid = await insertSub("userA"); // personal_all → needs `sync`
     const app = buildSyncApp("userA", capsWith({ sync: false }));

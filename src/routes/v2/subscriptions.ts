@@ -378,7 +378,11 @@ app.post("/:sid/syncs", async (c) => {
   const db = drizzle(c.env.DB);
 
   const [sub] = await db
-    .select({ id: subscriptions.id, sourceType: subscriptions.sourceType })
+    .select({
+      id: subscriptions.id,
+      sourceType: subscriptions.sourceType,
+      isActive: subscriptions.isActive,
+    })
     .from(subscriptions)
     .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, user.id)))
     .limit(1);
@@ -401,6 +405,15 @@ app.post("/:sid/syncs", async (c) => {
       `${isPersonal ? "日历同步" : "外部订阅"}未开通`,
       403,
     );
+  }
+
+  // Cap is granted: if this sub was previously revoked (isActive=false), reactivate
+  // it NOW (cap restored) so its public links resume without waiting for the cron.
+  if (!sub.isActive) {
+    await db
+      .update(subscriptions)
+      .set({ isActive: true, updatedAt: new Date().toISOString() })
+      .where(eq(subscriptions.id, sid));
   }
 
   // manual_refresh quota: null = unlimited, 0 = disabled, n = n/day.

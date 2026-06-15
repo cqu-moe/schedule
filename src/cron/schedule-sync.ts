@@ -252,11 +252,17 @@ export async function processScheduleSyncBatch(
         // existing subscriptions — including messages enqueued before a downgrade
         // and manual/initial refreshes by a now-ineligible user.
         if (!isCalendarEntitled(sub.sourceType, caps)) {
+          // Hard revocation: flip inactive NOW (don't wait for the next hourly
+          // producer reconcile), so the public links stop serving immediately.
+          await db
+            .update(subscriptions)
+            .set({ isActive: false, updatedAt: new Date().toISOString() })
+            .where(eq(subscriptions.id, subscriptionId));
           console.log(
             JSON.stringify({
               event: "queue.schedule_sync.skip_not_entitled",
               subscriptionId,
-              message: "Calendar capability revoked; skipping",
+              message: "Calendar capability revoked; marked inactive, skipping",
             }),
           );
           message.ack();
