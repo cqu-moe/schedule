@@ -95,6 +95,13 @@ function parseLinkJson(
   }
 }
 
+// Token endpoints use `public, max-age=300` by DESIGN: tokens are unguessable and
+// per-link, the payload is low-sensitivity course-schedule data, and edge-caching
+// frequently-polled ICS feeds meaningfully cuts Worker invocations. The tradeoff
+// is a ≤5min window where a just-deleted/rotated link may still serve from cache —
+// accepted given the low sensitivity. Tighten (e.g. no-store) only if a future
+// endpoint serves sensitive data needing instant revocation.
+
 // ── GET /:token/calendar.ics ─────────────────────────────────────────────────
 app.get("/:token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
   const db = drizzle(c.env.DB);
