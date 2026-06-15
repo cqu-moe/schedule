@@ -26,6 +26,7 @@ const app = new Hono<{ Bindings: Env }>();
 /** Joined link + its subscription's export-relevant fields. */
 interface ResolvedLink {
   formats: string;
+  isActive: boolean;
   icsContent: string | null;
   coursesJson: string | null;
   examsJson: string | null;
@@ -44,6 +45,7 @@ async function resolveLink(
   const [row] = await db
     .select({
       formats: calendarLinks.formats,
+      isActive: subscriptions.isActive,
       icsContent: subscriptions.icsContent,
       coursesJson: subscriptions.coursesJson,
       examsJson: subscriptions.examsJson,
@@ -67,6 +69,9 @@ async function resolveLinkOr404(
 ): Promise<ResolvedLink | Response> {
   const link = await resolveLink(db, token);
   if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
+  // Hard revocation: the owner's required calendar cap was revoked → the cron
+  // producer / manual refresh flipped is_active false. Stop serving the link.
+  if (!link.isActive) return errorResponse("SUBSCRIPTION_INACTIVE", "该订阅已停用", 403);
   return link;
 }
 

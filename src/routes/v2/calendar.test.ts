@@ -124,6 +124,7 @@ beforeAll(async () => {
       session_name text,
       semester_start text,
       is_personal integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       ics_content text,
       courses_json text,
       exams_json text,
@@ -182,6 +183,18 @@ describe("default (all-format) link", () => {
     );
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
     expect(await res.text()).toBe(SAMPLE_ICS);
+  });
+
+  it("GET /:token/calendar.ics → 403 when the subscription is inactive (revoked)", async () => {
+    const sid = await insertSub({ isActive: false });
+    const token = await insertLink(sid, [...LINK_FORMATS], {
+      token: "inactive-ics",
+      isDefault: true,
+    });
+    const res = await buildApp().request(`/${token}/calendar.ics`);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("SUBSCRIPTION_INACTIVE");
   });
 
   it("GET /:token/calendar.ics → EMPTY_ICS when icsContent is null", async () => {

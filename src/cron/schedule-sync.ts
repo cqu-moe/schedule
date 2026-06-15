@@ -78,6 +78,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
       id: subscriptions.id,
       userId: subscriptions.userId,
       sourceType: subscriptions.sourceType,
+      isActive: subscriptions.isActive,
       lastSyncedAt: subscriptions.lastSyncedAt,
     })
     .from(subscriptions);
@@ -101,9 +102,20 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
       capsCache.set(sub.userId, caps);
     }
 
-    // Entitlement gate: skip subs whose required calendar cap was revoked
-    // (downgrade). Without this, cron would keep syncing them indefinitely.
-    if (!isCalendarEntitled(sub.sourceType, caps)) continue;
+    const entitled = isCalendarEntitled(sub.sourceType, caps);
+
+    // Reconcile is_active (hard revocation): when caps are KNOWN, flip the row to
+    // match entitlement — revoked → inactive (public links 403), re-granted →
+    // active again. Skip when caps are null (transient outage) to avoid flapping.
+    if (caps !== null && sub.isActive !== entitled) {
+      await db
+        .update(subscriptions)
+        .set({ isActive: entitled, updatedAt: new Date().toISOString() })
+        .where(eq(subscriptions.id, sub.id));
+    }
+
+    // Entitlement gate: don't sync subs whose required cap was revoked.
+    if (!entitled) continue;
 
     if (isDue(sub.lastSyncedAt, capsSyncInterval(caps), now)) {
       due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron" });

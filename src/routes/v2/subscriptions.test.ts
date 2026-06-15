@@ -93,6 +93,7 @@ beforeAll(async () => {
       session_name text,
       semester_start text,
       is_personal integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       ics_content text,
       courses_json text,
       exams_json text,
@@ -853,6 +854,21 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     const res = await app.request(`/${sid}/syncs`);
     expect(res.status).toBe(404);
     expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("revoked sync cap → 403, marks inactive, no enqueue, no quota consumed", async () => {
+    const sid = await insertSub("userA"); // personal_all → needs `sync`
+    const app = buildSyncApp("userA", capsWith({ sync: false }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+    expect(app.send).not.toHaveBeenCalled();
+    // Hard revocation: the subscription is flipped inactive (public links 403).
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(false);
+    // Quota counter untouched.
+    expect(await env.CACHE.get(`refresh:userA:${dayKey()}`)).toBeNull();
   });
 
   it("returns 429 when the daily manual_refresh quota is exhausted", async () => {

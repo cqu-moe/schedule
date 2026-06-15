@@ -37,6 +37,7 @@ beforeAll(async () => {
       session_name text,
       semester_start text,
       is_personal integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       ics_content text,
       courses_json text,
       exams_json text,
@@ -182,6 +183,44 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).toHaveBeenCalledOnce();
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
+
+  it("reconciles is_active → false when the cap is revoked", async () => {
+    const sid = await insertSub({ userId: "user-rev2", isActive: true, lastSyncedAt: null });
+    await env.CACHE.put(
+      "caps:user-rev2",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+    await env.CACHE.delete("caps:user-rev2");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(false);
+  });
+
+  it("reconciles is_active → true when the cap is restored", async () => {
+    const sid = await insertSub({
+      userId: "user-grant",
+      isActive: false,
+      lastSyncedAt: new Date().toISOString(),
+    });
+    await env.CACHE.put(
+      "caps:user-grant",
+      JSON.stringify({
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+    await env.CACHE.delete("caps:user-grant");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
   });
 
   it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {

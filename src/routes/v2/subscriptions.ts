@@ -254,6 +254,7 @@ app.post("/", async (c) => {
         sessionName,
         semesterStart,
         isPersonal,
+        isActive: true,
         createdAt: now,
         updatedAt: now,
       }),
@@ -373,8 +374,30 @@ app.post("/:sid/syncs", async (c) => {
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const [sub] = await db
+    .select({ id: subscriptions.id, sourceType: subscriptions.sourceType })
+    .from(subscriptions)
+    .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, user.id)))
+    .limit(1);
+  if (!sub) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+
+  // Entitlement: if the required cap was revoked, this subscription is no longer
+  // serviceable. Mark it inactive (hard revocation — public links stop serving)
+  // and reject WITHOUT consuming the manual-refresh quota; otherwise the consumer
+  // would silently drop the enqueued message and the user would wait forever.
+  const isPersonal = PERSONAL_SOURCE_TYPES.has(sub.sourceType);
+  if (isPersonal ? !caps.sync : !caps.external) {
+    await db
+      .update(subscriptions)
+      .set({ isActive: false, updatedAt: new Date().toISOString() })
+      .where(eq(subscriptions.id, sid));
+    return errorResponse(
+      "FEATURE_NOT_ENABLED",
+      `${isPersonal ? "日历同步" : "外部订阅"}未开通`,
+      403,
+    );
   }
 
   // manual_refresh quota: null = unlimited, 0 = disabled, n = n/day.

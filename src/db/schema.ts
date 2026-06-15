@@ -28,6 +28,16 @@ export const subscriptions = sqliteTable(
       .notNull()
       .default(false),
 
+    /**
+     * Whether this subscription is currently entitled (owner still holds the
+     * required calendar cap). Reconciled from caps by the cron producer and by
+     * manual refresh; public calendar endpoints serve only active subscriptions.
+     * Revoking a cap flips this false (hard revocation); re-granting flips it back.
+     */
+    isActive: integer("is_active", { mode: "boolean" })
+      .notNull()
+      .default(true),
+
     /** Cached ICS calendar content */
     icsContent: text("ics_content"),
 
