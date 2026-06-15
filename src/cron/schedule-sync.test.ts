@@ -48,11 +48,20 @@ beforeAll(async () => {
   ).run();
 });
 
+/** Full calendar caps (everything granted) for the default test user. */
+const FULL_CAPS = {
+  sync: true, external: true, share: true,
+  sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
+};
+
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM subscriptions").run();
   // Clear any cached student IDs so each test resolves from its own bearer.
   await env.CACHE.delete("student:user-1");
   await env.CACHE.delete("student:user-attacker");
+  // Entitlement now fails closed on missing caps, so give the default user-1 a
+  // full caps entry. Tests for revocation/cap-miss use their own user ids/caps.
+  await env.CACHE.put("caps:user-1", JSON.stringify(FULL_CAPS));
 });
 
 afterEach(() => {
@@ -221,6 +230,18 @@ describe("enqueueScheduleSync (producer)", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.isActive).toBe(true);
+  });
+
+  it("fails closed: does NOT enqueue when caps are unresolvable (null)", async () => {
+    // No caps KV and the test AUTH stub has no getCaps → readCaps returns null →
+    // entitlement fails closed → due sub is not enqueued.
+    await insertSub({ userId: "user-nocaps", lastSyncedAt: null });
+    await env.CACHE.delete("caps:user-nocaps");
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 
   it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {
@@ -497,6 +518,31 @@ describe("processScheduleSyncBatch (consumer)", () => {
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.sessionId).toBeNull(); // still unpinned, not frozen to sess-1
     expect(row.sessionName).toBe("2024秋"); // display still reflects the synced term
+  });
+
+  it("fails closed on unresolved caps: skips sync but keeps is_active (no link flap)", async () => {
+    const sid = await insertSub({
+      userId: "user-nocaps",
+      sourceType: "personal_all",
+      sourceId: "user-nocaps",
+      isActive: true,
+    });
+    await env.CACHE.delete("caps:user-nocaps"); // null caps (no getCaps)
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-nocaps", trigger: "cron" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Failed closed before any upstream work...
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+    // ...but is_active is NOT flipped on a transient null (only on confirmed revoke).
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
   });
 
   it("skips and acks (does not retry) when getCquBearer returns null", async () => {

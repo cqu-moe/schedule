@@ -191,13 +191,21 @@ function capsSyncInterval(caps: CalendarCaps | null): number {
 
 /**
  * Entitlement gate for automatic syncing: personal subs require the `sync` cap,
- * external subs require `external`. When caps are KNOWN, a revoked flag stops the
- * sync (honoring downgrades). When caps are UNRESOLVABLE (null — e.g. a transient
- * auth outage) we do NOT block, preserving availability; the flag is enforced
- * whenever caps are actually known (the common case via KV / getCaps).
+ * external subs require `external`.
+ *
+ * FAILS CLOSED: when caps are UNRESOLVABLE (null — KV miss and `getCaps`
+ * unavailable/failed) we treat the sub as NOT entitled, so a revoked user whose
+ * caps can't be confirmed cannot keep syncing (the hard-revocation invariant the
+ * is_active model depends on). This requires a RELIABLE offline caps source —
+ * auth must implement `getCaps` (see cqu-moe/auth#6); otherwise every user
+ * inactive past the caps KV TTL resolves to null and stops auto-syncing.
+ *
+ * NOTE: is_active is flipped inactive only on a CONFIRMED revocation (caps
+ * resolved, flag false) — never on a transient null — so links don't flap during
+ * an auth outage (see the producer reconcile guard and the consumer skip branch).
  */
 function isCalendarEntitled(sourceType: SourceType, caps: CalendarCaps | null): boolean {
-  if (!caps) return true;
+  if (!caps) return false;
   return PERSONAL_SOURCE_TYPES.has(sourceType) ? caps.sync : caps.external;
 }
 
@@ -252,17 +260,24 @@ export async function processScheduleSyncBatch(
         // existing subscriptions — including messages enqueued before a downgrade
         // and manual/initial refreshes by a now-ineligible user.
         if (!isCalendarEntitled(sub.sourceType, caps)) {
-          // Hard revocation: flip inactive NOW (don't wait for the next hourly
-          // producer reconcile), so the public links stop serving immediately.
-          await db
-            .update(subscriptions)
-            .set({ isActive: false, updatedAt: new Date().toISOString() })
-            .where(eq(subscriptions.id, subscriptionId));
+          // CONFIRMED revocation (caps resolved, flag false): flip inactive NOW
+          // (don't wait for the producer reconcile) so public links stop serving.
+          // UNRESOLVED caps (null): fail closed on syncing, but leave is_active
+          // untouched — a transient outage must not flap the links off.
+          if (caps !== null) {
+            await db
+              .update(subscriptions)
+              .set({ isActive: false, updatedAt: new Date().toISOString() })
+              .where(eq(subscriptions.id, subscriptionId));
+          }
           console.log(
             JSON.stringify({
               event: "queue.schedule_sync.skip_not_entitled",
               subscriptionId,
-              message: "Calendar capability revoked; marked inactive, skipping",
+              capsResolved: caps !== null,
+              message: caps !== null
+                ? "Calendar capability revoked; marked inactive, skipping"
+                : "Caps unresolved; failing closed (skip sync, keep is_active)",
             }),
           );
           message.ack();
