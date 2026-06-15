@@ -22,6 +22,14 @@ import {
 export interface ScheduleSyncMessage {
   subscriptionId: string;
   userId: string;
+  /**
+   * What enqueued this message. `"cron"` messages are re-checked for due-ness in
+   * the consumer — the hourly producer spreads each due batch over
+   * {@link SYNC_SPREAD_SECONDS} (> the 1h cron period), so intervening cron runs
+   * re-enqueue subscriptions whose delayed message has not executed yet.
+   * `"manual"` (and legacy/undefined) always sync, bypassing the due re-check.
+   */
+  trigger?: "cron" | "manual";
 }
 
 /** Default sync interval (minutes) when caps are missing/unparseable. */
@@ -73,7 +81,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     }
 
     if (isDue(sub.lastSyncedAt, interval, now)) {
-      due.push({ subscriptionId: sub.id, userId: sub.userId });
+      due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron" });
     }
   }
 
@@ -141,7 +149,7 @@ export async function processScheduleSyncBatch(
 
   await Promise.allSettled(
     batch.messages.map(async (message) => {
-      const { subscriptionId, userId } = message.body;
+      const { subscriptionId, userId, trigger } = message.body;
       try {
         const [sub] = await db
           .select({
@@ -151,6 +159,7 @@ export async function processScheduleSyncBatch(
             sourceName: subscriptions.sourceName,
             sessionId: subscriptions.sessionId,
             sessionName: subscriptions.sessionName,
+            lastSyncedAt: subscriptions.lastSyncedAt,
           })
           .from(subscriptions)
           .where(eq(subscriptions.id, subscriptionId))
@@ -160,6 +169,28 @@ export async function processScheduleSyncBatch(
           // Subscription deleted between enqueue and processing.
           message.ack();
           return;
+        }
+
+        // Idempotency guard for cron-triggered syncs: the hourly producer spreads
+        // each due batch over SYNC_SPREAD_SECONDS (> the 1h cron period), so
+        // intervening cron runs re-enqueue a subscription whose delayed message
+        // has not executed yet. Re-check due-ness here (cheap: one KV read) so
+        // only the first delivery syncs and later duplicates no-op — preventing
+        // a subscription from being synced several times per interval and
+        // multiplying upstream CQU traffic. Manual refreshes skip this guard.
+        if (trigger === "cron") {
+          const interval = await readSyncIntervalMinutes(env, userId);
+          if (!isDue(sub.lastSyncedAt, interval, Date.now())) {
+            console.log(
+              JSON.stringify({
+                event: "queue.schedule_sync.skip_not_due",
+                subscriptionId,
+                message: "Already synced within interval; dropping duplicate",
+              }),
+            );
+            message.ack();
+            return;
+          }
         }
 
         const bearer = await getCquBearer(env, userId);

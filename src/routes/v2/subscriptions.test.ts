@@ -820,7 +820,9 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     const app = buildSyncApp("userA");
     const res = await app.request(`/${sid}/syncs`);
     expect(res.status).toBe(202);
-    expect(app.send).toHaveBeenCalledWith({ subscriptionId: sid, userId: "userA" });
+    // Manual refreshes carry trigger:"manual" so the consumer bypasses the cron
+    // due re-check and always syncs.
+    expect(app.send).toHaveBeenCalledWith({ subscriptionId: sid, userId: "userA", trigger: "manual" });
   });
 
   it("returns 404 for another user's subscription (no enqueue)", async () => {

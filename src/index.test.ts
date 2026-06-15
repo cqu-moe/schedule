@@ -109,6 +109,41 @@ describe("GET /api/v2/health", () => {
   });
 });
 
+describe("AUTH binding fail-closed (security)", () => {
+  /** Clone the test env with the AUTH binding removed. */
+  function envWithoutAuth() {
+    const clone = { ...env } as Record<string, unknown>;
+    delete clone.AUTH;
+    return clone as unknown as typeof env;
+  }
+
+  it("missing AUTH on a production host → 500, NOT a fail-open mock session", async () => {
+    const headers = new Headers({ "CF-Connecting-IP": uniqueIp() });
+    const res = await app.request(
+      "https://schedule.cqu.moe/api/v2/me",
+      { headers },
+      envWithoutAuth(),
+    );
+    // Must fail closed: a misconfigured deployment must never silently
+    // authenticate every request as the fixed dev user.
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INTERNAL_ERROR");
+  });
+
+  it("missing AUTH on localhost → dev mock injected (200)", async () => {
+    const headers = new Headers({ "CF-Connecting-IP": uniqueIp() });
+    const res = await app.request(
+      "http://localhost/api/v2/me",
+      { headers },
+      envWithoutAuth(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user: { id: string } };
+    expect(body.user.id).toBe("devuser000000000000000000000000");
+  });
+});
+
 describe("CORS preflight", () => {
   it("OPTIONS to a link path with PATCH method → allows PATCH", async () => {
     const res = await request("/api/v2/subscriptions/x/links/y", fakeAuth("userA", FULL_CAPS), {

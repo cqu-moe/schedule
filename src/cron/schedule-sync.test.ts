@@ -99,7 +99,9 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).toHaveBeenCalledOnce();
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch).toHaveLength(1);
-    expect(batch[0].body).toEqual({ subscriptionId: sid, userId: "user-1" });
+    // Cron-produced messages carry trigger:"cron" so the consumer can re-check
+    // due-ness and drop the duplicates that the hourly+spread producer enqueues.
+    expect(batch[0].body).toEqual({ subscriptionId: sid, userId: "user-1", trigger: "cron" });
   });
 
   it("skips subscriptions synced within the default interval (1440 min)", async () => {
@@ -348,5 +350,66 @@ describe("processScheduleSyncBatch (consumer)", () => {
 
     expect(messages[0].retry).toHaveBeenCalled();
     expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  // ── Cron idempotency guard (duplicate-enqueue protection) ──────────────────
+  //  The hourly producer spreads each due batch over 6h, so intervening cron
+  //  runs re-enqueue subscriptions whose delayed message has not executed. The
+  //  consumer re-checks due-ness for cron messages so duplicates no-op; manual
+  //  refreshes bypass the check and always sync.
+
+  it("cron message: skips and acks a subscription that is not yet due (no resync)", async () => {
+    // Synced 1h ago; default interval is 24h → not due. A cron duplicate must
+    // no-op rather than re-fetch upstream.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ lastSyncedAt: recent });
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", trigger: "cron" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // Re-check happens before any upstream work — bearer is never even fetched.
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBe(recent); // untouched
+  });
+
+  it("manual message: syncs even when the subscription is not yet due", async () => {
+    // Same not-due row, but a manual refresh must always run.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1", lastSyncedAt: recent });
+    await env.CACHE.delete("sync:personal:20210001");
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule").mockResolvedValue([]);
+    vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", trigger: "manual" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).not.toBe(recent); // re-synced
   });
 });

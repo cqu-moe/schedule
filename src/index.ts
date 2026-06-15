@@ -17,9 +17,20 @@ import calendarV2 from "./routes/v2/calendar";
 export const app = new Hono<{ Bindings: Env }>();
 
 // Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
-// 生产环境 binding 存在故不触发。
+// 生产环境 binding 必然存在；若缺失则属配置错误，必须 fail-closed 返回 500，
+// 绝不能把 mock 当成真用户放行（否则等于认证绕过：所有请求都成了固定 dev 用户）。
 app.use("*", async (c, next) => {
   if (!c.env.AUTH) {
+    const hostname = new URL(c.req.url).hostname;
+    const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+    if (!isLocal) {
+      console.error(JSON.stringify({
+        event: "auth.binding_missing",
+        hostname,
+        message: "AUTH service binding missing on a non-local host; failing closed",
+      }));
+      return errorResponse("INTERNAL_ERROR", "认证服务暂不可用", 500);
+    }
     c.env.AUTH = createMockAuth();
   }
   await next();

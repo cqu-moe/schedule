@@ -375,6 +375,7 @@ app.post("/:sid/syncs", async (c) => {
   await c.env.SCHEDULE_SYNC_QUEUE.send({
     subscriptionId: sid,
     userId: user.id,
+    trigger: "manual",
   } satisfies ScheduleSyncMessage);
 
   // Increment the daily counter (best-effort). TTL covers the rest of the day
