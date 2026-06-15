@@ -389,10 +389,10 @@ describe('Dashboard view (v2)', () => {
 
   // ── Delete ────────────────────────────────────────────────────────────────────
 
-  it('does not show delete menu item for personal subscriptions', async () => {
+  it('shows delete menu item for personal subscriptions', async () => {
     const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
-    expect(menuDeleteItems.length).toBe(0)
+    expect(menuDeleteItems.length).toBeGreaterThanOrEqual(1)
   })
 
   it('calls api.deleteSubscription with sub.id for non-personal subscription', async () => {

@@ -261,16 +261,14 @@
                     管理共享链接
                   </DropdownMenuItem>
 
-                  <!-- Delete (non-personal only) -->
-                  <template v-if="!item.sub.is_personal">
-                    <DropdownMenuItem
-                      class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
-                      @click="openDeleteSubDialog(item.sub)"
-                    >
-                      <Trash2 class="h-4 w-4 mr-2" />
-                      删除
-                    </DropdownMenuItem>
-                  </template>
+                  <!-- Delete -->
+                  <DropdownMenuItem
+                    class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                    @click="openDeleteSubDialog(item.sub)"
+                  >
+                    <Trash2 class="h-4 w-4 mr-2" />
+                    删除
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
