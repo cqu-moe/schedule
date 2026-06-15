@@ -170,7 +170,11 @@ async function readCaps(env: Env, userId: string): Promise<CalendarCaps | null> 
   }
 
   try {
-    const caps = await env.AUTH?.getCaps?.(userId);
+    const caps = await env.AUTH?.getCaps?.({
+      clientId: "calendar",
+      clientSecret: env.CALENDAR_CLIENT_SECRET,
+      userId,
+    });
     if (caps?.calendar) {
       await env.CACHE.put(`caps:${userId}`, JSON.stringify(caps.calendar), {
         expirationTtl: CAPS_CACHE_TTL_SECONDS,

@@ -183,12 +183,18 @@ describe("enqueueScheduleSync (producer)", () => {
       ...env,
       SCHEDULE_SYNC_QUEUE: { sendBatch },
       AUTH: { getCaps },
+      CALENDAR_CLIENT_SECRET: "test-secret",
     } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-cap-miss");
 
-    expect(getCaps).toHaveBeenCalledWith("user-cap-miss");
+    // getCaps is authenticated like getCquTicket — must pass {clientId, clientSecret, userId}.
+    expect(getCaps).toHaveBeenCalledWith({
+      clientId: "calendar",
+      clientSecret: "test-secret",
+      userId: "user-cap-miss",
+    });
     expect(sendBatch).toHaveBeenCalledOnce();
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);

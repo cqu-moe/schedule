@@ -38,11 +38,19 @@ export interface GetCquTicketArgs {
 
 export type GetCquTicketResult = { ticket: string } | { error: string };
 
+/** Args for getCaps — authenticated like getCquTicket (RPC caller self-reports
+ *  clientId, so auth verifies clientSecret; getCaps enumerates by arbitrary userId). */
+export interface GetCapsArgs {
+  clientId: string;
+  clientSecret: string;
+  userId: string;
+}
+
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;
   getCquTicket(args: GetCquTicketArgs): Promise<GetCquTicketResult>;
-  getCaps?(userId: string): Promise<{ calendar: CalendarCaps } | null>;
+  getCaps?(args: GetCapsArgs): Promise<{ calendar: CalendarCaps } | null>;
 }
 
 /** 缺省/兜底 caps：未授予时的安全保守值（全部拒绝、零配额、最长间隔） */
