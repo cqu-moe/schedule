@@ -587,9 +587,9 @@ async function handleRefreshSub(sid: string) {
 
 async function handleDeleteSub(sid: string) {
   try {
+    await api.deleteSubscription(sid)
     toast.success('订阅已删除')
     deleteSubDialog.value = null
-    await api.deleteSubscription(sid)
     await subStore.load(true).catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))

@@ -445,6 +445,86 @@ describe('Dashboard view (v2)', () => {
     expect(successCallOrder).toBeLessThan(reloadCallOrder)
   })
 
+  it('does not show success toast and keeps dialog open when delete fails', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-fail',
+      is_personal: false,
+      source_name: '赵六',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    mockApi.deleteSubscription.mockRejectedValueOnce({
+      response: {
+        data: { detail: { error: { code: 'FORBIDDEN', message: '无权删除' } } },
+      },
+    })
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-fail', name: '赵六' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    // Success toast must NOT be shown
+    expect(mockToast.success).not.toHaveBeenCalledWith('订阅已删除')
+    // Error toast must be shown
+    expect(mockToast.error).toHaveBeenCalledWith('无权删除')
+    // Dialog must remain open (deleteSubDialog still set)
+    expect(vm.deleteSubDialog).not.toBeNull()
+    expect(vm.deleteSubDialog?.id).toBe('e-del-fail')
+  })
+
+  it('shows error toast (not success) when delete fails with network error', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-net',
+      is_personal: false,
+      source_name: '钱七',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    mockApi.deleteSubscription.mockRejectedValueOnce(new Error('Network Error'))
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-net', name: '钱七' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    expect(mockToast.success).not.toHaveBeenCalled()
+    expect(mockToast.error).toHaveBeenCalledWith('删除订阅失败')
+    expect(vm.deleteSubDialog).not.toBeNull()
+  })
+
+  it('closes dialog only after successful delete', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-close',
+      is_personal: false,
+      source_name: '孙八',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-close', name: '孙八' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    // On success dialog must be closed (null)
+    expect(vm.deleteSubDialog).toBeNull()
+  })
+
   // ── Load errors ───────────────────────────────────────────────────────────────
 
   it('shows toast error when initial load fails', async () => {
