@@ -28,6 +28,9 @@ export interface VerifiedSession {
 
 export interface GetCquTicketArgs {
   clientId: string;
+  /** Per-client OAuth secret; auth hashes + constant-time compares it (RPC is
+   *  in-process, so any bound Worker could spoof a clientId without this). */
+  clientSecret: string;
   service?: string;
   serviceUrl?: string;
   userId: string;

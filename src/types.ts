@@ -23,6 +23,9 @@ export interface Env {
 
   // Secrets
   ADMIN_SECRET: string;
+  /** OAuth client secret for the "calendar" client, required by AUTH.getCquTicket
+   *  (auth verifies the hashed secret over RPC; see ../auth subsystem guide §1.2). */
+  CALENDAR_CLIENT_SECRET: string;
 
   // Environment Variables
   PUBLIC_URL: string;
