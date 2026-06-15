@@ -40,8 +40,15 @@ const DEFAULT_SYNC_INTERVAL_MINUTES = 1440;
 /** TTL (seconds) for the caps:<userId> KV cache; mirrors the session middleware. */
 const CAPS_CACHE_TTL_SECONDS = 3600;
 
-/** Spread window (seconds) over which to scatter enqueued sync messages. */
-const SYNC_SPREAD_SECONDS = 21600;
+/**
+ * Spread window (seconds) over which to scatter enqueued sync messages, AND the
+ * hard per-message delay cap. Set to the 1h cron period so each batch is fully
+ * delivered before the next hourly run — spreading beyond the cron period would
+ * re-enqueue not-yet-executed subscriptions every intervening run (the source of
+ * the duplicate-sync churn; the consumer's due re-check is the backstop, staying
+ * within 1h avoids the churn entirely).
+ */
+const SYNC_SPREAD_SECONDS = 3600;
 
 /**
  * Producer: pick subscriptions due for sync and enqueue them.
@@ -107,6 +114,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     (m) => ({ body: m }),
     SYNC_SPREAD_SECONDS,
     10,
+    SYNC_SPREAD_SECONDS, // hard-cap every delay at 1h so nothing spills past the next cron
   );
 
   console.log(

@@ -47,6 +47,18 @@ describe("spreadEnqueue", () => {
     expect(messages[1].delaySeconds).toBe(43200);
   });
 
+  it("clamps delay to a custom maxDelaySeconds (e.g. 1h)", async () => {
+    const queue = createMockQueue();
+    const items = [0, 1, 2];
+    // interval = max(2000, floor(6000/3)=2000) = 2000 → raw delays 0/2000/4000;
+    // the 3600s cap must clamp the third message.
+    await spreadEnqueue(queue, items, (item) => ({ body: item }), 6000, 2000, 3600);
+    const messages = queue.sendBatch.mock.calls[0][0];
+    expect(messages[0].delaySeconds).toBe(0);
+    expect(messages[1].delaySeconds).toBe(2000);
+    expect(messages[2].delaySeconds).toBe(3600);
+  });
+
   it("respects custom minInterval", async () => {
     const queue = createMockQueue();
     const items = [0, 1, 2];
