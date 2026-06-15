@@ -15,10 +15,13 @@ describe('Home view', () => {
     expect(wrapper.text()).toContain('重庆大学课表日历订阅')
   })
 
-  it('links to auth.cqu.moe/login when not authenticated', async () => {
+  it('links to auth.cqu.moe/login with redirect param when not authenticated', async () => {
     const { wrapper } = await mountWithContext(Home)
-    // ctaLink = 'https://auth.cqu.moe/login' when not authenticated
-    const link = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+    // Must carry ?redirect= so the user returns to current page after login.
+    const bareLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+    expect(bareLink.exists()).toBe(false)
+
+    const link = wrapper.find('a[href*="/login?redirect="]')
     expect(link.exists()).toBe(true)
     expect(link.text()).toContain('开始使用')
   })

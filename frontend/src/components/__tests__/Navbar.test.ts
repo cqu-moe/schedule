@@ -60,10 +60,14 @@ describe('Navbar', () => {
   }
 
   describe('unauthenticated state', () => {
-    it('shows a login link pointing to auth.cqu.moe when not authenticated', () => {
+    it('login link href includes /login?redirect= (not bare /login)', () => {
       const wrapper = mountNavbar(false)
 
-      const loginLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+      // The href must carry a redirect param so the user returns after login.
+      const bareLoginLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+      expect(bareLoginLink.exists()).toBe(false)
+
+      const loginLink = wrapper.find('a[href*="/login?redirect="]')
       expect(loginLink.exists()).toBe(true)
       expect(loginLink.text()).toContain('登录')
     })

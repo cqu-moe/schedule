@@ -16,7 +16,7 @@
           <router-link v-if="session.isAuthenticated" to="/dashboard">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
-          <a v-else :href="`${AUTH_BASE_URL}/login`" class="inline-block">
+          <a v-else :href="loginHref" class="inline-block">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </a>
         </div>
@@ -59,13 +59,17 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
-import { AUTH_BASE_URL } from '@/config/auth'
+import { authLoginUrl } from '@/config/auth'
 
 const session = useSession()
+const route = useRoute()
+const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
 
 const appVersion = __APP_VERSION__
 </script>

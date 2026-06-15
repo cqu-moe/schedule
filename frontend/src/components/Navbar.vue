@@ -38,7 +38,7 @@
           <!-- Not authenticated: prompt via auth.cqu.moe -->
           <template v-else>
             <a
-              :href="`${AUTH_BASE_URL}/login`"
+              :href="loginHref"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               登录
@@ -72,13 +72,17 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useColorMode } from '@vueuse/core'
 import { Monitor, Sun, Moon } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
-import { AUTH_BASE_URL } from '@/config/auth'
+import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
 
 const session = useSession()
+const route = useRoute()
+const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
 const colorMode = useColorMode()
 const storedMode = colorMode.store
 
