@@ -54,7 +54,7 @@ schedule 读取的 `calendar` 子系统能力（按指南 `caps.calendar.{...}` 
 | `share` | flag | 允许创建**共享链接** | 只有默认链接 |
 | `sub_limit` | quota·条 | 订阅数量上限（null=无限） | 视为 0 |
 | `share_limit` | quota·条 | **每用户**分享链接总数上限（null=无限） | 视为 0 |
-| `sync_interval` | quota·分钟 | 自动同步最小间隔（档位越高越小越新鲜） | 保守默认（如 1440） |
+| `sync_interval` | quota·分钟 | 自动同步最小间隔（档位越高越小越新鲜）。注：自动同步由每小时 cron 驱动，**1h 是有效下限**，<60 实际等同每小时，非分钟级 | 保守默认（如 1440） |
 | `manual_refresh` | quota·次/天 | 手动"立即刷新"每日限额 | 视为 0（禁手动刷新） |
 
 > 比指南示例（`sync`/`sync_limit`/`share`）多 4 个 key，归 auth 侧 `capabilities.ts` 补齐。
@@ -169,7 +169,7 @@ ALL    /api/v1/*                             # → 410 Gone / "请刷新页面" 
 
 ### 6.3 自动同步 cron + consumer
 
-- **cron**（如每 30 min）：扫 subscriptions → 按 userId 读缓存 `sync_interval` → 选出到期（`now - lastSyncedAt ≥ interval`）→ `spreadEnqueue` 到 `schedule-sync` 队列分散投递。
+- **cron**（每小时 `0 * * * *`，故 1h 为自动同步有效下限）：扫 subscriptions → 按 userId 读缓存 `sync_interval`（缺失则回源 `getCaps`）→ 选出到期（`now - lastSyncedAt ≥ interval`）→ `spreadEnqueue` 在 1h 窗口内分散投递到 `schedule-sync` 队列。
 - **consumer**：`getCquTicket({clientId:"calendar",service:"jwxt",userId})` → 出错（SESSION_INACTIVE 等）记录跳过 → `exchangeTicketForCquToken(ST)` → bearer（KV 短缓存 `bearer:<userId>` 减 auth 压力）→ `CQUAPIClient` 拉数据 → 重生成 ICS/JSON 写回订阅 + `lastSyncedAt`。
 
 ### 6.4 手动刷新

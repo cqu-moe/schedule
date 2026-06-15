@@ -58,6 +58,12 @@ const SYNC_SPREAD_SECONDS = 3600;
  * cap is missing or unparseable, the conservative {@link DEFAULT_SYNC_INTERVAL_MINUTES}
  * default is used. A subscription is due when it has never synced (`lastSyncedAt`
  * null) or `now - lastSyncedAt >= interval`.
+ *
+ * NOTE: this producer only runs on the hourly cron, so the cron period (1h) is
+ * the hard FLOOR on effective auto-refresh frequency. `sync_interval` therefore
+ * only differentiates tiers at or above 1h (hourly / 6h / daily…); any value
+ * below 60 min still resolves to once per hour — it does NOT yield sub-hourly
+ * refresh. Genuine sub-hourly refresh would require a higher-frequency cron.
  */
 export async function enqueueScheduleSync(env: Env): Promise<void> {
   console.log(
