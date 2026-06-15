@@ -3,9 +3,11 @@ import { eq } from "drizzle-orm";
 import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
+  type SourceType,
   type ExternalSourceType,
 } from "../db/schema";
 import type { Env } from "../types";
+import type { CalendarCaps } from "../services/auth-rpc";
 import { CQUAPIClient } from "../services/cqu-api";
 import { getCquBearer, resolveOwnStudentId } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
@@ -75,6 +77,7 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     .select({
       id: subscriptions.id,
       userId: subscriptions.userId,
+      sourceType: subscriptions.sourceType,
       lastSyncedAt: subscriptions.lastSyncedAt,
     })
     .from(subscriptions);
@@ -86,19 +89,23 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     return;
   }
 
-  // Cache sync_interval per user to avoid re-reading KV for each subscription.
-  const intervalCache = new Map<string, number>();
+  // Cache caps per user to avoid re-reading KV for each subscription.
+  const capsCache = new Map<string, CalendarCaps | null>();
   const now = Date.now();
   const due: ScheduleSyncMessage[] = [];
 
   for (const sub of allSubs) {
-    let interval = intervalCache.get(sub.userId);
-    if (interval === undefined) {
-      interval = await readSyncIntervalMinutes(env, sub.userId);
-      intervalCache.set(sub.userId, interval);
+    let caps = capsCache.get(sub.userId);
+    if (caps === undefined) {
+      caps = await readCaps(env, sub.userId);
+      capsCache.set(sub.userId, caps);
     }
 
-    if (isDue(sub.lastSyncedAt, interval, now)) {
+    // Entitlement gate: skip subs whose required calendar cap was revoked
+    // (downgrade). Without this, cron would keep syncing them indefinitely.
+    if (!isCalendarEntitled(sub.sourceType, caps)) continue;
+
+    if (isDue(sub.lastSyncedAt, capsSyncInterval(caps), now)) {
       due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron" });
     }
   }
@@ -134,22 +141,18 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
 }
 
 /**
- * Read a user's `sync_interval` (minutes) for offline (cron) scheduling.
+ * Read a user's calendar caps for offline (cron) scheduling + entitlement.
  *
  * Fast path: the `caps:<userId>` KV entry written by the session middleware on
  * login. On a cache miss (the 1h caps TTL expired while the user was inactive)
  * refresh from the auth RPC ({@link AuthService.getCaps}) and re-cache, so a
- * configured short interval keeps being honored offline — otherwise we'd
- * silently fall back to the 24h default after one hour of inactivity, breaking
- * hourly syncing for sub-1440-min users (and the consumer's due re-check would
- * then discard their already-enqueued delayed messages). The conservative
- * {@link DEFAULT_SYNC_INTERVAL_MINUTES} is used only when no caps are resolvable.
+ * configured short interval (and a revoked flag) keep being honored offline.
+ * Returns `null` only when no caps are resolvable at all.
  */
-async function readSyncIntervalMinutes(env: Env, userId: string): Promise<number> {
+async function readCaps(env: Env, userId: string): Promise<CalendarCaps | null> {
   try {
     const cached = await env.CACHE.get(`caps:${userId}`, "json");
-    const raw = (cached as { sync_interval?: number | null } | null)?.sync_interval;
-    if (typeof raw === "number" && raw > 0) return raw;
+    if (cached) return cached as CalendarCaps;
   } catch {
     // ignore and try the RPC refresh below
   }
@@ -160,13 +163,30 @@ async function readSyncIntervalMinutes(env: Env, userId: string): Promise<number
       await env.CACHE.put(`caps:${userId}`, JSON.stringify(caps.calendar), {
         expirationTtl: CAPS_CACHE_TTL_SECONDS,
       }).catch(() => {});
-      const raw = caps.calendar.sync_interval;
-      if (typeof raw === "number" && raw > 0) return raw;
+      return caps.calendar;
     }
   } catch {
-    // fall through to default
+    // fall through to null
   }
-  return DEFAULT_SYNC_INTERVAL_MINUTES;
+  return null;
+}
+
+/** Resolve `sync_interval` (minutes) from caps, falling back to the conservative default. */
+function capsSyncInterval(caps: CalendarCaps | null): number {
+  const raw = caps?.sync_interval;
+  return typeof raw === "number" && raw > 0 ? raw : DEFAULT_SYNC_INTERVAL_MINUTES;
+}
+
+/**
+ * Entitlement gate for automatic syncing: personal subs require the `sync` cap,
+ * external subs require `external`. When caps are KNOWN, a revoked flag stops the
+ * sync (honoring downgrades). When caps are UNRESOLVABLE (null — e.g. a transient
+ * auth outage) we do NOT block, preserving availability; the flag is enforced
+ * whenever caps are actually known (the common case via KV / getCaps).
+ */
+function isCalendarEntitled(sourceType: SourceType, caps: CalendarCaps | null): boolean {
+  if (!caps) return true;
+  return PERSONAL_SOURCE_TYPES.has(sourceType) ? caps.sync : caps.external;
 }
 
 /** A subscription is due when never synced, or last sync is older than `interval` minutes. */
@@ -214,26 +234,40 @@ export async function processScheduleSyncBatch(
           return;
         }
 
+        const caps = await readCaps(env, userId);
+
+        // Entitlement gate (all triggers): a revoked calendar cap stops syncing
+        // existing subscriptions — including messages enqueued before a downgrade
+        // and manual/initial refreshes by a now-ineligible user.
+        if (!isCalendarEntitled(sub.sourceType, caps)) {
+          console.log(
+            JSON.stringify({
+              event: "queue.schedule_sync.skip_not_entitled",
+              subscriptionId,
+              message: "Calendar capability revoked; skipping",
+            }),
+          );
+          message.ack();
+          return;
+        }
+
         // Idempotency guard for cron-triggered syncs: the hourly producer spreads
         // each due batch over SYNC_SPREAD_SECONDS (> the 1h cron period), so
         // intervening cron runs re-enqueue a subscription whose delayed message
-        // has not executed yet. Re-check due-ness here (cheap: one KV read) so
-        // only the first delivery syncs and later duplicates no-op — preventing
-        // a subscription from being synced several times per interval and
-        // multiplying upstream CQU traffic. Manual refreshes skip this guard.
-        if (trigger === "cron") {
-          const interval = await readSyncIntervalMinutes(env, userId);
-          if (!isDue(sub.lastSyncedAt, interval, Date.now())) {
-            console.log(
-              JSON.stringify({
-                event: "queue.schedule_sync.skip_not_due",
-                subscriptionId,
-                message: "Already synced within interval; dropping duplicate",
-              }),
-            );
-            message.ack();
-            return;
-          }
+        // has not executed yet. Re-check due-ness here so only the first delivery
+        // syncs and later duplicates no-op — preventing a subscription from being
+        // synced several times per interval and multiplying upstream CQU traffic.
+        // Manual/initial refreshes skip this guard.
+        if (trigger === "cron" && !isDue(sub.lastSyncedAt, capsSyncInterval(caps), Date.now())) {
+          console.log(
+            JSON.stringify({
+              event: "queue.schedule_sync.skip_not_due",
+              subscriptionId,
+              message: "Already synced within interval; dropping duplicate",
+            }),
+          );
+          message.ack();
+          return;
         }
 
         const bearer = await getCquBearer(env, userId);
@@ -258,7 +292,7 @@ export async function processScheduleSyncBatch(
           // own authenticated subject — NEVER from the stored sub.sourceId
           // (which is a client-supplied, untrusted value). This prevents a
           // crafted sourceId from leaking another student's private schedule.
-          const studentId = await resolveOwnStudentId(env, userId, bearer);
+          const studentId = resolveOwnStudentId(bearer, userId);
           if (!studentId) {
             console.log(
               JSON.stringify({

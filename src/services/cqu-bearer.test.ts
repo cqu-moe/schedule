@@ -116,32 +116,22 @@ describe("getCquBearer", () => {
 describe("resolveOwnStudentId", () => {
   const auth = fakeAuth({ error: "NOT_USED" });
 
-  it("decodes the 学号 from the bearer and caches it under student:<userId>", async () => {
-    const bearer = fakeBearer("20210001");
-    const studentId = await resolveOwnStudentId(buildEnv(auth), USER_ID, bearer);
-
+  it("decodes the 学号 from the current bearer", async () => {
+    const studentId = await resolveOwnStudentId(fakeBearer("20210001"), USER_ID);
     expect(studentId).toBe("20210001");
-    expect(await env.CACHE.get(STUDENT_KEY)).toBe("20210001");
   });
 
-  it("returns the cached student ID without decoding (ignores the bearer)", async () => {
-    await env.CACHE.put(STUDENT_KEY, "cached-20259999");
-    // A bearer for a DIFFERENT student must not override the cached value.
-    const studentId = await resolveOwnStudentId(
-      buildEnv(auth),
-      USER_ID,
-      fakeBearer("20210001"),
-    );
-    expect(studentId).toBe("cached-20259999");
+  it("SECURITY: always reflects the current bearer, never a stale cached 学号", async () => {
+    // Simulate a stale cache from a previous CQU binding. After rebinding, the
+    // bearer subject changes; resolveOwnStudentId MUST return the new bearer's
+    // 学号, not the old cached one — otherwise sync could leak another student.
+    await env.CACHE.put(STUDENT_KEY, "20259999");
+    const studentId = await resolveOwnStudentId(fakeBearer("20210001"), USER_ID);
+    expect(studentId).toBe("20210001");
   });
 
   it("returns null (no throw) when the bearer carries no student ID", async () => {
-    const studentId = await resolveOwnStudentId(
-      buildEnv(auth),
-      USER_ID,
-      "opaque-token",
-    );
+    const studentId = await resolveOwnStudentId("opaque-token", USER_ID);
     expect(studentId).toBeNull();
-    expect(await env.CACHE.get(STUDENT_KEY)).toBeNull();
   });
 });

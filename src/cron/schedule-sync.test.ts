@@ -137,7 +137,10 @@ describe("enqueueScheduleSync (producer)", () => {
     const sid = await insertSub({ userId: "user-fast", lastSyncedAt: synced });
     await env.CACHE.put(
       "caps:user-fast",
-      JSON.stringify({ sync_interval: 60 }),
+      JSON.stringify({
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 60, manual_refresh: 20,
+      }),
     );
 
     const sendBatch = vi.fn().mockResolvedValue(undefined);
@@ -179,6 +182,24 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).toHaveBeenCalledOnce();
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
+
+  it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {
+    await insertSub({ userId: "user-revoked", lastSyncedAt: null }); // due, but downgraded
+    await env.CACHE.put(
+      "caps:user-revoked",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-revoked");
+
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -377,6 +398,32 @@ describe("processScheduleSyncBatch (consumer)", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.sessionId).toBe("sess-old"); // preserved, not overwritten to sess-1
+  });
+
+  it("entitlement gate: acks without syncing when the sync cap is revoked", async () => {
+    const sid = await insertSub({ userId: "user-revoked", sourceType: "personal_all", sourceId: "user-revoked" });
+    await env.CACHE.put(
+      "caps:user-revoked",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-revoked", trigger: "manual" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+    await env.CACHE.delete("caps:user-revoked");
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // Gated before any upstream work — even a manual trigger is blocked.
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBeNull();
   });
 
   it("skips and acks (does not retry) when getCquBearer returns null", async () => {

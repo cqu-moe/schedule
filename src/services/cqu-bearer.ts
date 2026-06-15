@@ -5,16 +5,6 @@ import { decodeStudentIdFromBearer } from "./cqu-api";
 /** KV key prefix for the per-user cached CQU bearer token. */
 const BEARER_KEY_PREFIX = "bearer:";
 
-/** KV key prefix for the per-user resolved CQU 学号 (student ID). */
-const STUDENT_KEY_PREFIX = "student:";
-
-/**
- * TTL (seconds) for the cached student ID. A user's 学号 is effectively
- * immutable, so cache it for a long time (30 days) to avoid re-decoding the
- * bearer on every sync.
- */
-const STUDENT_TTL = 30 * 24 * 3600;
-
 /**
  * TTL (seconds) for the cached bearer. CQU OAuth tokens last ~4h; cache for ~3h
  * to refresh ahead of expiry while still cutting most ticket exchanges.
@@ -100,28 +90,21 @@ export async function getCquBearer(
 }
 
 /**
- * Resolve the CQU 学号 (student ID) of the authenticated user, bound to the
- * `userId` (auth bearer subject) — NEVER to any client-supplied input.
+ * Resolve the CQU 学号 (student ID) of the authenticated user from the CURRENT
+ * bearer's `user_name` claim ({@link decodeStudentIdFromBearer}) — NEVER from any
+ * client-supplied input.
  *
- * The 学号 is the `user_name` claim of the CQU OAuth bearer JWT
- * ({@link decodeStudentIdFromBearer}). Because it is effectively immutable, it
- * is cached in KV (`student:<userId>`, 30d TTL) so subsequent syncs skip the
- * decode entirely.
+ * Decoded fresh from the bearer on every call (a cheap JWT base64 parse, no I/O)
+ * and intentionally NOT cached by `userId`: an auth account can rebind to a
+ * different CQU account, and a stale `student:<userId>` cache would make the new
+ * bearer fetch the OLD student's schedule (cross-student leak). The 学号 is thus
+ * always tied to the identity of the bearer actually being used.
  *
- * Returns `null` (never throws) when the bearer carries no usable student ID,
- * so personal sync can ack-and-skip a single user without failing the batch.
- * The bearer itself is sensitive and is NEVER logged here.
+ * Returns `null` when the bearer carries no usable student ID, so personal sync
+ * can ack-and-skip a single user without failing the batch. The bearer itself is
+ * sensitive and is NEVER logged here. `userId` is for log correlation only.
  */
-export async function resolveOwnStudentId(
-  env: Env,
-  userId: string,
-  bearer: string,
-): Promise<string | null> {
-  const cacheKey = `${STUDENT_KEY_PREFIX}${userId}`;
-
-  const cached = await env.CACHE.get(cacheKey);
-  if (cached) return cached;
-
+export function resolveOwnStudentId(bearer: string, userId: string): string | null {
   const studentId = decodeStudentIdFromBearer(bearer);
   if (!studentId) {
     console.log(
@@ -133,19 +116,5 @@ export async function resolveOwnStudentId(
     );
     return null;
   }
-
-  // Best-effort cache; never block on a KV write failure.
-  await env.CACHE.put(cacheKey, studentId, { expirationTtl: STUDENT_TTL }).catch(
-    (e) =>
-      console.warn(
-        JSON.stringify({
-          event: "cqu_bearer.student_id.cache.write_failed",
-          userId,
-          error: e instanceof Error ? e.message : String(e),
-          message: "Failed to cache student ID to KV",
-        }),
-      ),
-  );
-
   return studentId;
 }
