@@ -581,6 +581,74 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('下载 CSV')
   })
 
+  // ── manual_refresh quota ──────────────────────────────────────────────────────
+
+  it('per-sub refresh button is enabled when manual_refresh is null (unlimited)', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: null } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('per-sub refresh button is enabled when manual_refresh > 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 3 } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('per-sub refresh button is disabled when manual_refresh is 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 0 } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('"同步个人课表" button is disabled when manual_refresh is 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 0 } },
+    )
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('"同步个人课表" button is enabled when manual_refresh is null (unlimited)', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: null } },
+    )
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('"同步个人课表" button is enabled when manual_refresh > 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 2 } },
+    )
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeUndefined()
+  })
+
   // ── FE-3: Share links ─────────────────────────────────────────────────────────
 
   it('shows "管理共享链接" menu item for every subscription', async () => {

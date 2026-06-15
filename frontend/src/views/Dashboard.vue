@@ -30,7 +30,7 @@
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncFeedback.stateOf() === 'loading' || personalSubs.length === 0"
+              :disabled="syncFeedback.stateOf() === 'loading' || personalSubs.length === 0 || !canManualRefresh"
               :class="{
                 'bg-green-600 hover:bg-green-600 text-white border-transparent':
                   syncFeedback.stateOf() === 'success',
@@ -122,7 +122,7 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="refreshFeedback.stateOf(item.sub.id) === 'loading'"
+                :disabled="refreshFeedback.stateOf(item.sub.id) === 'loading' || !canManualRefresh"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white border-transparent':
                     refreshFeedback.stateOf(item.sub.id) === 'success',
@@ -437,6 +437,12 @@ let pollStartTime = 0
 const subLimit = computed(() => session.quota('sub_limit'))
 
 const personalSubs = computed(() => subStore.subscriptions.filter(s => s.is_personal))
+
+/**
+ * `manual_refresh` quota semantics: null = unlimited, 0 = disabled, n = n/day.
+ * When 0, the backend will always return 429; disable the controls proactively.
+ */
+const canManualRefresh = computed(() => session.quota('manual_refresh') !== 0)
 
 // ── Button feedback ───────────────────────────────────────────────────────────
 
