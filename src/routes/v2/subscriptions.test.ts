@@ -102,6 +102,11 @@ beforeAll(async () => {
   await env.DB.prepare(
     `CREATE UNIQUE INDEX uq_user_source_session ON subscriptions (user_id, source_type, source_id, session_id)`,
   ).run();
+  // Partial unique index mirroring migration 0004: enforces personal-subscription
+  // uniqueness even when session_id is NULL (SQLite treats NULLs as distinct).
+  await env.DB.prepare(
+    `CREATE UNIQUE INDEX uq_user_source_personal ON subscriptions (user_id, source_type, source_id) WHERE session_id IS NULL`,
+  ).run();
   await env.DB.prepare(
     `CREATE INDEX idx_subscriptions_user_id ON subscriptions (user_id)`,
   ).run();
@@ -874,4 +879,48 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(second.status).toBe(429);
     expect(app.send).toHaveBeenCalledOnce();
   });
+});
+
+// ── DB invariant: uniqueness for personal subs even when session_id is NULL ───
+
+//  SQLite treats NULL as distinct in unique indexes, so the (user, type, source,
+
+//  session) index does NOT prevent duplicate null-session personal rows. A
+
+//  partial unique index WHERE session_id IS NULL must enforce it (Codex P2).
+
+describe("personal-subscription uniqueness (null session_id)", () => {
+
+  it("rejects a second identical personal row with null session_id", async () => {
+
+    const now = new Date().toISOString();
+
+    const base = {
+
+      userId: "userU",
+
+      sourceType: "personal_all" as const,
+
+      sourceId: "userU",
+
+      sourceName: "我的课表",
+
+      sessionId: null,
+
+      createdAt: now,
+
+      updatedAt: now,
+
+    };
+
+    await db.insert(subscriptions).values({ id: crypto.randomUUID(), ...base });
+
+    await expect(
+
+      db.insert(subscriptions).values({ id: crypto.randomUUID(), ...base }),
+
+    ).rejects.toThrow();
+
+  });
+
 });

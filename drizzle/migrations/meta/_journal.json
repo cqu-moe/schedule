@@ -29,6 +29,13 @@
       "when": 1781430195721,
       "tag": "0003_burly_omega_red",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1781500454219,
+      "tag": "0004_simple_fat_cobra",
+      "breakpoints": true
     }
   ]
 }

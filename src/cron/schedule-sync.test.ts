@@ -150,6 +150,36 @@ describe("enqueueScheduleSync (producer)", () => {
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
   });
+
+  it("refreshes caps via AUTH.getCaps on a KV miss (honors a short interval offline)", async () => {
+    // Synced 2h ago with NO caps:<user> in KV (1h session TTL expired). Without
+    // a refresh the producer would fall back to the 24h default and skip; with
+    // getCaps it sees the 60-min interval and enqueues.
+    const synced = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ userId: "user-cap-miss", lastSyncedAt: synced });
+    await env.CACHE.delete("caps:user-cap-miss");
+
+    const getCaps = vi.fn().mockResolvedValue({
+      calendar: {
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 60, manual_refresh: 20,
+      },
+    });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = {
+      ...env,
+      SCHEDULE_SYNC_QUEUE: { sendBatch },
+      AUTH: { getCaps },
+    } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-cap-miss");
+
+    expect(getCaps).toHaveBeenCalledWith("user-cap-miss");
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════

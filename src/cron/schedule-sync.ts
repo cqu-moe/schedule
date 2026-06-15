@@ -35,6 +35,9 @@ export interface ScheduleSyncMessage {
 /** Default sync interval (minutes) when caps are missing/unparseable. */
 const DEFAULT_SYNC_INTERVAL_MINUTES = 1440;
 
+/** TTL (seconds) for the caps:<userId> KV cache; mirrors the session middleware. */
+const CAPS_CACHE_TTL_SECONDS = 3600;
+
 /** Spread window (seconds) over which to scatter enqueued sync messages. */
 const SYNC_SPREAD_SECONDS = 21600;
 
@@ -114,12 +117,36 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   );
 }
 
-/** Read a user's `sync_interval` (minutes) from the caps KV cache, with default fallback. */
+/**
+ * Read a user's `sync_interval` (minutes) for offline (cron) scheduling.
+ *
+ * Fast path: the `caps:<userId>` KV entry written by the session middleware on
+ * login. On a cache miss (the 1h caps TTL expired while the user was inactive)
+ * refresh from the auth RPC ({@link AuthService.getCaps}) and re-cache, so a
+ * configured short interval keeps being honored offline — otherwise we'd
+ * silently fall back to the 24h default after one hour of inactivity, breaking
+ * hourly syncing for sub-1440-min users (and the consumer's due re-check would
+ * then discard their already-enqueued delayed messages). The conservative
+ * {@link DEFAULT_SYNC_INTERVAL_MINUTES} is used only when no caps are resolvable.
+ */
 async function readSyncIntervalMinutes(env: Env, userId: string): Promise<number> {
   try {
-    const caps = await env.CACHE.get(`caps:${userId}`, "json");
-    const raw = (caps as { sync_interval?: number | null } | null)?.sync_interval;
+    const cached = await env.CACHE.get(`caps:${userId}`, "json");
+    const raw = (cached as { sync_interval?: number | null } | null)?.sync_interval;
     if (typeof raw === "number" && raw > 0) return raw;
+  } catch {
+    // ignore and try the RPC refresh below
+  }
+
+  try {
+    const caps = await env.AUTH?.getCaps?.(userId);
+    if (caps?.calendar) {
+      await env.CACHE.put(`caps:${userId}`, JSON.stringify(caps.calendar), {
+        expirationTtl: CAPS_CACHE_TTL_SECONDS,
+      }).catch(() => {});
+      const raw = caps.calendar.sync_interval;
+      if (typeof raw === "number" && raw > 0) return raw;
+    }
   } catch {
     // fall through to default
   }

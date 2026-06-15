@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
@@ -53,6 +54,13 @@ export const subscriptions = sqliteTable(
       table.sourceId,
       table.sessionId,
     ),
+    // SQLite treats NULL as distinct in unique indexes, so uq_user_source_session
+    // does NOT prevent duplicate rows when session_id is NULL (the normal case for
+    // personal subscriptions). This partial unique index closes that gap so two
+    // concurrent identical personal creates cannot both insert.
+    uniqueIndex("uq_user_source_personal")
+      .on(table.userId, table.sourceType, table.sourceId)
+      .where(sql`${table.sessionId} is null`),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
 );
