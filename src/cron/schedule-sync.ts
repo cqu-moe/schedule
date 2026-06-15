@@ -297,7 +297,7 @@ export async function processScheduleSyncBatch(
 
         const api = new CQUAPIClient(bearer);
         const ctx = await fetchSessionContextCached(api, env.CACHE);
-        const fallback = { sessionId: sub.sessionId, sessionName: sub.sessionName };
+        const fallback = { sessionName: sub.sessionName };
 
         if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
           // Personal subscription: the student ID is resolved from the bearer's

@@ -465,6 +465,38 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).toBeNull();
   });
 
+  it("external sub WITHOUT a pinned session stays unpinned after sync (follows current next term)", async () => {
+    // sessionId null = "follow current". Syncing must NOT persist the current
+    // session id as a pin, or the sub would freeze on this term forever.
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-7",
+      isPersonal: false,
+      sessionId: null,
+    });
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    vi.spyOn(CQUAPIClient.prototype, "fetchTargetSchedule").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.sessionId).toBeNull(); // still unpinned, not frozen to sess-1
+    expect(row.sessionName).toBe("2024秋"); // display still reflects the synced term
+  });
+
   it("skips and acks (does not retry) when getCquBearer returns null", async () => {
     const sid = await insertSub();
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(null);
