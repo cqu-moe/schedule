@@ -6,22 +6,25 @@
       <div class="mb-8">
         <h1 class="text-2xl font-heading font-bold">API 文档</h1>
         <p class="text-muted-foreground mt-1">
-          以下端点无需认证，任何人持有订阅令牌均可访问。
+          以下公开端点无需认证，任何人持有链接令牌均可访问对应格式。
         </p>
       </div>
 
       <!-- 令牌说明 -->
       <Card class="mb-6">
         <CardContent class="py-2">
-          <p class="font-semibold mb-2">什么是订阅令牌？</p>
+          <p class="font-semibold mb-2">什么是链接令牌？</p>
           <p class="text-sm text-muted-foreground mb-3">
-            在仪表盘中，每个订阅卡片都会显示一个链接，点击「复制」即可获取。链接格式如下：
+            在仪表盘中，每个订阅卡片都附有一个或多个链接。点击「复制」即可获取完整 URL，其中的随机字符串即为链接令牌：
           </p>
           <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-3">
-            {{ publicUrl }}/api/v1/subscriptions/<strong class="text-foreground">abc123ef</strong>/calendar.ics
+            {{ publicUrl }}/api/v2/calendar/<strong class="text-foreground">abc123ef</strong>/calendar.ics
           </code>
+          <p class="text-sm text-muted-foreground mb-2">
+            其中 <code class="bg-muted px-1 rounded text-xs"><strong>abc123ef</strong></code> 部分就是链接令牌。将下方端点中的 <code class="bg-muted px-1 rounded text-xs">{令牌}</code> 替换为你的令牌即可访问。
+          </p>
           <p class="text-sm text-muted-foreground">
-            其中 <code class="bg-muted px-1 rounded text-xs"><strong>abc123ef</strong></code> 部分就是订阅令牌——每个订阅独立且不同。将下方端点中的 <code class="bg-muted px-1 rounded text-xs">{令牌}</code> 替换为你的令牌即可访问。
+            每个订阅自动拥有一个<strong>默认链接</strong>（可访问全部 5 种格式）。你也可以在仪表盘创建<strong>共享链接</strong>，限定只允许访问其中某些格式——访问未授权格式时将返回 403。
           </p>
         </CardContent>
       </Card>
@@ -39,7 +42,7 @@
         </CardHeader>
         <CardContent>
           <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-3">
-            {{ publicUrl }}/api/v1/subscriptions/<span class="text-muted-foreground">{令牌}</span>/calendar.ics
+            {{ publicUrl }}/api/v2/calendar/<span class="text-muted-foreground">{令牌}</span>/calendar.ics
           </code>
           <p class="text-sm text-muted-foreground">
             标准 ICS 格式。将此链接添加到 iOS 日历、Google Calendar、Outlook 等日历应用，即可订阅并自动同步课表。
@@ -57,7 +60,7 @@
         </CardHeader>
         <CardContent>
           <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-3">
-            {{ publicUrl }}/api/v1/subscriptions/<span class="text-muted-foreground">{令牌}</span>/data.json
+            {{ publicUrl }}/api/v2/calendar/<span class="text-muted-foreground">{令牌}</span>/data.json
           </code>
           <p class="text-sm text-muted-foreground mb-4">
             将周次展开为具体日期的事件列表，适合程序化处理或导入 Notion 等工具。
@@ -95,7 +98,7 @@
         </CardHeader>
         <CardContent>
           <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-3">
-            {{ publicUrl }}/api/v1/subscriptions/<span class="text-muted-foreground">{令牌}</span>/data.csv
+            {{ publicUrl }}/api/v2/calendar/<span class="text-muted-foreground">{令牌}</span>/data.csv
           </code>
           <p class="text-sm text-muted-foreground mb-2">
             UTF-8 BOM 编码，Excel 可直接打开并正确显示中文。列顺序与 data.json events 字段一致。
@@ -110,7 +113,7 @@
       </Card>
 
       <!-- origin.json -->
-      <Card class="mb-6">
+      <Card class="mb-4">
         <CardHeader>
           <CardTitle class="text-base flex items-center gap-2">
             <Badge variant="secondary" class="font-mono text-xs">GET</Badge>
@@ -119,31 +122,39 @@
         </CardHeader>
         <CardContent>
           <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all">
-            {{ publicUrl }}/api/v1/subscriptions/<span class="text-muted-foreground">{令牌}</span>/origin.json
+            {{ publicUrl }}/api/v2/calendar/<span class="text-muted-foreground">{令牌}</span>/origin.json
           </code>
         </CardContent>
       </Card>
 
-      <!-- 刷新端点 -->
-      <h2 class="text-base font-semibold mb-3">需要认证的端点</h2>
-
-      <Card>
+      <!-- web view -->
+      <Card class="mb-6">
         <CardHeader>
           <CardTitle class="text-base flex items-center gap-2">
-            <Badge class="font-mono text-xs">POST</Badge>
-            <Badge variant="outline" class="text-xs">需要认证</Badge>
-            刷新订阅
+            <Badge variant="secondary" class="font-mono text-xs">GET</Badge>
+            网页查看
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-1">
-            {{ publicUrl }}/api/v1/subscriptions/<span class="text-muted-foreground">{令牌}</span>/refresh
-          </code>
-          <code class="block bg-muted rounded px-3 py-2 text-xs font-mono mb-3">
-            Authorization: Bearer <span class="text-muted-foreground">{用户 Token}</span>
+          <code class="block bg-muted rounded px-3 py-2 text-xs font-mono break-all mb-3">
+            {{ publicUrl }}/view/<span class="text-muted-foreground">{令牌}</span>
           </code>
           <p class="text-sm text-muted-foreground">
-            强制从 CQU 教务系统重新拉取数据。用户 Token 即登录仪表盘时使用的 Token。
+            在浏览器中直接查看课表的只读日历页面，无需登录。适合分享给他人或在不支持 ICS 订阅的场景下查阅。
+          </p>
+        </CardContent>
+      </Card>
+
+      <!-- 刷新说明（无 Bearer API） -->
+      <h2 class="text-base font-semibold mb-3">刷新订阅</h2>
+
+      <Card>
+        <CardContent class="py-4">
+          <p class="text-sm text-muted-foreground">
+            在仪表盘中点击订阅卡片上的<strong>「立即刷新」</strong>按钮，即可手动触发从 CQU 教务系统重新拉取数据。刷新受每日配额限制，超出后需等待次日重置。
+          </p>
+          <p class="text-sm text-muted-foreground mt-2">
+            v2 不提供需要 Bearer Token 的刷新 API——刷新操作通过登录会话（Cookie）进行，在仪表盘 UI 中完成。
           </p>
         </CardContent>
       </Card>

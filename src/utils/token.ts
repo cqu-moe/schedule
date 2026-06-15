@@ -1,3 +1,6 @@
+import { eq } from "drizzle-orm";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { calendarLinks } from "../db/schema";
 import { bufferToBase64 } from "./encoding";
 
 export function generateToken(): string {
@@ -25,4 +28,20 @@ export async function generateUniqueToken(
     }
   }
   throw new Error("Failed to generate unique token");
+}
+
+/**
+ * Collision checker for {@link generateUniqueToken}: returns true if a
+ * calendar_links row with the given token already exists.
+ */
+export async function linkTokenExists(
+  db: DrizzleD1Database,
+  token: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: calendarLinks.id })
+    .from(calendarLinks)
+    .where(eq(calendarLinks.token, token))
+    .limit(1);
+  return row !== undefined;
 }

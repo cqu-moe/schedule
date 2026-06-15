@@ -37,6 +37,15 @@
     }
   ],
 
+  // Service Bindings (拓扑①: RPC to cqu-moe-auth)
+  // entrypoint 必须指向 auth 的具名 RPC 类 `AuthService extends WorkerEntrypoint`
+  // （见 ../auth docs/plans/2026-06-14-firstparty-entitlements-plan.md C2）。auth
+  // Worker 同时 export default(Hono HTTP) + named AuthService(RPC)；不指定
+  // entrypoint 会绑到默认 HTTP 入口，verifySession/getCquTicket 等 RPC 不可用。
+  "services": [
+    { "binding": "AUTH", "service": "cqu-moe-auth", "entrypoint": "AuthService" }
+  ],
+
   // Rate Limiting
   "ratelimits": [
     {
@@ -50,7 +59,7 @@
       "simple": { "limit": 20, "period": 60 }
     },
     {
-      "name": "EXPLORE_LIMITER",
+      "name": "EXTERNAL_LIMITER",
       "namespace_id": "1003",
       "simple": { "limit": 10, "period": 60 }
     }
@@ -59,17 +68,9 @@
   // Queues
   "queues": {
     "producers": [
-      { "binding": "TOKEN_REFRESH_QUEUE", "queue": "schedule-token-refresh" },
       { "binding": "SCHEDULE_SYNC_QUEUE", "queue": "schedule-sync" }
     ],
     "consumers": [
-      {
-        "queue": "schedule-token-refresh",
-        "max_batch_size": 5,
-        "max_retries": 3,
-        "max_concurrency": 1,
-        "max_batch_timeout": 30
-      },
       {
         "queue": "schedule-sync",
         "max_batch_size": 5,
@@ -82,10 +83,7 @@
 
   // Environment Variables
   "vars": {
-    "PUBLIC_URL": "https://schedule.cqu.moe",
-    "HCAPTCHA_ENABLED": "false",
-    "HCAPTCHA_SITEKEY": "66748454-bd4e-4ca8-a6f0-42066aca8f22",
-    "MAX_SUBSCRIPTIONS": "10"
+    "PUBLIC_URL": "https://schedule.cqu.moe"
   },
 
   // Observability (Workers Logs & Traces)
@@ -113,10 +111,11 @@
   ],
 
   // Cron Triggers
+  // "0 * * * *" 每小时挑选到期订阅入队 schedule-sync（按各用户 caps.sync_interval 档位）。
+  // 修改此表达式时须同步 src/index.ts scheduled switch 的 case（见 CLAUDE.md）。
   "triggers": {
     "crons": [
-      "0 * * * *",
-      "0 17 * * *"
+      "0 * * * *"
     ]
   }
 }

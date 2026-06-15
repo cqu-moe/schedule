@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mountWithContext } from '@/test-utils'
 import Home from '@/views/Home.vue'
+
+vi.mock('@/api', () => ({
+  default: {
+    getMe: vi.fn(),
+    getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
+  },
+}))
 
 describe('Home view', () => {
   it('renders title "重庆大学课表日历订阅"', async () => {
@@ -8,9 +15,13 @@ describe('Home view', () => {
     expect(wrapper.text()).toContain('重庆大学课表日历订阅')
   })
 
-  it('links to /register when not authenticated', async () => {
+  it('links to auth.cqu.moe/login with redirect param when not authenticated', async () => {
     const { wrapper } = await mountWithContext(Home)
-    const link = wrapper.find('a[href="/register"]')
+    // Must carry ?redirect= so the user returns to current page after login.
+    const bareLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
+    expect(bareLink.exists()).toBe(false)
+
+    const link = wrapper.find('a[href*="/login?redirect="]')
     expect(link.exists()).toBe(true)
     expect(link.text()).toContain('开始使用')
   })
@@ -19,7 +30,12 @@ describe('Home view', () => {
     const { wrapper } = await mountWithContext(Home, {
       pinia: {
         initialState: {
-          auth: { token: 'test-token' },
+          session: {
+            user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
+            caps: {},
+            loaded: true,
+            loading: false,
+          },
         },
       },
     })

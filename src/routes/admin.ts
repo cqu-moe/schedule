@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { isNotNull } from "drizzle-orm";
 import type { Env } from "../types";
-import { users } from "../db/schema";
+import { subscriptions } from "../db/schema";
 import { errorResponse } from "../utils/error";
+import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import type { ScheduleSyncMessage } from "../cron/schedule-sync";
 
-const BATCH_SIZE = 100;
+/** Spread window (seconds) for the admin-triggered full refresh. */
+const REFRESH_SPREAD_SECONDS = 3600;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -26,45 +27,48 @@ app.use("/*", async (c, next) => {
   await next();
 });
 
-// POST /refresh-all
+// POST /refresh-all — enqueue a sync for every subscription.
 app.post("/refresh-all", async (c) => {
   const db = drizzle(c.env.DB);
 
-  const activeUsers = await db
-    .select({ id: users.id, studentId: users.studentId })
-    .from(users)
-    .where(isNotNull(users.accessToken));
+  const subs = await db
+    .select({ id: subscriptions.id, userId: subscriptions.userId })
+    .from(subscriptions);
 
-  if (activeUsers.length === 0) {
-    console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: 0, message: "No active users" }));
+  if (subs.length === 0) {
+    console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: 0, message: "No subscriptions" }));
     return c.json({ enqueued: 0 });
   }
 
-  // Enqueue all users with no delay, batched by 100
-  let enqueuedCount = 0;
-  for (let i = 0; i < activeUsers.length; i += BATCH_SIZE) {
-    const chunk = activeUsers.slice(i, i + BATCH_SIZE);
-    try {
-      await c.env.SCHEDULE_SYNC_QUEUE.sendBatch(
-        chunk.map((u) => ({
-          body: { userId: u.id, studentId: u.studentId } satisfies ScheduleSyncMessage,
-        })),
-      );
-      enqueuedCount += chunk.length;
-    } catch (e) {
-      console.error(JSON.stringify({
-        event: "admin.refresh_all.sendBatch_failed",
-        enqueuedSoFar: enqueuedCount,
-        totalUsers: activeUsers.length,
-        error: e instanceof Error ? e.message : String(e),
-        message: "sendBatch failed mid-enqueue",
-      }));
-      return c.json({ enqueued: enqueuedCount, error: `Failed after enqueuing ${enqueuedCount}/${activeUsers.length} users` }, 500);
-    }
+  let enqueued: number;
+  try {
+    enqueued = await spreadEnqueue(
+      c.env.SCHEDULE_SYNC_QUEUE,
+      subs,
+      (s) => ({ body: { subscriptionId: s.id, userId: s.userId } satisfies ScheduleSyncMessage }),
+      REFRESH_SPREAD_SECONDS,
+      5,
+    );
+  } catch (e) {
+    // Report how many were actually enqueued before the failure — admin messages
+    // have no cron trigger (consumer can't dedup), so a retry after a falsely
+    // reported "0" would duplicate the already-queued syncs.
+    const partial = e instanceof SpreadEnqueueError ? e.enqueued : 0;
+    console.error(JSON.stringify({
+      event: "admin.refresh_all.send_failed",
+      total: subs.length,
+      enqueued: partial,
+      error: e instanceof Error ? e.message : String(e),
+      message: "Failed to enqueue all subscriptions for refresh",
+    }));
+    return c.json(
+      { enqueued: partial, error: `Failed after enqueuing ${partial}/${subs.length} subscriptions` },
+      500,
+    );
   }
 
-  console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: enqueuedCount, message: `Enqueued ${enqueuedCount} users for immediate sync` }));
-  return c.json({ enqueued: enqueuedCount });
+  console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: enqueued, message: `Enqueued ${enqueued} subscriptions for sync` }));
+  return c.json({ enqueued });
 });
 
 export default app;

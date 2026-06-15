@@ -3,37 +3,70 @@ import { createTestingPinia, type TestingOptions } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { vi } from 'vitest'
 import type { Component } from 'vue'
-import type { UserInfo, Subscription, SubscriptionList, SearchResult } from '@/types/api'
+import type { Subscription, SubscriptionList, SearchResult, SessionUser, CalendarCaps, MeResponse } from '@/types/api'
 import { RouteNames } from '@/router'
 
 // ---- Mock data factories ----
 
-export function mockUserInfo(overrides: Partial<UserInfo> = {}): UserInfo {
+export function mockSessionUser(overrides: Partial<SessionUser> = {}): SessionUser {
   return {
-    student_id: '20210001',
-    calendar_token: 'test-token-abc123',
-    oauth_expires_at: '2026-03-02T12:00:00Z',
-    last_synced_at: '2026-03-01T10:00:00Z',
+    id: 'user-uuid-001',
+    name: '张三',
+    email: 'zhangsan@example.com',
+    role: 'student',
     ...overrides,
+  }
+}
+
+export function mockCalendarCaps(overrides: Partial<CalendarCaps> = {}): CalendarCaps {
+  return {
+    sync: true,
+    external: true,
+    share: true,
+    sub_limit: 5,
+    share_limit: 10,
+    sync_interval: 60,
+    manual_refresh: 5,
+    ...overrides,
+  }
+}
+
+export function mockMeResponse(overrides: Partial<{ user: Partial<SessionUser>; caps: Partial<CalendarCaps> }> = {}): MeResponse {
+  return {
+    user: mockSessionUser(overrides.user),
+    caps: { calendar: mockCalendarCaps(overrides.caps) },
   }
 }
 
 export function mockSubscription(overrides: Partial<Subscription> = {}): Subscription {
   return {
-    calendar_token: 'sub-token-123',
+    id: 'sub-uuid-123',
+    user_id: 'user-uuid-001',
     source_type: 'personal_all',
-    source_id: '20210001',
+    source_id: 'user-uuid-001',
     source_name: '张三',
-    is_personal: true,
+    session_id: 'session-001',
     session_name: '2025秋',
+    semester_start: '2025-09-01',
+    is_personal: true,
     last_synced_at: '2026-03-01T10:00:00Z',
-    subscription_url: 'https://schedule.cqu.moe/api/v1/subscriptions/sub-token-123/calendar.ics',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-03-01T10:00:00Z',
+    links: [
+      {
+        id: 'link-uuid-001',
+        token: 'link-token-abc',
+        label: null,
+        formats: ['ics', 'origin_json', 'data_json', 'csv', 'web'],
+        is_default: true,
+      },
+    ],
     ...overrides,
   }
 }
 
-export function mockSubscriptionList(subs: Subscription[] = [mockSubscription()], max: number = 5): SubscriptionList {
-  return { subscriptions: subs, max }
+export function mockSubscriptionList(subs: Subscription[] = [mockSubscription()], count?: number): SubscriptionList {
+  return { subscriptions: subs, count: count ?? subs.length }
 }
 
 export function mockSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -49,24 +82,23 @@ export function mockSearchResult(overrides: Partial<SearchResult> = {}): SearchR
 
 export function createMockApi() {
   return {
-    register: vi.fn(),
-    recoverToken: vi.fn(),
-    recoverTokenVerify: vi.fn(),
-    getUserInfo: vi.fn(),
-    deleteUser: vi.fn(),
-    searchSchedule: vi.fn(),
-    getDepartments: vi.fn(),
-    createSubscription: vi.fn(),
+    // v2 API
+    getMe: vi.fn().mockResolvedValue(mockMeResponse()),
     getSubscriptions: vi.fn().mockResolvedValue(mockSubscriptionList([])),
+    getSubscription: vi.fn(),
+    createSubscription: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
+    getLinks: vi.fn(),
+    createLink: vi.fn(),
+    patchLink: vi.fn(),
+    deleteLink: vi.fn(),
+    rotateLink: vi.fn(),
+    searchExternal: vi.fn(),
+    getDepartments: vi.fn().mockResolvedValue({ departments: [] }),
+    getViewData: vi.fn().mockResolvedValue({ semester: '2025秋', semester_start: '2025-09-01', generated_at: new Date().toISOString(), events: [] }),
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
-    getCalendarData: vi.fn().mockResolvedValue({ semester: '2025秋', semester_start: '2025-09-01', generated_at: new Date().toISOString(), events: [] }),
-    rotateTokenPrepare: vi.fn(),
-    rotateTokenConfirm: vi.fn(),
-    rotateSubscription: vi.fn(),
-    rotateAllSubscriptions: vi.fn(),
   }
 }
 
@@ -74,13 +106,12 @@ export function createMockApi() {
 
 const routes = [
   { path: '/', name: RouteNames.Home, component: { template: '<div>Home</div>' } },
-  { path: '/login', name: RouteNames.Login, component: { template: '<div>Login</div>' } },
-  { path: '/register', name: RouteNames.Register, component: { template: '<div>Register</div>' } },
-  { path: '/recover', name: RouteNames.Recover, component: { template: '<div>Recover</div>' } },
-  { path: '/dashboard', name: RouteNames.Dashboard, component: { template: '<div>Dashboard</div>' }, meta: { requiresAuth: true } },
-  { path: '/add', name: RouteNames.Add, component: { template: '<div>Add</div>' }, meta: { requiresAuth: true } },
+  { path: '/dashboard', name: RouteNames.Dashboard, component: { template: '<div>Dashboard</div>' } },
+  { path: '/add', name: RouteNames.Add, component: { template: '<div>Add</div>' } },
   { path: '/api-docs', name: RouteNames.ApiDocs, component: { template: '<div>Docs</div>' } },
-  { path: '/calendar/:sub_token', name: RouteNames.Calendar, component: { template: '<div>Calendar</div>' } },
+  { path: '/changelog', name: RouteNames.Changelog, component: { template: '<div>Changelog</div>' } },
+  { path: '/view/:token', name: RouteNames.View, component: { template: '<div>View</div>' } },
+  { path: '/calendar/:sub_token', redirect: (to: any) => ({ path: `/view/${to.params.sub_token}` }) },
 ]
 
 export function createTestRouter() {
@@ -124,7 +155,6 @@ export async function mountWithContext(
       ...restGlobal,
       stubs: {
         Navbar: { template: '<nav data-testid="navbar" />' },
-        RiskWarning: { template: '<div data-testid="risk-warning" />' },
         QrcodeModal: { template: '<div data-testid="qrcode-modal" />' },
         ...(customStubs as Record<string, any> || {}),
       },

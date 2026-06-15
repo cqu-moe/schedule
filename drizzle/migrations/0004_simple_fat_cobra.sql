@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `uq_user_source_personal` ON `subscriptions` (`user_id`,`source_type`,`source_id`) WHERE "subscriptions"."session_id" is null;

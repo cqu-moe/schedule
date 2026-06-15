@@ -5,20 +5,22 @@ import { mountWithContext, mockSubscription, mockSubscriptionList } from '@/test
 const { mockApi, mockToast } = vi.hoisted(() => {
   const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
-    register: vi.fn(),
-    recoverToken: vi.fn(),
-    recoverTokenVerify: vi.fn(),
-    getUserInfo: vi.fn(),
-    deleteUser: vi.fn(),
-    searchSchedule: vi.fn(),
-    getDepartments: vi.fn(),
-    createSubscription: vi.fn(),
-    getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], max: 5 }),
-    deleteSubscription: vi.fn(),
-    refreshSubscription: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+    getMe: vi.fn(),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
-    getCalendarData: vi.fn(),
+    getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], count: 0 }),
+    getSubscription: vi.fn(),
+    createSubscription: vi.fn(),
+    deleteSubscription: vi.fn(),
+    refreshSubscription: vi.fn().mockResolvedValue(undefined),
+    getLinks: vi.fn(),
+    createLink: vi.fn(),
+    patchLink: vi.fn(),
+    deleteLink: vi.fn(),
+    rotateLink: vi.fn(),
+    searchExternal: vi.fn(),
+    getDepartments: vi.fn(),
+    getViewData: vi.fn(),
+    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
   }
   return { mockApi, mockToast }
 })
@@ -29,14 +31,29 @@ vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Dashboard } = await import('@/views/Dashboard.vue')
 
-async function mountDashboard(subs = [mockSubscription()]) {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const DEFAULT_SESSION = {
+  user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
+  caps: {
+    sync: true,
+    external: true,
+    share: true,
+    sub_limit: 5,
+    share_limit: null,
+    sync_interval: 60,
+    manual_refresh: 5,
+  },
+  loaded: true,
+  loading: false,
+}
+
+async function mountDashboard(subs = [mockSubscription()], sessionOverrides?: object) {
   mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList(subs))
-  mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
-  mockApi.refreshSubscription.mockResolvedValue({})
   const result = await mountWithContext(Dashboard, {
     pinia: {
       initialState: {
-        auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
+        session: { ...DEFAULT_SESSION, ...sessionOverrides },
         config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
       },
     },
@@ -45,127 +62,132 @@ async function mountDashboard(subs = [mockSubscription()]) {
   return result
 }
 
-describe('Dashboard view', () => {
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('Dashboard view (v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
-    localStorage.setItem('risk_warning_acknowledged', 'true')
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
+    mockApi.refreshSubscription.mockResolvedValue(undefined)
+    mockApi.deleteSubscription.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  // 1. Renders subscription list with title and count
-  it('renders "我的订阅" title and count "(1/5)"', async () => {
-    const { wrapper } = await mountDashboard()
+  // ── Rendering ───────────────────────────────────────────────────────────────
 
+  it('renders "我的订阅" title', async () => {
+    const { wrapper } = await mountDashboard()
     expect(wrapper.text()).toContain('我的订阅')
+  })
+
+  it('shows subscription count with limit (e.g. "(1/5)")', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
     expect(wrapper.text()).toContain('(1/5)')
   })
 
-  // 2. Shows empty state when no subscriptions
+  it('shows count without limit denominator when sub_limit is null', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, sub_limit: null } },
+    )
+    // Should show count but no slash
+    expect(wrapper.text()).toContain('(1)')
+    expect(wrapper.text()).not.toContain('/null')
+  })
+
   it('shows "暂无订阅" when no subscriptions', async () => {
     const { wrapper } = await mountDashboard([])
-
     expect(wrapper.text()).toContain('暂无订阅')
   })
 
-  // 3. Shows source type badge
   it('shows source type badge "全部" for personal_all', async () => {
-    const { wrapper } = await mountDashboard([
-      mockSubscription({ source_type: 'personal_all' }),
-    ])
-
+    const { wrapper } = await mountDashboard([mockSubscription({ source_type: 'personal_all' })])
     expect(wrapper.text()).toContain('全部')
   })
 
-  // 4. Shows synced date
-  it('shows "同步于" + date for synced subscriptions', async () => {
+  it('shows "个人" badge for personal subscriptions', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
+    expect(wrapper.text()).toContain('个人')
+  })
+
+  it('shows session_name badge when present', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ session_name: '2025秋' })])
+    expect(wrapper.text()).toContain('2025秋')
+  })
+
+  it('shows "同步于" date for synced subscriptions', async () => {
     const { wrapper } = await mountDashboard([
       mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' }),
     ])
-
     expect(wrapper.text()).toContain('同步于')
   })
 
-  // 5. Shows unsynced status — polling auto-starts so it shows "同步中..."
-  it('shows "同步中..." for unsynced subscriptions when polling is active', async () => {
-    vi.useFakeTimers()
-
-    const unsyncedSub = mockSubscription({ last_synced_at: null })
-    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([unsyncedSub]))
-    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
-
-    const { wrapper } = await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('同步中...')
-  })
-
-  // Shows "尚未同步" after polling times out
-  it('shows "尚未同步" for unsynced subscriptions after polling timeout', async () => {
-    vi.useFakeTimers()
-
-    const unsyncedSub = mockSubscription({ last_synced_at: null })
-    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([unsyncedSub]))
-    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
-
-    const { wrapper } = await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-
-    // Advance past the 30s polling timeout
-    await vi.advanceTimersByTimeAsync(32000)
-    await flushPromises()
-
+  it('shows "尚未同步" for unsynced subscriptions NOT in pending refresh', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ last_synced_at: null })])
     expect(wrapper.text()).toContain('尚未同步')
   })
 
-  // 6. Calendar button links to correct route
-  it('shows calendar button linking to /calendar/:sub_token', async () => {
-    const { wrapper } = await mountDashboard()
-
-    const calendarBtn = wrapper.findAll('button').find(b => b.text().includes('日历'))
-    expect(calendarBtn).toBeDefined()
-
-    const link = calendarBtn!.element.closest('a')
-    expect(link).toBeDefined()
-    expect(link!.getAttribute('href')).toBe('/calendar/sub-token-123')
+  it('shows correct source type labels for different types', async () => {
+    const subs = [
+      mockSubscription({ id: 't1', source_type: 'personal_courses' }),
+      mockSubscription({ id: 't2', source_type: 'personal_exams', is_personal: false }),
+    ]
+    const { wrapper } = await mountDashboard(subs)
+    expect(wrapper.text()).toContain('课程')
+    expect(wrapper.text()).toContain('考试')
   })
 
-  // 7. Copy URL calls navigator.clipboard.writeText
-  it('copies URL to clipboard when copy button is clicked', async () => {
-    const { wrapper } = await mountDashboard()
+  // ── Sub limit / usage ────────────────────────────────────────────────────────
 
-    const copyBtn = wrapper.findAll('button').find(b => b.text().includes('复制'))
+  it('shows "已达订阅上限" when at sub_limit', async () => {
+    const fiveSubs = Array.from({ length: 5 }, (_, i) =>
+      mockSubscription({ id: `sub-${i}` }),
+    )
+    const { wrapper } = await mountDashboard(fiveSubs)
+    expect(wrapper.text()).toContain('已达订阅上限')
+  })
+
+  it('"添加订阅" button is disabled when at sub_limit', async () => {
+    const fiveSubs = Array.from({ length: 5 }, (_, i) =>
+      mockSubscription({ id: `sub-${i}` }),
+    )
+    const { wrapper } = await mountDashboard(fiveSubs)
+    const addBtn = wrapper.findAll('button').find(b => b.text().includes('添加订阅'))
+    expect(addBtn?.attributes('disabled')).toBeDefined()
+  })
+
+  // ── Copy subscribe URL ────────────────────────────────────────────────────────
+
+  it('copies ICS URL to clipboard when "复制订阅链接" is clicked', async () => {
+    const sub = mockSubscription()
+    const { wrapper } = await mountDashboard([sub])
+
+    const copyBtn = wrapper.findAll('button').find(b => b.text().includes('复制订阅链接'))
     expect(copyBtn).toBeDefined()
     await copyBtn!.trigger('click')
     await flushPromises()
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'https://schedule.cqu.moe/api/v1/subscriptions/sub-token-123/calendar.ics',
+      'https://schedule.cqu.moe/api/v2/calendar/link-token-abc/calendar.ics',
     )
   })
 
-  // 7. Sync button calls api.refreshSubscription
-  it('calls api.refreshSubscription when sync button is clicked', async () => {
-    const { wrapper } = await mountDashboard()
+  it('shows "已复制" feedback after successful copy', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    const copyBtn = wrapper.findAll('button').find(b => b.text().includes('复制订阅链接'))
+    await copyBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已复制')
+  })
 
-    // Find the per-subscription "同步" button (not "同步个人课表")
+  // ── Manual refresh ────────────────────────────────────────────────────────────
+
+  it('calls api.refreshSubscription with sub.id when sync button is clicked', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+
     const syncBtn = wrapper.findAll('button').find(
       b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
     )
@@ -173,14 +195,138 @@ describe('Dashboard view', () => {
     await syncBtn!.trigger('click')
     await flushPromises()
 
-    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('test-token', 'sub-token-123')
+    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('sub-uuid-123')
   })
 
-  // 8. Sync all only syncs personal subscriptions
-  it('sync all only syncs personal subscriptions (is_personal: true)', async () => {
-    const personalSub = mockSubscription({ calendar_token: 'personal-1', is_personal: true })
+  it('shows toast "已加入刷新队列" after manual refresh', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+    expect(mockToast.success).toHaveBeenCalledWith('已加入刷新队列')
+  })
+
+  it('shows "同步中..." immediately after manual refresh (pending refresh tracker)', async () => {
+    vi.useFakeTimers()
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // Should show 同步中... immediately (pendingRefresh tracker)
+    expect(wrapper.text()).toContain('同步中...')
+  })
+
+  it('clears "同步中..." when poll detects changed last_synced_at', async () => {
+    vi.useFakeTimers()
+    const oldSyncedAt = '2026-03-01T10:00:00Z'
+    const newSyncedAt = '2026-03-01T11:00:00Z'
+    const sub = mockSubscription({ last_synced_at: oldSyncedAt })
+
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    // Trigger manual refresh
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // Verify 同步中... is shown before the poll
+    expect(wrapper.text()).toContain('同步中...')
+
+    // Now the poll returns an updated last_synced_at
+    mockApi.getSubscriptions.mockResolvedValue(
+      mockSubscriptionList([{ ...sub, last_synced_at: newSyncedAt }]),
+    )
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    // 同步中... should be cleared, now shows 同步于
+    expect(wrapper.text()).not.toContain('同步中...')
+    expect(wrapper.text()).toContain('同步于')
+  })
+
+  it('clears "同步中..." state after POLL_TIMEOUT (no sub stuck forever)', async () => {
+    vi.useFakeTimers()
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    // Poll always returns same last_synced_at (sync never completes)
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    // Trigger refresh to enter pending state
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('同步中...')
+
+    // Advance past POLL_TIMEOUT (30s)
+    await vi.advanceTimersByTimeAsync(32000)
+    await flushPromises()
+
+    // After timeout, pendingRefresh cleared — shows 同步于 (the original synced date)
+    expect(wrapper.text()).not.toContain('同步中...')
+  })
+
+  it('shows toast error when refresh subscription fails', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    mockApi.refreshSubscription.mockRejectedValueOnce({
+      response: {
+        data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '刷新超时' } } },
+      },
+    })
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人') && !b.text().includes('中')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+    expect(mockToast.error).toHaveBeenCalledWith('刷新超时')
+  })
+
+  // ── Sync all ──────────────────────────────────────────────────────────────────
+
+  it('sync all only refreshes personal subscriptions', async () => {
+    const personalSub = mockSubscription({ id: 'p-sub-1', is_personal: true })
     const exploreSub = mockSubscription({
-      calendar_token: 'explore-1',
+      id: 'e-sub-1',
       is_personal: false,
       source_type: 'instructor',
       source_name: '李四',
@@ -193,279 +339,341 @@ describe('Dashboard view', () => {
     await flushPromises()
 
     expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
-    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('test-token', 'personal-1')
-    expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('test-token', 'explore-1')
+    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('p-sub-1')
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('e-sub-1')
   })
 
-  // 9. Shows success state on sync all button
-  it('shows "已同步" after sync all', async () => {
-    const { wrapper } = await mountDashboard()
-
+  it('shows "已同步" after sync all succeeds', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
-
     expect(wrapper.text()).toContain('已同步')
   })
 
-  // 10. Delete subscription calls api.deleteSubscription for non-personal
-  it('delete button calls api.deleteSubscription for non-personal subscription', async () => {
+  it('"同步个人课表" button is disabled when there are no personal subscriptions (M1)', async () => {
     const exploreSub = mockSubscription({
-      calendar_token: 'explore-1',
+      id: 'e-only',
       is_personal: false,
       source_type: 'instructor',
       source_name: '李四',
     })
-    mockApi.deleteSubscription.mockResolvedValue({})
+    const { wrapper } = await mountDashboard([exploreSub])
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('"同步个人课表" button is disabled when subscriptions list is empty (M1)', async () => {
+    const { wrapper } = await mountDashboard([])
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('handleSyncAll early-returns without toast when personalSubs is empty (M1)', async () => {
+    const exploreSub = mockSubscription({ id: 'e-1', is_personal: false, source_type: 'instructor', source_name: '李四' })
     const { wrapper } = await mountDashboard([exploreSub])
 
-    // Step 1: Click "删除" in the DropdownMenuItem (rendered as div in stubs) to open global dialog
+    // Directly invoke handleSyncAll via the vm (bypassing disabled button guard)
+    const vm = wrapper.vm as unknown as { handleSyncAll?: () => Promise<void> }
+    // The function is not exposed on the public vm in script setup, but we can test
+    // by clicking the disabled button — it should not call refreshSubscription
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+    expect(mockToast.success).not.toHaveBeenCalled()
+  })
+
+  // ── Delete ────────────────────────────────────────────────────────────────────
+
+  it('shows delete menu item for personal subscriptions', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
     expect(menuDeleteItems.length).toBeGreaterThanOrEqual(1)
-    await menuDeleteItems[0].trigger('click')
-    await flushPromises()
-
-    // Step 2: Click the "删除" action button in the global AlertDialog
-    const deleteButtons = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
-    await deleteButtons[deleteButtons.length - 1].trigger('click')
-    await flushPromises()
-
-    expect(mockApi.deleteSubscription).toHaveBeenCalledWith('test-token', 'explore-1')
   })
 
-  // 11. No delete button for personal subscriptions
-  it('does not show delete button for personal subscriptions', async () => {
-    const personalSub = mockSubscription({ is_personal: true })
-    const { wrapper } = await mountDashboard([personalSub])
+  it('calls api.deleteSubscription with sub.id for non-personal subscription', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-sub-del',
+      is_personal: false,
+      source_type: 'instructor',
+      source_name: '李四',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
 
-    // Personal subs should not have a "删除" DropdownMenuItem (hidden via v-if="!sub.is_personal")
-    const menuDeleteItems = wrapper.findAll('div').filter(
-      b => b.text().trim() === '删除',
-    )
-    expect(menuDeleteItems.length).toBe(0)
-  })
-
-  // 12. Export opens window.open with correct URL
-  it('export ICS opens window.open with correct URL', async () => {
-    const { wrapper } = await mountDashboard()
-
-    // Find the DropdownMenuItem stub for ICS export (it emits click)
-    const menuItems = wrapper.findAll('div').filter(b => b.text().trim() === 'ICS 日历')
-    expect(menuItems.length).toBeGreaterThanOrEqual(1)
-    await menuItems[0].trigger('click')
+    // Directly set deleteSubDialog to bypass stub dropdown interaction
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-sub-del', name: '李四' }
     await flushPromises()
 
-    expect(window.open).toHaveBeenCalledWith(
-      'https://schedule.cqu.moe/api/v1/subscriptions/sub-token-123/calendar.ics',
-      '_blank',
-      'noopener,noreferrer',
-    )
+    // AlertDialog stub renders <button>删除</button> via AlertDialogAction
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    expect(actionBtns.length).toBeGreaterThanOrEqual(1)
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    expect(mockApi.deleteSubscription).toHaveBeenCalledWith('e-sub-del')
   })
 
-  // 13. Polling starts for pending subscriptions
-  it('starts polling for unsynced subscriptions and calls getSubscriptions again', async () => {
+  it('shows success toast before reloading after delete', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-toast',
+      is_personal: false,
+      source_name: '王五',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-toast', name: '王五' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    expect(mockToast.success).toHaveBeenCalledWith('订阅已删除')
+    // Success toast fires before reload
+    const successCallOrder = mockToast.success.mock.invocationCallOrder[0]
+    const reloadCallOrder = mockApi.getSubscriptions.mock.invocationCallOrder.at(-1) ?? Infinity
+    expect(successCallOrder).toBeLessThan(reloadCallOrder)
+  })
+
+  it('does not show success toast and keeps dialog open when delete fails', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-fail',
+      is_personal: false,
+      source_name: '赵六',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    mockApi.deleteSubscription.mockRejectedValueOnce({
+      response: {
+        data: { detail: { error: { code: 'FORBIDDEN', message: '无权删除' } } },
+      },
+    })
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-fail', name: '赵六' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    // Success toast must NOT be shown
+    expect(mockToast.success).not.toHaveBeenCalledWith('订阅已删除')
+    // Error toast must be shown
+    expect(mockToast.error).toHaveBeenCalledWith('无权删除')
+    // Dialog must remain open (deleteSubDialog still set)
+    expect(vm.deleteSubDialog).not.toBeNull()
+    expect(vm.deleteSubDialog?.id).toBe('e-del-fail')
+  })
+
+  it('shows error toast (not success) when delete fails with network error', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-net',
+      is_personal: false,
+      source_name: '钱七',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    mockApi.deleteSubscription.mockRejectedValueOnce(new Error('Network Error'))
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-net', name: '钱七' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    expect(mockToast.success).not.toHaveBeenCalled()
+    expect(mockToast.error).toHaveBeenCalledWith('删除订阅失败')
+    expect(vm.deleteSubDialog).not.toBeNull()
+  })
+
+  it('closes dialog only after successful delete', async () => {
+    const exploreSub = mockSubscription({
+      id: 'e-del-close',
+      is_personal: false,
+      source_name: '孙八',
+    })
+    const { wrapper } = await mountDashboard([exploreSub])
+
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: 'e-del-close', name: '孙八' }
+    await flushPromises()
+
+    const actionBtns = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
+    await actionBtns[0].trigger('click')
+    await flushPromises()
+
+    // On success dialog must be closed (null)
+    expect(vm.deleteSubDialog).toBeNull()
+  })
+
+  // ── Load errors ───────────────────────────────────────────────────────────────
+
+  it('shows toast error when initial load fails', async () => {
+    mockApi.getSubscriptions.mockRejectedValueOnce(new Error('network'))
+    await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+    expect(mockToast.error).toHaveBeenCalledWith('加载订阅列表失败')
+  })
+
+  // ── Polling ───────────────────────────────────────────────────────────────────
+
+  it('starts polling after manual refresh and calls getSubscriptions again', async () => {
     vi.useFakeTimers()
-
-    const unsyncedSub = mockSubscription({ last_synced_at: null })
-    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([unsyncedSub]))
-    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
+    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
 
     const { wrapper } = await mountWithContext(Dashboard, {
       pinia: {
         initialState: {
-          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
+          session: DEFAULT_SESSION,
           config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
         },
       },
     })
     await flushPromises()
-
-    // Initial load call
-    const initialCallCount = mockApi.getSubscriptions.mock.calls.length
-    expect(initialCallCount).toBeGreaterThanOrEqual(1)
-
-    // Advance timer by 2000ms to trigger polling
-    await vi.advanceTimersByTimeAsync(2000)
-    await flushPromises()
-
-    expect(mockApi.getSubscriptions.mock.calls.length).toBeGreaterThan(initialCallCount)
-  })
-
-  // Polling stops after timeout
-  it('stops polling after 30 seconds', async () => {
-    vi.useFakeTimers()
-
-    const unsyncedSub = mockSubscription({ last_synced_at: null })
-    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([unsyncedSub]))
-    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
-
-    await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-
-    // Advance past the 30s timeout
-    await vi.advanceTimersByTimeAsync(32000)
-    await flushPromises()
-
-    const callCountAfterTimeout = mockApi.getSubscriptions.mock.calls.length
-
-    // Advance more time - should not call again
-    await vi.advanceTimersByTimeAsync(4000)
-    await flushPromises()
-
-    expect(mockApi.getSubscriptions.mock.calls.length).toBe(callCountAfterTimeout)
-  })
-
-  // Count displays correctly with multiple subscriptions
-  it('shows correct count with multiple subscriptions', async () => {
-    const subs = [
-      mockSubscription({ calendar_token: 'token-1' }),
-      mockSubscription({ calendar_token: 'token-2', source_type: 'personal_courses' }),
-      mockSubscription({ calendar_token: 'token-3', source_type: 'personal_exams' }),
-    ]
-    const { wrapper } = await mountDashboard(subs)
-
-    expect(wrapper.text()).toContain('(3/5)')
-  })
-
-  // Source type labels render correctly for different types
-  it('shows correct source type labels for different types', async () => {
-    const subs = [
-      mockSubscription({ calendar_token: 'token-1', source_type: 'personal_courses' }),
-      mockSubscription({ calendar_token: 'token-2', source_type: 'personal_exams', is_personal: false }),
-    ]
-    const { wrapper } = await mountDashboard(subs)
-
-    expect(wrapper.text()).toContain('课程')
-    expect(wrapper.text()).toContain('考试')
-  })
-
-  // Error feedback: initial load failure
-  it('shows toast error when initial load fails', async () => {
-    mockApi.getSubscriptions.mockRejectedValue(new Error('network'))
-    mockApi.getUserInfo.mockResolvedValue({ student_id: '20210001' })
-
-    await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          auth: { token: 'test-token', userInfo: { student_id: '20210001' }, loading: false },
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-
-    expect(mockToast.error).toHaveBeenCalledWith('加载订阅列表失败')
-  })
-
-  // Error feedback: refresh subscription failure
-  it('shows toast error when refresh subscription fails', async () => {
-    const { wrapper } = await mountDashboard()
-    mockApi.refreshSubscription.mockRejectedValue({
-      response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '刷新超时' } } } },
-    })
 
     const syncBtn = wrapper.findAll('button').find(
-      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人') && !b.text().includes('中')),
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
     )
     await syncBtn!.trigger('click')
     await flushPromises()
 
-    expect(mockToast.error).toHaveBeenCalledWith('刷新超时')
+    const callsBefore = mockApi.getSubscriptions.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    expect(mockApi.getSubscriptions.mock.calls.length).toBeGreaterThan(callsBefore)
   })
 
-  // Error feedback: sync all failure
-  it('shows toast error when sync all fails', async () => {
-    const { wrapper } = await mountDashboard()
-    mockApi.refreshSubscription.mockRejectedValue({
-      response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '同步超时' } } } },
-    })
+  // ── Download links visible ────────────────────────────────────────────────────
 
+  it('renders download items in dropdown for subscription with default link', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    // DropdownMenuContent stub renders unconditionally
+    expect(wrapper.text()).toContain('下载 ICS 文件')
+    expect(wrapper.text()).toContain('下载课表 JSON')
+    expect(wrapper.text()).toContain('下载原始 JSON')
+    expect(wrapper.text()).toContain('下载 CSV')
+  })
+
+  // ── manual_refresh quota ──────────────────────────────────────────────────────
+
+  it('per-sub refresh button is enabled when manual_refresh is null (unlimited)', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: null } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('per-sub refresh button is enabled when manual_refresh > 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 3 } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('per-sub refresh button is disabled when manual_refresh is 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 0 } },
+    )
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('"同步个人课表" button is disabled when manual_refresh is 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 0 } },
+    )
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
-    await syncAllBtn!.trigger('click')
-    await flushPromises()
-
-    expect(mockToast.error).toHaveBeenCalledWith('同步超时')
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeDefined()
   })
 
-  // Error feedback: delete subscription failure
-  it('shows toast error when delete subscription fails', async () => {
-    const exploreSub = mockSubscription({
-      calendar_token: 'explore-1',
-      is_personal: false,
-      source_type: 'instructor',
-      source_name: '李四',
-    })
-    mockApi.deleteSubscription.mockRejectedValue({
-      response: { data: { detail: { error: { code: 'NOT_FOUND', message: '删除失败' } } } },
-    })
-    const { wrapper } = await mountDashboard([exploreSub])
-
-    // Step 1: Click "删除" in dropdown menu to open global dialog
-    const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
-    await menuDeleteItems[0].trigger('click')
-    await flushPromises()
-
-    // Step 2: Click action button in the global AlertDialog
-    const deleteButtons = wrapper.findAll('button').filter(b => b.text().trim() === '删除')
-    await deleteButtons[deleteButtons.length - 1].trigger('click')
-    await flushPromises()
-
-    expect(mockToast.error).toHaveBeenCalledWith('订阅不存在或链接已失效')
-  })
-
-  // Sync all calls refreshSubscription in parallel
-  it('sync all calls refreshSubscription in parallel (not sequentially)', async () => {
-    vi.useFakeTimers()
-
-    const subs = [
-      mockSubscription({ calendar_token: 'p1', is_personal: true }),
-      mockSubscription({ calendar_token: 'p2', is_personal: true, source_type: 'personal_courses' }),
-    ]
-    const { wrapper } = await mountDashboard(subs)
-
-    // Set mock AFTER mountDashboard (which resets it via mockResolvedValue)
-    const callOrder: string[] = []
-    mockApi.refreshSubscription.mockImplementation(async (_token: string, subToken: string) => {
-      callOrder.push(`start:${subToken}`)
-      await new Promise(r => setTimeout(r, 50))
-      callOrder.push(`end:${subToken}`)
-      return {}
-    })
-
+  it('"同步个人课表" button is enabled when manual_refresh is null (unlimited)', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: null } },
+    )
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
-    await syncAllBtn!.trigger('click')
-    await flushPromises()
-
-    // Advance timers to resolve the setTimeout(50) inside the mock
-    await vi.advanceTimersByTimeAsync(100)
-    await flushPromises()
-
-    // Both should start before either ends (parallel execution)
-    expect(callOrder.indexOf('start:p2')).toBeLessThan(callOrder.indexOf('end:p1'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeUndefined()
   })
 
-  // Error feedback: delete account failure
-  it('shows toast error when delete account fails', async () => {
-    mockApi.deleteUser.mockRejectedValue(new Error('server error'))
-    const { wrapper } = await mountDashboard()
+  it('"同步个人课表" button is enabled when manual_refresh > 0', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription({ is_personal: true })],
+      { caps: { ...DEFAULT_SESSION.caps, manual_refresh: 2 } },
+    )
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    expect(syncAllBtn).toBeDefined()
+    expect(syncAllBtn!.attributes('disabled')).toBeUndefined()
+  })
 
-    // Type confirmation text
-    const input = wrapper.find('input[placeholder="确认删除"]')
-    await input.setValue('确认删除')
+  // ── FE-3: Share links ─────────────────────────────────────────────────────────
 
-    // Find and click "删除账号" action button (the last one, inside AlertDialog)
-    const actionButtons = wrapper.findAll('button').filter(b => b.text().includes('删除账号'))
-    const deleteAccountAction = actionButtons[actionButtons.length - 1]
-    await deleteAccountAction.trigger('click')
+  it('shows "管理共享链接" menu item for every subscription', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    expect(wrapper.text()).toContain('管理共享链接')
+  })
+
+  it('"管理共享链接" menu item is clickable (not disabled)', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    // Under the DropdownMenuItem stub, items render as <div @click="...">
+    const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
+    expect(shareItem).toBeDefined()
+    // The item should not have disabled attribute
+    expect(shareItem!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('opens ShareLinksDialog when "管理共享链接" is clicked', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+    const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
+    expect(shareItem).toBeDefined()
+    await shareItem!.trigger('click')
     await flushPromises()
-
-    expect(mockToast.error).toHaveBeenCalledWith('删除账号失败')
+    // The stub renders only when open; the vm should now have shareLinksDialog.open = true
+    const vm = wrapper.vm as unknown as { shareLinksDialog: { open: boolean; sub: unknown } }
+    expect(vm.shareLinksDialog.open).toBe(true)
+    expect(vm.shareLinksDialog.sub).not.toBeNull()
   })
 })

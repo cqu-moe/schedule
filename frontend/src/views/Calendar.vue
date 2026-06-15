@@ -70,7 +70,7 @@ import type { CalendarOptions, EventClickArg, EventInput, EventMountArg } from '
 import type { FormattedEvent } from '@/types/api'
 import { RouteNames } from '@/router'
 import api from '@/api'
-import { parseApiError } from '@/utils/error'
+import { parseApiError, apiErrorCode } from '@/utils/error'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -244,14 +244,21 @@ const calendarOptions = computed<CalendarOptions>(() => ({
 }))
 
 onMounted(async () => {
-  const subToken = route.params.sub_token as string
+  const token = route.params.token as string
   try {
-    const data = await api.getCalendarData(subToken)
+    const data = await api.getViewData(token)
     semester.value = data.semester ? `${data.semester} 课表` : '课表日历'
     semesterStart.value = data.semester_start ?? ''
     events.value = data.events.map(toCalendarEvent)
   } catch (err) {
-    error.value = parseApiError(err, '加载课表数据失败')
+    const code = apiErrorCode(err)
+    if (code === 'FORMAT_NOT_ALLOWED') {
+      error.value = '该分享链接未开启网页查看'
+    } else if (code === 'NOT_FOUND' || (err as any)?.response?.status === 404) {
+      error.value = '链接不存在或已失效'
+    } else {
+      error.value = parseApiError(err, '加载课表数据失败')
+    }
   } finally {
     loading.value = false
   }

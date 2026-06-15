@@ -10,7 +10,9 @@ Object.assign(navigator, {
 vi.stubGlobal('open', vi.fn())
 
 // Global stubs for teleporting components (Dialog, AlertDialog, DropdownMenu, Popover, Select)
+// ShareLinksDialog is stubbed globally to prevent it from rendering its full tree in Dashboard tests.
 config.global.stubs = {
+  ShareLinksDialog: { template: '<div data-testid="share-links-dialog" />', props: ['open', 'subscription'] },
   AlertDialog: { template: '<div><slot /></div>', props: ['open'] },
   AlertDialogContent: { template: '<div><slot /></div>' },
   AlertDialogHeader: { template: '<div><slot /></div>' },
@@ -41,20 +43,6 @@ config.global.stubs = {
   },
   DropdownMenuTrigger: { template: '<span><slot /></span>', props: ['asChild'] },
 }
-
-// Mock @hcaptcha/vue3-hcaptcha globally
-vi.mock('@hcaptcha/vue3-hcaptcha', () => ({
-  default: {
-    name: 'VueHcaptcha',
-    template: '<div data-testid="hcaptcha" />',
-    props: ['sitekey', 'size'],
-    setup() {
-      const executeAsync = vi.fn().mockResolvedValue({ response: 'mock-captcha-token' })
-      const reset = vi.fn()
-      return { executeAsync, reset }
-    },
-  },
-}))
 
 // Mock qrcode.vue globally
 vi.mock('qrcode.vue', () => ({

@@ -1,44 +1,5 @@
-import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
-
-// ── Users table ──────────────────────────────────────────────────────────────
-
-export const users = sqliteTable("users", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-
-  studentId: text("student_id").unique().notNull(),
-
-  /** AES-256-GCM encrypted password stored as base64 text */
-  encryptedPassword: text("encrypted_password").notNull(),
-
-  // OAuth Tokens
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  /** ISO 8601 datetime string */
-  tokenExpiresAt: text("token_expires_at"),
-
-  /** 64-char random token for calendar subscription URL */
-  calendarToken: text("calendar_token").unique().notNull(),
-  pendingCalendarToken: text("pending_calendar_token").unique(),
-  pendingTokenExpiresAt: text("pending_token_expires_at"),
-
-  // Status tracking
-  /** ISO 8601 datetime string */
-  lastLoginAt: text("last_login_at"),
-  /** ISO 8601 datetime string */
-  lastRefreshAt: text("last_refresh_at"),
-  loginError: text("login_error"),
-
-  // Timestamps (ISO 8601 strings)
-  createdAt: text("created_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-  updatedAt: text("updated_at")
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-});
+import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
 
@@ -49,17 +10,13 @@ export const subscriptions = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
 
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    /** auth user.id（来自 cqu-moe-auth，~32 字符随机串，非 UUID） */
+    userId: text("user_id").notNull(),
 
     /** Source type: see SourceType union */
     sourceType: text("source_type").notNull().$type<SourceType>(),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
-
-    /** 64-char random token for subscription calendar URL */
-    calendarToken: text("calendar_token").unique().notNull(),
 
     sessionId: text("session_id"),
     sessionName: text("session_name"),
@@ -70,6 +27,16 @@ export const subscriptions = sqliteTable(
     isPersonal: integer("is_personal", { mode: "boolean" })
       .notNull()
       .default(false),
+
+    /**
+     * Whether this subscription is currently entitled (owner still holds the
+     * required calendar cap). Reconciled from caps by the cron producer and by
+     * manual refresh; public calendar endpoints serve only active subscriptions.
+     * Revoking a cap flips this false (hard revocation); re-granting flips it back.
+     */
+    isActive: integer("is_active", { mode: "boolean" })
+      .notNull()
+      .default(true),
 
     /** Cached ICS calendar content */
     icsContent: text("ics_content"),
@@ -97,8 +64,46 @@ export const subscriptions = sqliteTable(
       table.sourceId,
       table.sessionId,
     ),
+    // Personal subscriptions identify by (user, type, source) ONLY — session_id is
+    // informational and gets overwritten to the current semester on first sync, so
+    // it must not be part of their uniqueness. (uq_user_source_session can't enforce
+    // this: it includes session_id, and SQLite treats NULLs as distinct.) This
+    // partial unique index covers the personal source types regardless of session_id,
+    // so a user can hold at most one of each personal calendar.
+    uniqueIndex("uq_user_source_personal")
+      .on(table.userId, table.sourceType, table.sourceId)
+      .where(sql`${table.sourceType} in ('personal_all', 'personal_courses', 'personal_exams')`),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
+);
+
+// ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
+
+export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
+export type LinkFormat = (typeof LINK_FORMATS)[number];
+
+export const calendarLinks = sqliteTable(
+  "calendar_links",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    token: text("token").unique().notNull(),
+    label: text("label"),
+    /** JSON array of LinkFormat */
+    formats: text("formats").notNull(),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [index("idx_calendar_links_subscription_id").on(t.subscriptionId)],
 );
 
 // ── Source type constants ────────────────────────────────────────────────────
@@ -117,7 +122,7 @@ export const SOURCE_TYPES = [
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 export type PersonalSourceType = Extract<SourceType, "personal_all" | "personal_courses" | "personal_exams">;
-export type ExploreSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
+export type ExternalSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
 
 export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSourceType>([
   "personal_all",
@@ -125,7 +130,7 @@ export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSo
   "personal_exams",
 ]);
 
-export const EXPLORE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExploreSourceType>([
+export const EXTERNAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExternalSourceType>([
   "instructor",
   "room",
   "laboratory",
@@ -135,7 +140,7 @@ export const EXPLORE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExploreSour
 
 // ── Type exports ─────────────────────────────────────────────────────────────
 
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
+export type CalendarLink = typeof calendarLinks.$inferSelect;
+export type NewCalendarLink = typeof calendarLinks.$inferInsert;

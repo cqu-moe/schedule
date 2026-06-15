@@ -3,308 +3,322 @@
     <Navbar />
 
     <div class="max-w-2xl mx-auto px-4 pt-24 pb-12">
-      <!-- Unified subscription list -->
+      <!-- Header: title + usage + add button -->
       <section class="mb-6">
         <div class="flex items-center justify-between mb-3">
-          <h3 class="text-base font-semibold">
-            我的订阅
-            <span v-if="subStore.subscriptions.length > 0" class="text-muted-foreground font-normal text-sm ml-1">
-              ({{ subStore.subscriptions.length }}/{{ subStore.max }})
-            </span>
-          </h3>
+          <div>
+            <h3 class="text-base font-semibold">
+              我的订阅
+              <span
+                v-if="subStore.count > 0"
+                class="text-muted-foreground font-normal text-sm ml-1"
+              >
+                ({{ subStore.count }}<template v-if="subLimit !== null">/{{ subLimit }}</template>)
+              </span>
+            </h3>
+            <p
+              v-if="subStore.atLimit"
+              class="text-xs text-amber-600 dark:text-amber-400 mt-0.5"
+            >
+              已达订阅上限
+            </p>
+          </div>
+
           <div class="flex gap-2">
+            <!-- Sync-all personal button -->
             <Button
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncFeedback.stateOf() === 'loading'"
+              :disabled="syncFeedback.stateOf() === 'loading' || personalSubs.length === 0 || !canManualRefresh"
               :class="{
-                'bg-green-600 hover:bg-green-600 text-white border-transparent': syncFeedback.stateOf() === 'success',
-                'bg-destructive hover:bg-destructive text-white border-transparent': syncFeedback.stateOf() === 'error'
+                'bg-green-600 hover:bg-green-600 text-white border-transparent':
+                  syncFeedback.stateOf() === 'success',
+                'bg-destructive hover:bg-destructive text-white border-transparent':
+                  syncFeedback.stateOf() === 'error',
               }"
               @click="handleSyncAll"
             >
-              <Loader2 v-if="syncFeedback.stateOf() === 'loading'" class="h-4 w-4 mr-1.5 animate-spin" />
-              <Check v-else-if="syncFeedback.stateOf() === 'success'" class="h-4 w-4 mr-1.5" />
-              <X v-else-if="syncFeedback.stateOf() === 'error'" class="h-4 w-4 mr-1.5" />
+              <Loader2
+                v-if="syncFeedback.stateOf() === 'loading'"
+                class="h-4 w-4 mr-1.5 animate-spin"
+              />
+              <Check
+                v-else-if="syncFeedback.stateOf() === 'success'"
+                class="h-4 w-4 mr-1.5"
+              />
+              <X
+                v-else-if="syncFeedback.stateOf() === 'error'"
+                class="h-4 w-4 mr-1.5"
+              />
               <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-              {{ { loading: '同步中', success: '已同步', error: '失败' }[syncFeedback.stateOf()] || '同步个人课表' }}
+              {{
+                { loading: '同步中', success: '已同步', error: '失败' }[
+                  syncFeedback.stateOf()
+                ] || '同步个人课表'
+              }}
             </Button>
+
+            <!-- Add subscription -->
             <router-link to="/add">
-              <Button variant="outline" size="sm" class="cursor-pointer">添加订阅</Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="cursor-pointer"
+                :disabled="subStore.atLimit"
+              >
+                添加订阅
+              </Button>
             </router-link>
           </div>
         </div>
-        <!-- Loading state -->
+
+        <!-- Loading skeleton -->
         <div v-if="loading" class="flex items-center justify-center py-8">
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
 
-        <!-- Subscription cards -->
-        <Card v-for="sub in subStore.subscriptions" :key="sub.calendar_token" class="mb-4">
+        <!-- M4: Iterate enriched list — each card derives its defaultLink once -->
+        <Card v-for="item in enrichedSubs" :key="item.sub.id" class="mb-4">
           <CardHeader>
-            <CardTitle class="text-base flex items-center gap-2">
-              <Badge variant="secondary" class="text-xs">{{ sourceTypeLabel(sub.source_type) }}</Badge>
-              {{ sub.source_name }}
-            </CardTitle>
-            <div class="flex items-center gap-2 mt-1">
-              <Badge v-if="sub.session_name" variant="outline" class="text-xs">
-                {{ sub.session_name }}
+            <CardTitle class="text-base flex items-center gap-2 flex-wrap">
+              <Badge variant="secondary" class="text-xs">
+                {{ sourceTypeLabel(item.sub.source_type) }}
               </Badge>
-              <span v-if="sub.last_synced_at" class="text-xs text-muted-foreground">
-                同步于 {{ formatDate(sub.last_synced_at) }}
+              {{ item.sub.source_name }}
+              <Badge
+                v-if="item.sub.is_personal"
+                variant="outline"
+                class="text-xs ml-auto shrink-0"
+              >
+                个人
+              </Badge>
+            </CardTitle>
+            <div class="flex items-center gap-2 flex-wrap mt-1">
+              <Badge v-if="item.sub.session_name" variant="outline" class="text-xs">
+                {{ item.sub.session_name }}
+              </Badge>
+              <span
+                v-if="item.sub.id in pendingRefresh"
+                class="text-xs text-muted-foreground inline-flex items-center gap-1"
+              >
+                <Loader2 class="h-3 w-3 animate-spin" />
+                同步中...
               </span>
-              <span v-else class="text-xs text-muted-foreground inline-flex items-center gap-1">
-                <Loader2 v-if="isPolling" class="h-3 w-3 animate-spin" />
-                {{ isPolling ? '同步中...' : '尚未同步' }}
+              <span v-else-if="item.sub.last_synced_at" class="text-xs text-muted-foreground">
+                同步于 {{ formatDate(item.sub.last_synced_at) }}
+              </span>
+              <span v-else class="text-xs text-muted-foreground">
+                尚未同步
               </span>
             </div>
           </CardHeader>
-          <CardContent class="space-y-3">
-            <div class="bg-muted rounded px-3 py-2 overflow-x-auto">
-              <code class="text-xs text-muted-foreground break-all font-mono">{{ sub.subscription_url }}</code>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                class="cursor-pointer"
-                :disabled="copyFeedback.stateOf(sub.calendar_token) === 'loading'"
-                :class="{
-                  'bg-green-600 hover:bg-green-600 text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'success',
-                  'bg-destructive hover:bg-destructive text-white border-transparent': copyFeedback.stateOf(sub.calendar_token) === 'error'
-                }"
-                @click="copyUrl(sub.subscription_url, sub.calendar_token)"
-              >
-                <Check v-if="copyFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
-                <X v-else-if="copyFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
-                <Copy v-else class="h-4 w-4 mr-1.5" />
-                {{ { success: '已复制', error: '失败' }[copyFeedback.stateOf(sub.calendar_token)] || '复制' }}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                class="cursor-pointer"
-                @click="handleShowQrcode(sub.subscription_url)"
-              >
-                <QrCode class="h-4 w-4 mr-1.5" />
-                二维码
-              </Button>
-              <router-link :to="{ name: RouteNames.Calendar, params: { sub_token: sub.calendar_token } }">
-                <Button variant="outline" size="sm" class="cursor-pointer">
-                  <Calendar class="h-4 w-4 mr-1.5" />
-                  日历
-                </Button>
-              </router-link>
-              <Button
-                variant="outline"
-                size="sm"
-                class="cursor-pointer"
-                :disabled="refreshFeedback.stateOf(sub.calendar_token) === 'loading'"
-                :class="{
-                  'bg-green-600 hover:bg-green-600 text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'success',
-                  'bg-destructive hover:bg-destructive text-white border-transparent': refreshFeedback.stateOf(sub.calendar_token) === 'error'
-                }"
-                @click="handleRefreshSub(sub.calendar_token)"
-              >
-                <Loader2 v-if="refreshFeedback.stateOf(sub.calendar_token) === 'loading'" class="h-4 w-4 animate-spin mr-1.5" />
-                <Check v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'success'" class="h-4 w-4 mr-1.5" />
-                <X v-else-if="refreshFeedback.stateOf(sub.calendar_token) === 'error'" class="h-4 w-4 mr-1.5" />
-                <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-                {{ { loading: '同步中', success: '已刷新', error: '失败' }[refreshFeedback.stateOf(sub.calendar_token)] || '同步' }}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger as-child>
-                  <Button variant="outline" size="sm" class="cursor-pointer">
-                    <Download class="h-4 w-4 mr-1.5" />
-                    导出
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'calendar.ics')">
-                    ICS 日历
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'data.json')">
-                    JSON
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'origin.json')">
-                    JSON（原始）
-                  </DropdownMenuItem>
-                  <DropdownMenuItem class="cursor-pointer" @click="downloadExport(sub.calendar_token, 'data.csv')">
-                    CSV
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
 
-              <!-- More actions (danger zone) -->
+          <CardContent class="space-y-3">
+            <!-- Primary action row -->
+            <div class="flex flex-wrap gap-2">
+              <!-- Manual refresh -->
+              <Button
+                variant="outline"
+                size="sm"
+                class="cursor-pointer"
+                :disabled="refreshFeedback.stateOf(item.sub.id) === 'loading' || !canManualRefresh"
+                :class="{
+                  'bg-green-600 hover:bg-green-600 text-white border-transparent':
+                    refreshFeedback.stateOf(item.sub.id) === 'success',
+                  'bg-destructive hover:bg-destructive text-white border-transparent':
+                    refreshFeedback.stateOf(item.sub.id) === 'error',
+                }"
+                @click="handleRefreshSub(item.sub.id)"
+              >
+                <Loader2
+                  v-if="refreshFeedback.stateOf(item.sub.id) === 'loading'"
+                  class="h-4 w-4 animate-spin mr-1.5"
+                />
+                <Check
+                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'success'"
+                  class="h-4 w-4 mr-1.5"
+                />
+                <X
+                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'error'"
+                  class="h-4 w-4 mr-1.5"
+                />
+                <RefreshCw v-else class="h-4 w-4 mr-1.5" />
+                {{
+                  { loading: '同步中', success: '已刷新', error: '失败' }[
+                    refreshFeedback.stateOf(item.sub.id)
+                  ] || '同步'
+                }}
+              </Button>
+
+              <!-- Copy subscribe URL (ICS) -->
+              <template v-if="item.defaultLink">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="cursor-pointer"
+                  :class="{
+                    'bg-green-600 hover:bg-green-600 text-white border-transparent':
+                      copyFeedback.stateOf(item.sub.id) === 'success',
+                  }"
+                  @click="handleCopyIcs(item)"
+                >
+                  <Check
+                    v-if="copyFeedback.stateOf(item.sub.id) === 'success'"
+                    class="h-4 w-4 mr-1.5"
+                  />
+                  <Copy v-else class="h-4 w-4 mr-1.5" />
+                  {{ copyFeedback.stateOf(item.sub.id) === 'success' ? '已复制' : '复制订阅链接' }}
+                </Button>
+
+                <!-- QR code modal -->
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="cursor-pointer h-8 w-8"
+                  title="二维码"
+                  @click="openQrModal(item)"
+                >
+                  <QrCode class="h-4 w-4" />
+                </Button>
+
+                <!-- Open web view -->
+                <a
+                  :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'web')"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    class="cursor-pointer h-8 w-8"
+                    title="网页预览"
+                  >
+                    <ExternalLink class="h-4 w-4" />
+                  </Button>
+                </a>
+              </template>
+
+              <!-- More actions menu -->
               <DropdownMenu>
                 <DropdownMenuTrigger as-child>
-                  <Button variant="outline" size="icon" class="cursor-pointer h-8 w-8">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    class="cursor-pointer h-8 w-8"
+                    title="更多"
+                  >
                     <Ellipsis class="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openRotateSubDialog(sub)">
-                    <RefreshCw class="h-4 w-4 mr-2" />
-                    重置链接
-                  </DropdownMenuItem>
-                  <template v-if="!sub.is_personal">
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10" @click="openDeleteSubDialog(sub)">
-                      <Trash2 class="h-4 w-4 mr-2" />
-                      删除
+                  <!-- Download links -->
+                  <template v-if="item.defaultLink">
+                    <DropdownMenuItem
+                      as="a"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics')"
+                      download
+                      class="cursor-pointer"
+                    >
+                      <Download class="h-4 w-4 mr-2" />
+                      下载 ICS 文件
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      as="a"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'data_json')"
+                      download
+                      class="cursor-pointer"
+                    >
+                      <Download class="h-4 w-4 mr-2" />
+                      下载课表 JSON
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      as="a"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'origin_json')"
+                      download
+                      class="cursor-pointer"
+                    >
+                      <Download class="h-4 w-4 mr-2" />
+                      下载原始 JSON
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      as="a"
+                      :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'csv')"
+                      download
+                      class="cursor-pointer"
+                    >
+                      <Download class="h-4 w-4 mr-2" />
+                      下载 CSV
                     </DropdownMenuItem>
                   </template>
+
+                  <!-- FE-3: Share-link management -->
+                  <DropdownMenuItem
+                    class="cursor-pointer"
+                    @click="openShareLinks(item.sub)"
+                  >
+                    <Share2 class="h-4 w-4 mr-2" />
+                    管理共享链接
+                  </DropdownMenuItem>
+
+                  <!-- Delete -->
+                  <DropdownMenuItem
+                    class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                    @click="openDeleteSubDialog(item.sub)"
+                  >
+                    <Trash2 class="h-4 w-4 mr-2" />
+                    删除
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
           </CardContent>
         </Card>
 
-        <!-- Empty state (only when not loading) -->
-        <div v-if="!loading && subStore.subscriptions.length === 0" class="text-center py-8 text-muted-foreground">
+        <!-- Empty state -->
+        <div
+          v-if="!loading && subStore.subscriptions.length === 0"
+          class="text-center py-8 text-muted-foreground"
+        >
           <p class="text-sm mb-3">暂无订阅</p>
           <router-link to="/add">
             <Button variant="outline" size="sm" class="cursor-pointer">添加新订阅</Button>
           </router-link>
         </div>
       </section>
-
-      <!-- Danger zone -->
-      <section>
-        <Card class="border-destructive/20 bg-destructive/5 gap-2">
-          <CardHeader>
-            <CardTitle class="text-base text-destructive">危险操作区</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <!-- Rotate auth token -->
-            <div class="mb-4">
-              <p class="text-sm text-muted-foreground mb-2">
-                轮换认证 Token 后，旧 Token 将立即失效。
-              </p>
-              <RotateTokenDialog>
-                <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
-                  <RefreshCw class="h-4 w-4 mr-1.5" />
-                  轮换认证 Token
-                </Button>
-              </RotateTokenDialog>
-            </div>
-
-            <!-- Rotate all subscription URLs -->
-            <div class="mb-4">
-              <p class="text-sm text-muted-foreground mb-2">
-                重置所有订阅链接后，旧链接将立即失效，日历客户端需要重新订阅。
-              </p>
-              <AlertDialog>
-                <AlertDialogTrigger as-child>
-                  <Button variant="outline" class="cursor-pointer border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive">
-                    <RefreshCw class="h-4 w-4 mr-1.5" />
-                    重置所有订阅链接
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>重置所有订阅链接</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      重置后所有旧的订阅链接将立即失效，日历客户端需要重新订阅。此操作无法撤销。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-                      @click="handleRotateAll"
-                    >
-                      确认重置
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-
-            <p class="text-sm text-muted-foreground mb-4">
-              删除账号将永久移除你的所有数据，此操作无法撤销。
-            </p>
-
-            <AlertDialog>
-              <AlertDialogTrigger as-child>
-                <Button variant="destructive" class="cursor-pointer">
-                  删除账号
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>确认删除账号</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    这将永久删除你的账号和所有数据，此操作无法撤销。
-                    <br /><br />
-                    请输入 <strong>确认删除</strong> 以继续：
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <div class="py-2">
-                  <Input
-                    v-model="deleteConfirmText"
-                    placeholder="确认删除"
-                  />
-                </div>
-                <AlertDialogFooter>
-                  <AlertDialogCancel class="cursor-pointer" @click="deleteConfirmText = ''">
-                    取消
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-                    :disabled="deleteConfirmText !== '确认删除' || deleting"
-                    @click="handleDelete"
-                  >
-                    <Loader2 v-if="deleting" class="h-4 w-4 mr-2 animate-spin" />
-                    删除账号
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </CardContent>
-        </Card>
-      </section>
     </div>
 
-    <QrcodeModal v-model="showQrcode" :url="qrcodeUrl" />
-    <RiskWarning v-model="showRiskWarning" />
+    <!-- QR code modal -->
+    <QrcodeModal v-model="qrModal.open" :url="qrModal.url" />
 
-    <!-- Global dialog: rotate subscription URL -->
-    <AlertDialog :open="!!rotateSubDialog" @update:open="v => { if (!v) rotateSubDialog = null }">
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>重置订阅链接</AlertDialogTitle>
-          <AlertDialogDescription>
-            重置后「{{ rotateSubDialog?.name }}」的旧订阅链接将立即失效，日历客户端需要重新订阅。
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
-          <AlertDialogAction
-            class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleRotateSub(rotateSubDialog!.token)"
-          >
-            确认重置
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <!-- Share links dialog (FE-3) -->
+    <!-- activeShareSub is store-derived so it updates after subStore.load() replaces objects -->
+    <ShareLinksDialog
+      v-if="activeShareSub"
+      :open="shareLinksDialog.open"
+      :subscription="activeShareSub"
+      @update:open="v => { if (!v) shareLinksDialog.open = false }"
+      @changed="subStore.load(true).catch(() => {})"
+    />
 
-    <!-- Global dialog: delete subscription -->
-    <AlertDialog :open="!!deleteSubDialog" @update:open="v => { if (!v) deleteSubDialog = null }">
+    <!-- Delete subscription confirmation dialog -->
+    <AlertDialog
+      :open="!!deleteSubDialog"
+      @update:open="v => { if (!v) deleteSubDialog = null }"
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除订阅</AlertDialogTitle>
           <AlertDialogDescription>
-            确定要删除「{{ deleteSubDialog?.name }}」的课表订阅吗？已订阅的日历客户端将不再收到更新。
+            确定要删除「{{ deleteSubDialog?.name }}」的课表订阅吗？
+            已订阅的日历客户端将不再收到更新。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="cursor-pointer">取消</AlertDialogCancel>
           <AlertDialogAction
             class="cursor-pointer bg-destructive text-white hover:bg-destructive/90"
-            @click="handleDeleteSub(deleteSubDialog!.token)"
+            @click="deleteSubDialog && handleDeleteSub(deleteSubDialog.id)"
           >
             删除
           </AlertDialogAction>
@@ -315,26 +329,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
-import { RefreshCw, Loader2, Copy, Check, X, Trash2, QrCode, Download, Calendar, Ellipsis } from 'lucide-vue-next'
+import { ref, computed, onMounted, onBeforeUnmount, reactive } from 'vue'
+import {
+  RefreshCw,
+  Loader2,
+  Check,
+  X,
+  Trash2,
+  Ellipsis,
+  Copy,
+  QrCode,
+  ExternalLink,
+  Download,
+  Share2,
+} from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
-import { useRiskWarning } from '@/composables/useRiskWarning'
-import { useAuthStore } from '@/stores/auth'
-import { useConfigStore } from '@/stores/config'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
+import { useSession } from '@/stores/session'
+import { useConfigStore } from '@/stores/config'
 import { toast } from 'vue-sonner'
-import type { SourceType, Subscription } from '@/types/api'
-import { RouteNames } from '@/router'
+import type { SourceType, Subscription, CalendarLink } from '@/types/api'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
+import { buildLinkUrl } from '@/utils/links'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
-import RiskWarning from '@/components/RiskWarning.vue'
-import RotateTokenDialog from '@/components/RotateTokenDialog.vue'
+import ShareLinksDialog from '@/components/ShareLinksDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
@@ -345,41 +367,90 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger
 } from '@/components/ui/alert-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-const router = useRouter()
-const authStore = useAuthStore()
-const configStore = useConfigStore()
-const subStore = useSubscriptionsStore()
-const { showRiskWarning } = useRiskWarning()
+// ── Stores ────────────────────────────────────────────────────────────────────
 
-// State
-const loading = ref(true)
-const deleting = ref(false)
-const deleteConfirmText = ref('')
-const showQrcode = ref(false)
-const qrcodeUrl = ref('')
-const rotateSubDialog = ref<{ token: string; name: string } | null>(null)
-const deleteSubDialog = ref<{ token: string; name: string } | null>(null)
-const isPolling = ref(false)
-const hasPendingSubs = computed(() =>
-  subStore.subscriptions.some(s => !s.last_synced_at)
+const subStore = useSubscriptionsStore()
+const session = useSession()
+const configStore = useConfigStore()
+
+// ── M4: Enriched subscription list ────────────────────────────────────────────
+
+/**
+ * Each entry pairs a subscription with its pre-computed defaultLink so the
+ * template never calls subStore.defaultLink(sub) more than once per card.
+ */
+interface EnrichedSub {
+  sub: Subscription
+  defaultLink: CalendarLink | undefined
+}
+
+const enrichedSubs = computed<EnrichedSub[]>(() =>
+  subStore.subscriptions.map(sub => ({
+    sub,
+    defaultLink: subStore.defaultLink(sub),
+  })),
 )
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// ── State ─────────────────────────────────────────────────────────────────────
 
-// Button feedback
-const copyFeedback = useButtonFeedback()
+const loading = ref(true)
+const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
+const qrModal = ref<{ open: boolean; url: string }>({ open: false, url: '' })
+const shareLinksDialog = reactive<{ open: boolean; subId: string | null }>({
+  open: false,
+  subId: null,
+})
+
+/**
+ * Store-derived computed so the reference updates after subStore.load() replaces
+ * subscription objects. ShareLinksDialog receives the fresh object and its watch
+ * re-seeds localLinks from the reloaded links.
+ */
+const activeShareSub = computed(() =>
+  shareLinksDialog.subId
+    ? subStore.subscriptions.find(s => s.id === shareLinksDialog.subId) ?? null
+    : null,
+)
+
+/**
+ * Maps sub.id → the last_synced_at value captured AT THE MOMENT of manual
+ * refresh (may be null). A sub is "pending refresh" while it exists in this
+ * map. Cleared when a poll sees a CHANGED last_synced_at, or on POLL_TIMEOUT.
+ */
+const pendingRefresh = reactive<Record<string, string | null>>({})
+
+const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollStartTime = 0
+
+// ── Computed ──────────────────────────────────────────────────────────────────
+
+const subLimit = computed(() => session.quota('sub_limit'))
+
+const personalSubs = computed(() => subStore.subscriptions.filter(s => s.is_personal))
+
+/**
+ * `manual_refresh` quota semantics: null = unlimited, 0 = disabled, n = n/day.
+ * When 0, the backend will always return 429; disable the controls proactively.
+ */
+const canManualRefresh = computed(() => session.quota('manual_refresh') !== 0)
+
+// ── Button feedback ───────────────────────────────────────────────────────────
+
 const refreshFeedback = useButtonFeedback()
 const syncFeedback = useButtonFeedback()
+const copyFeedback = useButtonFeedback()
+
+// ── Source type labels ────────────────────────────────────────────────────────
 
 const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   personal_all: '全部',
@@ -392,29 +463,13 @@ const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   admin_class: '行政班',
 }
 
-function sourceTypeLabel(type: SourceType) {
+function sourceTypeLabel(type: SourceType): string {
   return SOURCE_TYPE_LABELS[type] || type
 }
 
-function openRotateSubDialog(sub: Subscription) {
-  rotateSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
-}
+// ── Date formatting ───────────────────────────────────────────────────────────
 
-function openDeleteSubDialog(sub: Subscription) {
-  deleteSubDialog.value = { token: sub.calendar_token, name: sub.source_name }
-}
-
-function handleShowQrcode(url: string) {
-  qrcodeUrl.value = url
-  showQrcode.value = true
-}
-
-function downloadExport(calendarToken: string, filename: string) {
-  const url = `${configStore.publicUrl}/api/v1/subscriptions/${calendarToken}/${filename}`
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
-function formatDate(isoString: string) {
+function formatDate(isoString: string): string {
   const date = new Date(isoString)
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -426,121 +481,153 @@ function formatDate(isoString: string) {
   })
 }
 
+// ── Polling ───────────────────────────────────────────────────────────────────
+
+const POLL_INTERVAL = 2000
+const POLL_TIMEOUT = 30000
+
 function stopPolling() {
-  clearInterval(pollTimer)
-  pollTimer = null
-  isPolling.value = false
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+/**
+ * Clear all pending-refresh tracking (timeout guard so no sub is stuck
+ * "同步中" forever).
+ */
+function clearPendingRefresh() {
+  for (const id of Object.keys(pendingRefresh)) {
+    delete pendingRefresh[id]
+  }
 }
 
 function startSyncPolling() {
-  if (pollTimer) return
-  isPolling.value = true
-  const startTime = Date.now()
-  const POLL_INTERVAL = 2000
-  const POLL_TIMEOUT = 30000
+  if (pollTimer) return // already running
+  pollStartTime = Date.now()
 
   pollTimer = setInterval(async () => {
-    if (Date.now() - startTime > POLL_TIMEOUT) {
+    if (Date.now() - pollStartTime > POLL_TIMEOUT) {
       stopPolling()
+      clearPendingRefresh()
       return
     }
-    await subStore.load()
-    if (!hasPendingSubs.value) {
+
+    await subStore.load(true).catch(() => {})
+
+    // For each tracked sub, check whether last_synced_at has changed.
+    for (const [id, oldSyncedAt] of Object.entries(pendingRefresh)) {
+      const sub = subStore.subscriptions.find(s => s.id === id)
+      if (!sub) {
+        // Sub no longer exists — remove from tracking
+        delete pendingRefresh[id]
+        continue
+      }
+      if (sub.last_synced_at !== oldSyncedAt) {
+        // Timestamp changed (or first sync completed) — refresh done
+        delete pendingRefresh[id]
+      }
+    }
+
+    if (Object.keys(pendingRefresh).length === 0) {
       stopPolling()
     }
   }, POLL_INTERVAL)
 }
 
-async function copyUrl(url: string, token: string) {
+/**
+ * Track a set of sub ids as pending-refresh. Captures their current
+ * last_synced_at values and starts the poll if not already running.
+ */
+function trackRefresh(ids: string[]) {
+  for (const id of ids) {
+    const sub = subStore.subscriptions.find(s => s.id === id)
+    pendingRefresh[id] = sub?.last_synced_at ?? null
+  }
+  startSyncPolling()
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+
+function openDeleteSubDialog(sub: Subscription) {
+  deleteSubDialog.value = { id: sub.id, name: sub.source_name }
+}
+
+function openShareLinks(sub: Subscription) {
+  shareLinksDialog.subId = sub.id
+  shareLinksDialog.open = true
+}
+
+async function handleCopyIcs(item: EnrichedSub) {
+  if (!item.defaultLink) return
+  const url = buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics')
   try {
     await copyFeedback.run(async () => {
       await navigator.clipboard.writeText(url)
-    }, token)
+    }, item.sub.id)
   } catch {
-    // button shows error state, no toast needed for copy
+    toast.error('复制失败，请手动复制链接')
   }
 }
 
-async function handleRefreshSub(subToken: string) {
+function openQrModal(item: EnrichedSub) {
+  if (!item.defaultLink) return
+  qrModal.value = {
+    open: true,
+    url: buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics'),
+  }
+}
+
+async function handleRefreshSub(sid: string) {
   try {
     await refreshFeedback.run(async () => {
-      await api.refreshSubscription(authStore.token, subToken)
-      await subStore.load().catch(() => {})
-      await authStore.fetchUserInfo()
-    }, subToken)
+      await api.refreshSubscription(sid)
+      toast.success('已加入刷新队列')
+      trackRefresh([sid])
+    }, sid)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
   }
 }
 
-async function handleRotateSub(subToken: string) {
+async function handleDeleteSub(sid: string) {
   try {
-    await api.rotateSubscription(authStore.token, subToken)
-    toast.success('订阅链接已重置')
+    await api.deleteSubscription(sid)
+    toast.success('订阅已删除')
+    deleteSubDialog.value = null
     await subStore.load(true).catch(() => {})
-  } catch (error) {
-    toast.error(parseApiError(error, '重置链接失败'))
-  }
-}
-
-async function handleRotateAll() {
-  try {
-    const result = await api.rotateAllSubscriptions(authStore.token)
-    toast.success(`已重置 ${result.count} 个订阅链接`)
-    // All tokens changed — must re-fetch; bypass browser cache
-    await subStore.load(true).catch(() => {})
-  } catch (error) {
-    toast.error(parseApiError(error, '重置链接失败'))
-  }
-}
-
-async function handleDeleteSub(subToken: string) {
-  try {
-    await api.deleteSubscription(authStore.token, subToken)
-    await subStore.load().catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
   }
 }
 
 async function handleSyncAll() {
+  if (personalSubs.value.length === 0) return
   try {
     await syncFeedback.run(async () => {
-      const personalSubs = subStore.subscriptions.filter(s => s.is_personal)
       const results = await Promise.allSettled(
-        personalSubs.map(sub => api.refreshSubscription(authStore.token, sub.calendar_token))
+        personalSubs.value.map(sub => api.refreshSubscription(sub.id)),
       )
       const failures = results.filter(r => r.status === 'rejected')
       if (failures.length > 0) {
-        throw failures.length === 1 ? failures[0].reason : new Error(`${failures.length} 个订阅同步失败`)
+        throw failures.length === 1
+          ? (failures[0] as PromiseRejectedResult).reason
+          : new Error(`${failures.length} 个订阅同步失败`)
       }
-      await subStore.load().catch(() => {})
-      await authStore.fetchUserInfo()
+      trackRefresh(personalSubs.value.map(s => s.id))
+      await subStore.load(true).catch(() => {})
     })
   } catch (error) {
     toast.error(parseApiError(error, '同步失败'))
   }
 }
 
-async function handleDelete() {
-  deleting.value = true
-  try {
-    await api.deleteUser(authStore.token)
-    authStore.logout()
-    router.push('/')
-  } catch {
-    toast.error('删除账号失败')
-  } finally {
-    deleting.value = false
-  }
-}
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
   try {
     await subStore.load()
-    if (hasPendingSubs.value) {
-      startSyncPolling()
-    }
   } catch {
     toast.error('加载订阅列表失败')
   } finally {
@@ -549,8 +636,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (pollTimer) {
-    stopPolling()
-  }
+  stopPolling()
 })
 </script>

@@ -4,7 +4,7 @@ import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
   type SourceType,
-  type ExploreSourceType,
+  type ExternalSourceType,
 } from "../db/schema";
 import {
   CQUAPIClient,
@@ -43,6 +43,20 @@ export async function fetchSessionContext(
 ): Promise<SessionContext> {
   const sessionList = await api.getSessionList();
   const sessionId = sessionList.current_session_id;
+  const semesterInfo = await api.getSemesterInfo(sessionId);
+  return { sessionId, semesterInfo };
+}
+
+/**
+ * Build a {@link SessionContext} for a specific (possibly non-current) session.
+ *
+ * Used when an external subscription pins an explicit `sessionId` so its sync
+ * targets that semester instead of the always-current cached context.
+ */
+export async function fetchSessionContextFor(
+  api: CQUAPIClient,
+  sessionId: string,
+): Promise<SessionContext> {
   const semesterInfo = await api.getSemesterInfo(sessionId);
   return { sessionId, semesterInfo };
 }
@@ -143,10 +157,10 @@ export function buildPersonalSyncResult(
   return { icsContent, coursesJson, examsJson, semesterStart: data.semesterStart };
 }
 
-/** Fetch target schedule and generate ICS for an explore subscription */
-export async function buildExploreSyncResult(
+/** Fetch target schedule and generate ICS for an external subscription */
+export async function buildExternalSyncResult(
   api: CQUAPIClient,
-  sourceType: ExploreSourceType,
+  sourceType: ExternalSourceType,
   sourceId: string,
   studentId: string,
   ctx: SessionContext,
@@ -167,13 +181,22 @@ export async function buildExploreSyncResult(
   };
 }
 
-/** Apply sync result to a subscription row */
+/**
+ * Apply sync result to a subscription row.
+ *
+ * NOTE: `sessionId` is intentionally NOT written here — it is the create-time
+ * SEMESTER PIN (null = follow current, explicit = locked to that term) and the
+ * external-sync path reads it to pick the session. Persisting the synced session
+ * id would turn an unpinned sub into a permanently-pinned one once the semester
+ * rolls over. Only the display/ICS metadata (`sessionName`, `semesterStart`) is
+ * refreshed to reflect the term that was actually synced.
+ */
 export async function applySyncResult(
   db: ReturnType<typeof drizzle>,
   subId: string,
   result: SyncResult,
   ctx: SessionContext,
-  fallback: { sessionId: string | null; sessionName: string | null },
+  fallback: { sessionName: string | null },
 ): Promise<void> {
   const now = new Date().toISOString();
   await db
@@ -183,9 +206,6 @@ export async function applySyncResult(
       coursesJson: result.coursesJson,
       examsJson: result.examsJson,
       semesterStart: result.semesterStart,
-      sessionId: ctx.semesterInfo.id
-        ? String(ctx.semesterInfo.id)
-        : fallback.sessionId,
       sessionName: ctx.semesterInfo.name || fallback.sessionName,
       lastSyncedAt: now,
       updatedAt: now,

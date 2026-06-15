@@ -1,154 +1,204 @@
-import axios, { type AxiosError } from 'axios'
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import type {
-  UserInfo,
+  MeResponse,
   SubscriptionList,
+  Subscription,
+  CalendarLink,
+  CreateLinkBody,
+  PatchLinkBody,
+  RotateLinkResult,
   SearchResult,
+  DepartmentNode,
   AppConfig,
   HealthStatus,
-  Subscription,
   CalendarData,
-  RotateTokenPrepare,
-  RotateTokenConfirm,
-  RotateSubscription,
-  RotateAllSubscriptions,
 } from '@/types/api'
+import { authLoginUrl } from '@/config/auth'
+
+// Augment axios config to support per-request auth-redirect suppression.
+declare module 'axios' {
+  interface InternalAxiosRequestConfig {
+    /** When true, a 401 response will NOT trigger a redirect to the login page. */
+    suppressAuthRedirect?: boolean
+  }
+}
 
 const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: '/api/v2',
   timeout: 30000,
   headers: {
-    'Content-Type': 'application/json'
-  }
+    'Content-Type': 'application/json',
+  },
 })
 
+/**
+ * Mutable redirect seam — extracted so tests can replace `.fn` with a spy and
+ * assert the exact URL the 401 interceptor passes, without touching
+ * window.location.href (non-configurable in jsdom).
+ *
+ * @example (test)
+ *   import { redirect } from '@/api'
+ *   redirect.fn = vi.fn()
+ *   // … trigger 401 …
+ *   expect(redirect.fn).toHaveBeenCalledWith('https://auth.cqu.moe/login?redirect=...')
+ *   redirect.fn = (url) => { window.location.href = url } // restore
+ */
+export const redirect = {
+  fn: (url: string) => {
+    window.location.href = url
+  },
+}
+
+// 429 interceptor: normalise into the standard { detail: "..." } shape.
+// 401 interceptor: redirect to auth login, unless:
+//   - suppressAuthRedirect is set on the request config (e.g. getMe probe), OR
+//   - the error code is TOKEN_EXPIRED (upstream CQU bearer expired; schedule session is still
+//     valid — the backend already invalidated the bearer and will re-mint on the next request,
+//     so we must NOT redirect the user to the login page).
 client.interceptors.response.use(undefined, (error: AxiosError) => {
-  if (error.response?.status === 429 && !(error.response?.data as Record<string, unknown>)?.detail) {
-    error.response.data = { detail: { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded' } } }
+  if (error.response?.status === 401) {
+    const data = error.response.data as Record<string, unknown> | undefined
+    const errorCode = (data?.detail as Record<string, unknown> | undefined)?.error as
+      | Record<string, unknown>
+      | undefined
+    const isUpstreamTokenExpired = (errorCode?.code as string | undefined) === 'TOKEN_EXPIRED'
+
+    if (
+      !isUpstreamTokenExpired &&
+      !(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect
+    ) {
+      redirect.fn(authLoginUrl(window.location.href))
+    }
+    return Promise.reject(error)
+  }
+
+  if (
+    error.response?.status === 429 &&
+    !(error.response?.data as Record<string, unknown>)?.detail
+  ) {
+    ;(error.response!.data as Record<string, unknown>) = {
+      detail: '操作过于频繁，请稍后再试',
+    }
   }
   return Promise.reject(error)
 })
 
-const authHeaders = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } })
-
 export default {
-  // 用户相关
-  async register(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
+  // ── Session ────────────────────────────────────────────────────────────────
+
+  async getMe(): Promise<MeResponse> {
+    const response = await client.get<MeResponse>('/me', { suppressAuthRedirect: true })
+    return response.data
+  },
+
+  // ── Subscriptions ─────────────────────────────────────────────────────────
+
+  async getSubscriptions(noCache = false): Promise<SubscriptionList> {
     const headers: Record<string, string> = {}
-    if (captchaToken) headers['X-Captcha-Token'] = captchaToken
-    const response = await client.post('/users', {
-      student_id: studentId,
-      password: password
-    }, { headers, timeout: 120000 })
+    if (noCache) headers['Cache-Control'] = 'no-cache'
+    const response = await client.get<SubscriptionList>('/subscriptions', { headers })
     return response.data
   },
 
-  async recoverToken(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
-    const headers: Record<string, string> = {}
-    if (captchaToken) headers['X-Captcha-Token'] = captchaToken
-    const response = await client.post('/users/recover', {
-      student_id: studentId,
-      password: password
-    }, { headers })
+  async getSubscription(sid: string): Promise<Subscription> {
+    const response = await client.get<Subscription>(`/subscriptions/${sid}`)
     return response.data
   },
 
-  async recoverTokenVerify(studentId: string, password: string, captchaToken: string | null = null): Promise<UserInfo> {
-    const headers: Record<string, string> = {}
-    if (captchaToken) headers['X-Captcha-Token'] = captchaToken
-    const response = await client.post('/users/recover/verify', {
-      student_id: studentId,
-      password: password
-    }, { headers, timeout: 120000 })
+  async createSubscription(body: {
+    sourceType: string
+    sourceId?: string
+    sourceName: string
+    sessionId?: string
+    sessionName?: string
+    semesterStart?: string
+    isPersonal?: boolean
+  }): Promise<Subscription> {
+    const response = await client.post<Subscription>('/subscriptions', body, { timeout: 120000 })
     return response.data
   },
 
-  async getUserInfo(token: string): Promise<UserInfo> {
-    const response = await client.get('/users/me', authHeaders(token))
+  async deleteSubscription(sid: string): Promise<void> {
+    await client.delete(`/subscriptions/${sid}`)
+  },
+
+  /** POST /:sid/syncs — manual refresh (202 Accepted). */
+  async refreshSubscription(sid: string): Promise<void> {
+    await client.post(`/subscriptions/${sid}/syncs`, null)
+  },
+
+  // ── Calendar links ────────────────────────────────────────────────────────
+
+  async getLinks(sid: string): Promise<{ links: CalendarLink[]; count: number }> {
+    const response = await client.get<{ links: CalendarLink[]; count: number }>(
+      `/subscriptions/${sid}/links`,
+    )
     return response.data
   },
 
-  async deleteUser(token: string): Promise<void> {
-    await client.delete('/users/me', authHeaders(token))
-  },
-
-  // 搜索相关
-  async searchSchedule(token: string, sourceType: string, keyword: string, departmentId = '', grade = ''): Promise<SearchResult[]> {
-    const params = new URLSearchParams({ source_type: sourceType, keyword })
-    if (departmentId) params.append('department_id', departmentId)
-    if (grade) params.append('grade', grade)
-    const response = await client.get(`/search?${params}`, authHeaders(token))
+  async createLink(sid: string, body: CreateLinkBody): Promise<CalendarLink> {
+    const response = await client.post<CalendarLink>(`/subscriptions/${sid}/links`, body)
     return response.data
   },
 
-  async getDepartments(token: string): Promise<SearchResult[]> {
-    const response = await client.get('/departments', authHeaders(token))
+  async patchLink(sid: string, lid: string, body: PatchLinkBody): Promise<CalendarLink> {
+    const response = await client.patch<CalendarLink>(`/subscriptions/${sid}/links/${lid}`, body)
     return response.data
   },
 
-  // 订阅管理
-  async createSubscription(token: string, sourceType: string, sourceId: string, sourceName: string, captchaToken: string | null = null): Promise<Subscription> {
-    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
-    if (captchaToken) headers['X-Captcha-Token'] = captchaToken
-    const body = {
-      source_type: sourceType,
-      source_id: sourceId,
-      source_name: sourceName,
-    }
-    const response = await client.post('/subscriptions', body, { headers, timeout: 120000 })
+  async deleteLink(sid: string, lid: string): Promise<void> {
+    await client.delete(`/subscriptions/${sid}/links/${lid}`)
+  },
+
+  async rotateLink(sid: string, lid: string): Promise<RotateLinkResult> {
+    const response = await client.post<RotateLinkResult>(
+      `/subscriptions/${sid}/links/${lid}/rotations`,
+      null,
+    )
     return response.data
   },
 
-  async getSubscriptions(token: string, noCache = false): Promise<SubscriptionList> {
-    const config = authHeaders(token)
-    if (noCache) {
-      config.headers = { ...config.headers, 'Cache-Control': 'no-cache' }
-    }
-    const response = await client.get('/subscriptions', config)
+  // ── External search ───────────────────────────────────────────────────────
+
+  async searchExternal(params: {
+    source_type: string
+    keyword: string
+    session_id?: string
+    department_id?: string
+    grade?: string
+  }): Promise<{ results: SearchResult[] }> {
+    const query = new URLSearchParams({ source_type: params.source_type, keyword: params.keyword })
+    if (params.session_id) query.append('session_id', params.session_id)
+    if (params.department_id) query.append('department_id', params.department_id)
+    if (params.grade) query.append('grade', params.grade)
+    const response = await client.get<{ results: SearchResult[] }>(`/external/search?${query}`)
     return response.data
   },
 
-  async deleteSubscription(token: string, subToken: string): Promise<void> {
-    await client.delete(`/subscriptions/${subToken}`, authHeaders(token))
-  },
-
-  async refreshSubscription(token: string, subToken: string): Promise<Subscription> {
-    const response = await client.post(`/subscriptions/${subToken}/refresh`, null, { ...authHeaders(token), timeout: 120000 })
+  async getDepartments(): Promise<{ departments: DepartmentNode[] }> {
+    const response = await client.get<{ departments: DepartmentNode[] }>('/external/departments')
     return response.data
   },
+
+  // ── Public calendar view (no auth; uses the public /api/v2/calendar/ path) ─
+
+  /** GET /api/v2/calendar/:token/view.json — used by the /view page (FE-4). */
+  async getViewData(token: string): Promise<CalendarData> {
+    const response = await client.get<CalendarData>(
+      `/calendar/${encodeURIComponent(token)}/view.json`,
+    )
+    return response.data
+  },
+
+  // ── Health & config ───────────────────────────────────────────────────────
 
   async getHealth(): Promise<HealthStatus> {
-    const response = await client.get('/health')
+    const response = await client.get<HealthStatus>('/health')
     return response.data
   },
 
   async getConfig(): Promise<AppConfig> {
-    const response = await client.get('/config')
-    return response.data
-  },
-
-  async getCalendarData(subToken: string): Promise<CalendarData> {
-    const response = await client.get(`/subscriptions/${encodeURIComponent(subToken)}/data.json`)
-    return response.data
-  },
-
-  // Token rotation
-  async rotateTokenPrepare(token: string): Promise<RotateTokenPrepare> {
-    const response = await client.post('/users/me/rotate-token', null, authHeaders(token))
-    return response.data
-  },
-
-  async rotateTokenConfirm(token: string, newToken: string): Promise<RotateTokenConfirm> {
-    const response = await client.post('/users/me/rotate-token/confirm', { token: newToken }, authHeaders(token))
-    return response.data
-  },
-
-  async rotateSubscription(token: string, subToken: string): Promise<RotateSubscription> {
-    const response = await client.post(`/subscriptions/${subToken}/rotate`, null, authHeaders(token))
-    return response.data
-  },
-
-  async rotateAllSubscriptions(token: string): Promise<RotateAllSubscriptions> {
-    const response = await client.post('/subscriptions/rotate-all', null, authHeaders(token))
+    const response = await client.get<AppConfig>('/config')
     return response.data
   },
 }

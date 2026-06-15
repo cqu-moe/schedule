@@ -12,9 +12,13 @@
           自动同步课表到你的日历应用，随时随地查看课程安排
         </p>
         <div class="mt-8">
-          <router-link :to="ctaLink">
+          <!-- Authenticated: internal router link. Not authenticated: external auth link. -->
+          <router-link v-if="session.isAuthenticated" to="/dashboard">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
+          <a v-else :href="loginHref" class="inline-block">
+            <Button size="lg" class="cursor-pointer">开始使用</Button>
+          </a>
         </div>
       </div>
     </section>
@@ -36,7 +40,7 @@
           <div class="text-center">
             <Lock class="h-8 w-8 text-muted-foreground mb-3 mx-auto" />
             <h3 class="font-heading font-semibold text-lg">安全加密</h3>
-            <p class="text-sm text-muted-foreground mt-1">密码加密存储，Token 认证访问</p>
+            <p class="text-sm text-muted-foreground mt-1">通过 CQU 统一身份认证登录，链接令牌控制访问</p>
           </div>
         </div>
       </div>
@@ -56,13 +60,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
-import { useAuthStore } from '@/stores/auth'
+import { useSession } from '@/stores/session'
+import { authLoginUrl } from '@/config/auth'
 
-const authStore = useAuthStore()
-const ctaLink = computed(() => authStore.isAuthenticated ? '/dashboard' : '/register')
+const session = useSession()
+const route = useRoute()
+const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
 
 const appVersion = __APP_VERSION__
 </script>

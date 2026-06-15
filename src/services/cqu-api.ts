@@ -1,4 +1,4 @@
-import type { ExploreSourceType } from "../db/schema";
+import type { ExternalSourceType } from "../db/schema";
 import { CHINA_TZ_OFFSET_MS, formatChinaIso } from "../utils/time";
 
 // CQU API endpoints
@@ -27,7 +27,7 @@ const ADMIN_CLASS_SEARCH_URL =
 const DEPARTMENT_LIST_URL =
   "https://my.cqu.edu.cn/api/resourceapi/department/list";
 
-const TABLE_DETAIL_URLS: Record<ExploreSourceType, string> = {
+const TABLE_DETAIL_URLS: Record<ExternalSourceType, string> = {
   instructor:
     "https://my.cqu.edu.cn/api/timetable/class/timetable/instructor/table-detail?sessionId={}",
   room: "https://my.cqu.edu.cn/api/timetable/class/timetable/room/table-detail?sessionId={}",
@@ -208,11 +208,58 @@ interface DepartmentRawItem {
   subDepartmentVOList?: DepartmentRawItem[];
 }
 
+/**
+ * Decode the `user_name` claim (= the CQU 学号/student ID) from a CQU OAuth JWT
+ * bearer token without verifying the signature.
+ *
+ * The CQU教务 access_token is a JWT whose payload carries `"user_name": "<学号>"`
+ * (reverse-engineered: `cqu-api-endpoint-collection/systems/jwxt/notes.md`). This
+ * claim is the authenticated subject of the bearer, so it is the trustworthy
+ * "current logged-in user's own student ID" — it cannot be spoofed by a client.
+ *
+ * Returns `null` when the token is not a well-formed JWT or has no `user_name`.
+ * The bearer itself is sensitive and is NEVER logged here.
+ */
+export function decodeStudentIdFromBearer(bearer: string): string | null {
+  const parts = bearer.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    // base64url → base64, then atob → JSON payload.
+    const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(payloadB64);
+    const payload = JSON.parse(json) as { user_name?: unknown };
+    const userName = payload.user_name;
+    if (typeof userName === "string" && userName.length > 0) {
+      return userName;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export class CQUAPIClient {
   private accessToken: string;
 
   constructor(accessToken: string) {
     this.accessToken = accessToken;
+  }
+
+  /**
+   * Resolve the student ID of the bearer's own authenticated subject.
+   *
+   * Decodes the `user_name` claim of the bearer JWT (see
+   * {@link decodeStudentIdFromBearer}). This is request-free and tamper-proof:
+   * the value is bound to the bearer, never to client-supplied input.
+   *
+   * @throws {CQUAPIError} when the bearer carries no usable student ID.
+   */
+  getOwnStudentId(): string {
+    const studentId = decodeStudentIdFromBearer(this.accessToken);
+    if (!studentId) {
+      throw new CQUAPIError("无法从 bearer 解析学号", 401);
+    }
+    return studentId;
   }
 
   private async request<T = unknown>(
@@ -557,7 +604,7 @@ export class CQUAPIClient {
   }
 
   async fetchTargetSchedule(
-    sourceType: ExploreSourceType,
+    sourceType: ExternalSourceType,
     sourceId: string,
     sessionId: string,
   ): Promise<CourseEntry[]> {

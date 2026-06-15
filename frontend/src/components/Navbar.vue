@@ -9,8 +9,8 @@
 
         <!-- Nav Links + Theme Toggle -->
         <nav class="flex items-center gap-4 sm:gap-6">
-          <!-- Authenticated: Dashboard + Add + Logout -->
-          <template v-if="authStore.isAuthenticated">
+          <!-- Authenticated: Dashboard + Add + Account/Logout (via auth.cqu.moe) -->
+          <template v-if="session.isAuthenticated">
             <router-link
               to="/dashboard"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
@@ -23,28 +23,26 @@
             >
               添加新订阅
             </router-link>
-            <button
-              @click="handleLogout"
+            <!-- Link to auth.cqu.moe for account management and logout -->
+            <a
+              :href="AUTH_BASE_URL"
+              target="_blank"
+              rel="noopener noreferrer"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              :title="session.user?.name || session.user?.email || '账户'"
             >
-              退出登录
-            </button>
+              账户
+            </a>
           </template>
 
-          <!-- Not authenticated: Register + Login -->
+          <!-- Not authenticated: prompt via auth.cqu.moe -->
           <template v-else>
-            <router-link
-              to="/register"
-              class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              注册
-            </router-link>
-            <router-link
-              to="/login"
+            <a
+              :href="loginHref"
               class="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               登录
-            </router-link>
+            </a>
           </template>
 
           <!-- API Docs Link (always visible) -->
@@ -74,21 +72,19 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useColorMode } from '@vueuse/core'
-import { useRouter } from 'vue-router'
 import { Monitor, Sun, Moon } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
-import { useAuthStore } from '@/stores/auth'
+import { useSession } from '@/stores/session'
+import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
 
-const router = useRouter()
-const authStore = useAuthStore()
+const session = useSession()
+const route = useRoute()
+const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
 const colorMode = useColorMode()
 const storedMode = colorMode.store
-
-function handleLogout(): void {
-  authStore.logout()
-  router.push('/')
-}
 
 function cycleTheme(): void {
   const modes: Array<'auto' | 'light' | 'dark'> = ['auto', 'light', 'dark']

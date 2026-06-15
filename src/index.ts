@@ -2,17 +2,40 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./types";
 import configRoutes from "./routes/config";
-import userRoutes from "./routes/users";
-import subscriptionRoutes from "./routes/subscriptions";
-import exploreRoutes from "./routes/explore";
 import adminRoutes from "./routes/admin";
-import { enqueueTokenRefresh, processTokenRefreshBatch, type TokenRefreshMessage } from "./cron/token-refresh";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
+import { rateLimit } from "./middleware/rate-limit";
 import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
+import { createMockAuth } from "./services/auth-mock";
+import { sessionMiddleware } from "./middleware/session";
+import meV2 from "./routes/v2/me";
+import subscriptionsV2 from "./routes/v2/subscriptions";
+import externalV2 from "./routes/v2/external";
+import calendarV2 from "./routes/v2/calendar";
 
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
+
+// Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
+// 生产环境 binding 必然存在；若缺失则属配置错误，必须 fail-closed 返回 500，
+// 绝不能把 mock 当成真用户放行（否则等于认证绕过：所有请求都成了固定 dev 用户）。
+app.use("*", async (c, next) => {
+  if (!c.env.AUTH) {
+    const hostname = new URL(c.req.url).hostname;
+    const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+    if (!isLocal) {
+      console.error(JSON.stringify({
+        event: "auth.binding_missing",
+        hostname,
+        message: "AUTH service binding missing on a non-local host; failing closed",
+      }));
+      return errorResponse("INTERNAL_ERROR", "认证服务暂不可用", 500);
+    }
+    c.env.AUTH = createMockAuth();
+  }
+  await next();
+});
 
 // CORS: restrict to same-origin; allow local dev origins
 app.use(
@@ -31,17 +54,44 @@ app.use(
       }
       return "";
     },
-    allowHeaders: ["Authorization", "Content-Type", "X-Captcha-Token"],
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type"],
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
-// Mount routes
-app.route("/api/v1", configRoutes);
-app.route("/api/v1/users", userRoutes);
-app.route("/api/v1/subscriptions", subscriptionRoutes);
-app.route("/api/v1", exploreRoutes);
-app.route("/api/v1/admin", adminRoutes);
+// Mount routes (v2 topology①: everything lives under /api/v2; /api/v1 is gone).
+// config (health + config) and admin keep their own auth: config is public,
+// admin uses its own ADMIN_SECRET bearer middleware (NOT sessionMiddleware).
+app.route("/api/v2", configRoutes);
+app.route("/api/v2/admin", adminRoutes);
+
+// v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
+// the AUTH service binding before exposing the current user's subscriptions.
+// AUTH_LIMITER (per-IP) runs BEFORE sessionMiddleware so rate-limited requests
+// never spend an AUTH RPC / KV / D1 / queue round-trip. External routes keep
+// their stricter per-route EXTERNAL_LIMITER instead.
+app.use("/api/v2/me", rateLimit("AUTH_LIMITER"), sessionMiddleware);
+app.route("/api/v2/me", meV2);
+
+app.use("/api/v2/subscriptions/*", rateLimit("AUTH_LIMITER"), sessionMiddleware);
+app.use("/api/v2/subscriptions", rateLimit("AUTH_LIMITER"), sessionMiddleware);
+app.route("/api/v2/subscriptions", subscriptionsV2);
+
+// EXTERNAL_LIMITER runs BEFORE sessionMiddleware so flood traffic is rejected
+// without spending an AUTH.verifySession RPC / caps KV write (stricter than
+// AUTH_LIMITER; the external routes hit CQU directly). Owned by the mount here —
+// the external sub-app no longer carries its own per-route limiter.
+app.use("/api/v2/external/*", rateLimit("EXTERNAL_LIMITER"), sessionMiddleware);
+app.use("/api/v2/external", rateLimit("EXTERNAL_LIMITER"), sessionMiddleware);
+app.route("/api/v2/external", externalV2);
+
+// v2 public calendar endpoints: addressed by link token, no login required, so
+// NOT guarded by sessionMiddleware. Access control is the per-link format gate.
+app.route("/api/v2/calendar", calendarV2);
+
+// v1 is fully retired (拓扑① rebuild). Any stale frontend hitting /api/v1/* gets
+// a 410 telling it to refresh. Defined after v2 mounts so it never shadows them.
+app.all("/api/v1/*", (c) => errorResponse("GONE", "接口已升级，请刷新页面", 410));
 
 // Global error handler
 app.onError((err, c) => {
@@ -57,6 +107,9 @@ export default {
       response = await app.fetch(request, env, ctx);
       response.headers.set("X-Robots-Tag", "noindex, nofollow");
     } else {
+      // Non-/api/ paths (including SPA routes like /view/:token) are served by
+      // ASSETS; wrangler's not_found_handling: "single-page-application" returns
+      // index.html for client-side routes. No server-side special-casing needed.
       response = await env.ASSETS.fetch(request);
       try {
         response = rewriteHtmlMeta(response, url.pathname);
@@ -78,9 +131,6 @@ export default {
   ): Promise<void> {
     switch (controller.cron) {
       case "0 * * * *":
-        await enqueueTokenRefresh(env);
-        break;
-      case "0 17 * * *":
         await enqueueScheduleSync(env);
         break;
       default:
@@ -93,9 +143,6 @@ export default {
     _ctx: ExecutionContext,
   ): Promise<void> {
     switch (batch.queue) {
-      case "schedule-token-refresh":
-        await processTokenRefreshBatch(batch as MessageBatch<TokenRefreshMessage>, env);
-        break;
       case "schedule-sync":
         await processScheduleSyncBatch(batch as MessageBatch<ScheduleSyncMessage>, env);
         break;

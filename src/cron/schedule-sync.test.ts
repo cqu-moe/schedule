@@ -1,221 +1,678 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
-import { users } from "../db/schema";
-import { encrypt } from "../services/crypto";
-import { enqueueScheduleSync } from "./schedule-sync";
+import { eq } from "drizzle-orm";
+import { subscriptions } from "../db/schema";
+import {
+  enqueueScheduleSync,
+  processScheduleSyncBatch,
+  type ScheduleSyncMessage,
+} from "./schedule-sync";
+import * as bearerModule from "../services/cqu-bearer";
+import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
 import type { Env } from "../types";
 
-// Test encryption key: 32 bytes base64-encoded
-const TEST_KEY = btoa(
-  String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))),
-);
+const db = drizzle(env.DB);
 
-/** Insert a test user into D1 with the given accessToken */
-async function insertUser(
-  db: ReturnType<typeof drizzle>,
-  opts: {
-    studentId: string;
-    accessToken: string | null;
-  },
+/** Build a fake CQU bearer JWT carrying the given `user_name` (学号) claim. */
+function fakeBearer(userName: string): string {
+  const b64url = (obj: unknown) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b64url({ alg: "none" })}.${b64url({ user_name: userName })}.sig`;
+}
+
+// ── DB setup (real D1 from cloudflare:test) ──────────────────────────────────
+
+beforeAll(async () => {
+  await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
+  await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
+  await env.DB.prepare(
+    `CREATE TABLE subscriptions (
+      id text PRIMARY KEY NOT NULL,
+      user_id text NOT NULL,
+      source_type text NOT NULL,
+      source_id text NOT NULL,
+      source_name text NOT NULL,
+      session_id text,
+      session_name text,
+      semester_start text,
+      is_personal integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
+      ics_content text,
+      courses_json text,
+      exams_json text,
+      last_synced_at text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    )`,
+  ).run();
+});
+
+/** Full calendar caps (everything granted) for the default test user. */
+const FULL_CAPS = {
+  sync: true, external: true, share: true,
+  sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
+};
+
+beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM subscriptions").run();
+  // Clear any cached student IDs so each test resolves from its own bearer.
+  await env.CACHE.delete("student:user-1");
+  await env.CACHE.delete("student:user-attacker");
+  // Entitlement now fails closed on missing caps, so give the default user-1 a
+  // full caps entry. Tests for revocation/cap-miss use their own user ids/caps.
+  await env.CACHE.put("caps:user-1", JSON.stringify(FULL_CAPS));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** Insert a subscription fixture directly into D1. */
+async function insertSub(
+  overrides: Partial<typeof subscriptions.$inferInsert> = {},
 ): Promise<string> {
   const id = crypto.randomUUID();
-  const encryptedPassword = await encrypt("test-password", TEST_KEY);
-  const calendarToken = crypto.randomUUID() + crypto.randomUUID();
   const now = new Date().toISOString();
-
-  await db.insert(users).values({
+  await db.insert(subscriptions).values({
     id,
-    studentId: opts.studentId,
-    encryptedPassword,
-    accessToken: opts.accessToken,
-    refreshToken: opts.accessToken ? "test-refresh-token" : null,
-    tokenExpiresAt: opts.accessToken ? new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() : null,
-    calendarToken,
+    userId: "user-1",
+    sourceType: "personal_all",
+    sourceId: "20210001",
+    sourceName: "我的课表",
     createdAt: now,
     updatedAt: now,
+    ...overrides,
   });
-
   return id;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Producer: enqueueScheduleSync (due-subscription selection by sync_interval)
+// ════════════════════════════════════════════════════════════════════════════
+
 describe("enqueueScheduleSync (producer)", () => {
-  const db = drizzle(env.DB);
-
-  beforeAll(async () => {
-    // Create the users table in the ephemeral D1 test database
-    await env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS users (
-        id text PRIMARY KEY NOT NULL,
-        student_id text NOT NULL,
-        encrypted_password text NOT NULL,
-        access_token text,
-        refresh_token text,
-        token_expires_at text,
-        calendar_token text NOT NULL,
-        pending_calendar_token text,
-        pending_token_expires_at text,
-        last_login_at text,
-        last_refresh_at text,
-        login_error text,
-        created_at text NOT NULL,
-        updated_at text NOT NULL
-      )`,
-    ).run();
-    await env.DB.prepare(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_student_id_unique ON users (student_id)`,
-    ).run();
-    await env.DB.prepare(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_unique ON users (calendar_token)`,
-    ).run();
-    await env.DB.prepare(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_pending_calendar_token_unique ON users (pending_calendar_token)`,
-    ).run();
-  });
-
-  beforeEach(async () => {
-    // Clean users table before each test
-    await env.DB.prepare("DELETE FROM users").run();
-  });
-
-  it("should not call sendBatch when no users exist", async () => {
+  it("does not call sendBatch when there are no subscriptions", async () => {
     const sendBatch = vi.fn();
-    const testEnv = {
-      ...env,
-      ENCRYPTION_KEY: TEST_KEY,
-      SCHEDULE_SYNC_QUEUE: { sendBatch },
-    } as unknown as Env;
-
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
     await enqueueScheduleSync(testEnv);
-
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
-  it("should enqueue users with access tokens", async () => {
-    const userId = await insertUser(db, {
-      studentId: "20210001",
-      accessToken: "valid-token",
-    });
-
+  it("enqueues never-synced subscriptions (lastSyncedAt null)", async () => {
+    const sid = await insertSub({ lastSyncedAt: null });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = {
-      ...env,
-      ENCRYPTION_KEY: TEST_KEY,
-      SCHEDULE_SYNC_QUEUE: { sendBatch },
-    } as unknown as Env;
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
 
     expect(sendBatch).toHaveBeenCalledOnce();
-    const batch = sendBatch.mock.calls[0][0];
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     expect(batch).toHaveLength(1);
-    expect(batch[0].body).toEqual({
-      userId,
-      studentId: "20210001",
-    });
-    expect(batch[0].delaySeconds).toBe(0);
+    // Cron-produced messages carry trigger:"cron" so the consumer can re-check
+    // due-ness and drop the duplicates that the hourly+spread producer enqueues.
+    expect(batch[0].body).toEqual({ subscriptionId: sid, userId: "user-1", trigger: "cron" });
   });
 
-  it("should not enqueue users with null access tokens", async () => {
-    await insertUser(db, {
-      studentId: "20210002",
-      accessToken: null,
-    });
+  it("skips subscriptions synced within the default interval (1440 min)", async () => {
+    // Synced 1 hour ago; default interval is 24h → not due.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await insertSub({ lastSyncedAt: recent });
 
     const sendBatch = vi.fn();
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it("enqueues subscriptions past the default interval", async () => {
+    // Synced 2 days ago → past default 24h interval → due.
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ lastSyncedAt: old });
+
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
+
+  it("uses the per-user sync_interval from caps KV (short interval → due)", async () => {
+    // Synced 2 hours ago. With a 60-min cap interval this is due.
+    const synced = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ userId: "user-fast", lastSyncedAt: synced });
+    await env.CACHE.put(
+      "caps:user-fast",
+      JSON.stringify({
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 60, manual_refresh: 20,
+      }),
+    );
+
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-fast");
+
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
+
+  it("refreshes caps via AUTH.getCaps on a KV miss (honors a short interval offline)", async () => {
+    // Synced 2h ago with NO caps:<user> in KV (1h session TTL expired). Without
+    // a refresh the producer would fall back to the 24h default and skip; with
+    // getCaps it sees the 60-min interval and enqueues.
+    const synced = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ userId: "user-cap-miss", lastSyncedAt: synced });
+    await env.CACHE.delete("caps:user-cap-miss");
+
+    const getCaps = vi.fn().mockResolvedValue({
+      calendar: {
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 60, manual_refresh: 20,
+      },
+    });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     const testEnv = {
       ...env,
-      ENCRYPTION_KEY: TEST_KEY,
       SCHEDULE_SYNC_QUEUE: { sendBatch },
+      AUTH: { getCaps },
+      CALENDAR_CLIENT_ID: "test-client-id",
+      CALENDAR_CLIENT_SECRET: "test-secret",
     } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-cap-miss");
+
+    // getCaps is authenticated like getCquTicket — must pass {clientId, clientSecret, userId}.
+    expect(getCaps).toHaveBeenCalledWith({
+      clientId: "test-client-id",
+      clientSecret: "test-secret",
+      userId: "user-cap-miss",
+    });
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((m) => m.body.subscriptionId)).toContain(sid);
+  });
+
+  it("reconciles is_active → false when the cap is revoked", async () => {
+    const sid = await insertSub({ userId: "user-rev2", isActive: true, lastSyncedAt: null });
+    await env.CACHE.put(
+      "caps:user-rev2",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+    await env.CACHE.delete("caps:user-rev2");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(false);
+  });
+
+  it("reconciles is_active → true when the cap is restored", async () => {
+    const sid = await insertSub({
+      userId: "user-grant",
+      isActive: false,
+      lastSyncedAt: new Date().toISOString(),
+    });
+    await env.CACHE.put(
+      "caps:user-grant",
+      JSON.stringify({
+        sync: true, external: true, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+    await env.CACHE.delete("caps:user-grant");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
+  it("fails closed: does NOT enqueue when caps are unresolvable (null)", async () => {
+    // No caps KV and the test AUTH stub has no getCaps → readCaps returns null →
+    // entitlement fails closed → due sub is not enqueued.
+    await insertSub({ userId: "user-nocaps", lastSyncedAt: null });
+    await env.CACHE.delete("caps:user-nocaps");
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
 
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
-  it("should enqueue only users with access tokens in a mixed set", async () => {
-    // User A: has access token (should be enqueued)
-    const activeId = await insertUser(db, {
-      studentId: "20210003",
-      accessToken: "valid-token-a",
-    });
-
-    // User B: null access token (should NOT be enqueued)
-    await insertUser(db, {
-      studentId: "20210004",
-      accessToken: null,
-    });
-
-    // User C: has access token (should be enqueued)
-    const activeId2 = await insertUser(db, {
-      studentId: "20210005",
-      accessToken: "valid-token-c",
-    });
-
+  it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {
+    await insertSub({ userId: "user-revoked", lastSyncedAt: null }); // due, but downgraded
+    await env.CACHE.put(
+      "caps:user-revoked",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = {
-      ...env,
-      ENCRYPTION_KEY: TEST_KEY,
-      SCHEDULE_SYNC_QUEUE: { sendBatch },
-    } as unknown as Env;
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-revoked");
 
-    expect(sendBatch).toHaveBeenCalledOnce();
-    const batch = sendBatch.mock.calls[0][0];
-    expect(batch).toHaveLength(2);
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+});
 
-    const userIds = batch.map(
-      (m: { body: { userId: string } }) => m.body.userId,
-    );
-    expect(userIds).toContain(activeId);
-    expect(userIds).toContain(activeId2);
+// ════════════════════════════════════════════════════════════════════════════
+//  Consumer: processScheduleSyncBatch
+// ════════════════════════════════════════════════════════════════════════════
 
-    const studentIds = batch.map(
-      (m: { body: { studentId: string } }) => m.body.studentId,
-    );
-    expect(studentIds).not.toContain("20210004");
+/** Build a fake MessageBatch over the given messages with ack/retry spies. */
+function makeBatch(bodies: ScheduleSyncMessage[]) {
+  const messages = bodies.map((body) => ({
+    body,
+    ack: vi.fn(),
+    retry: vi.fn(),
+  }));
+  return { batch: { queue: "schedule-sync", messages } as unknown as MessageBatch<ScheduleSyncMessage>, messages };
+}
+
+describe("processScheduleSyncBatch (consumer)", () => {
+  it("syncs a personal subscription using the bearer's own 学号, not the stored sourceId", async () => {
+    // The stored sourceId is the trusted auth user.id (NOT a 学号). The personal
+    // schedule must be fetched against the bearer subject's own 学号.
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    await env.CACHE.delete("sync:personal:20210001");
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi
+      .spyOn(CQUAPIClient.prototype, "getSchedule")
+      .mockResolvedValue([]);
+    vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // Fetched the bearer's own 学号 (20210001), not the stored sourceId (user-1).
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).not.toBeNull();
+    expect(row.coursesJson).toBe("[]");
+    expect(row.icsContent).toContain("BEGIN:VCALENDAR");
   });
 
-  it("should enqueue multiple active users in a single batch", async () => {
-    const id1 = await insertUser(db, {
-      studentId: "20210010",
-      accessToken: "token-1",
+  it("SECURITY: ignores a crafted/other-student sourceId; fetches only the bearer subject's schedule", async () => {
+    // An attacker stored another student's 学号 (20219999) as sourceId hoping the
+    // sync would leak that student's private schedule via the public link. The
+    // sync must instead resolve the bearer's OWN 学号 (20210001) and never touch
+    // the stored sourceId.
+    const sid = await insertSub({
+      sourceType: "personal_all",
+      sourceId: "20219999", // forged: someone else's 学号
     });
-    const id2 = await insertUser(db, {
-      studentId: "20210011",
-      accessToken: "token-2",
+    await env.CACHE.delete("sync:personal:20210001");
+    await env.CACHE.delete("sync:personal:20219999");
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
     });
-    const id3 = await insertUser(db, {
-      studentId: "20210012",
-      accessToken: "token-3",
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi
+      .spyOn(CQUAPIClient.prototype, "getSchedule")
+      .mockResolvedValue([]);
+    vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Only the bearer's own 学号 was queried — the forged sourceId was ignored.
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
+    expect(getSchedule).not.toHaveBeenCalledWith("20219999", "sess-1");
+  });
+
+  it("skips and acks (no retry) a personal sub when the bearer has no 学号", async () => {
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    // Opaque (non-JWT) bearer → no resolvable 学号.
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("opaque-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBeNull();
+  });
+
+  it("syncs an external subscription via fetchTargetSchedule", async () => {
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-42",
+      isPersonal: false,
     });
 
-    const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = {
-      ...env,
-      ENCRYPTION_KEY: TEST_KEY,
-      SCHEDULE_SYNC_QUEUE: { sendBatch },
-    } as unknown as Env;
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const fetchTarget = vi
+      .spyOn(CQUAPIClient.prototype, "fetchTargetSchedule")
+      .mockResolvedValue([]);
 
-    await enqueueScheduleSync(testEnv);
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
 
-    expect(sendBatch).toHaveBeenCalledOnce();
-    const batch = sendBatch.mock.calls[0][0];
-    expect(batch).toHaveLength(3);
+    expect(fetchTarget).toHaveBeenCalledWith("instructor", "T-42", "sess-1");
+    expect(messages[0].ack).toHaveBeenCalled();
 
-    const userIds = batch.map(
-      (m: { body: { userId: string } }) => m.body.userId,
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).not.toBeNull();
+  });
+
+  it("external sub with an explicit non-current session syncs THAT session and keeps it", async () => {
+    // Created for a past semester (sess-old), not the current one (sess-1). The
+    // consumer must fetch sess-old's schedule and preserve sess-old on the row,
+    // not silently switch the subscription to the current semester.
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-42",
+      isPersonal: false,
+      sessionId: "sess-old",
+      sessionName: "2023春",
+    });
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockImplementation(
+      async (id: string) => ({
+        id,
+        name: id === "sess-old" ? "2023春" : "2024秋",
+        begin_date: id === "sess-old" ? "2023-02-20" : "2024-09-01",
+        end_date: id === "sess-old" ? "2023-07-01" : "2025-01-15",
+      }),
     );
-    expect(userIds).toContain(id1);
-    expect(userIds).toContain(id2);
-    expect(userIds).toContain(id3);
+    const fetchTarget = vi
+      .spyOn(CQUAPIClient.prototype, "fetchTargetSchedule")
+      .mockResolvedValue([]);
 
-    // Verify delaySeconds is set with increasing intervals
-    // Interval = floor(21600 / 3) = 7200, clamped by max(10, ...)
-    expect(batch[0].delaySeconds).toBe(0);
-    expect(batch[1].delaySeconds).toBe(7200);
-    expect(batch[2].delaySeconds).toBe(14400);
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Fetched the requested session, NOT the current one.
+    expect(fetchTarget).toHaveBeenCalledWith("instructor", "T-42", "sess-old");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.sessionId).toBe("sess-old"); // preserved, not overwritten to sess-1
+  });
+
+  it("entitlement gate: acks without syncing when the sync cap is revoked", async () => {
+    const sid = await insertSub({ userId: "user-revoked", sourceType: "personal_all", sourceId: "user-revoked" });
+    await env.CACHE.put(
+      "caps:user-revoked",
+      JSON.stringify({
+        sync: false, external: false, share: false,
+        sub_limit: 0, share_limit: 0, sync_interval: 1440, manual_refresh: 0,
+      }),
+    );
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-revoked", trigger: "manual" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+    await env.CACHE.delete("caps:user-revoked");
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // Gated before any upstream work — even a manual trigger is blocked.
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBeNull();
+    // Revocation flips it inactive immediately (don't wait for the producer cron).
+    expect(row.isActive).toBe(false);
+  });
+
+  it("external sub WITHOUT a pinned session stays unpinned after sync (follows current next term)", async () => {
+    // sessionId null = "follow current". Syncing must NOT persist the current
+    // session id as a pin, or the sub would freeze on this term forever.
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-7",
+      isPersonal: false,
+      sessionId: null,
+    });
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    vi.spyOn(CQUAPIClient.prototype, "fetchTargetSchedule").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.sessionId).toBeNull(); // still unpinned, not frozen to sess-1
+    expect(row.sessionName).toBe("2024秋"); // display still reflects the synced term
+  });
+
+  it("fails closed on unresolved caps: skips sync but keeps is_active (no link flap)", async () => {
+    const sid = await insertSub({
+      userId: "user-nocaps",
+      sourceType: "personal_all",
+      sourceId: "user-nocaps",
+      isActive: true,
+    });
+    await env.CACHE.delete("caps:user-nocaps"); // null caps (no getCaps)
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-nocaps", trigger: "cron" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    // Failed closed before any upstream work...
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+    // ...but is_active is NOT flipped on a transient null (only on confirmed revoke).
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
+  it("skips and acks (does not retry) when getCquBearer returns null", async () => {
+    const sid = await insertSub();
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(null);
+    const getScheduleSpy = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(getScheduleSpy).not.toHaveBeenCalled();
+
+    // Row untouched: never synced.
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBeNull();
+  });
+
+  it("acks (no retry) when the subscription no longer exists", async () => {
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const { batch, messages } = makeBatch([
+      { subscriptionId: "gone", userId: "user-1" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the cached bearer and retries on a CQU 401", async () => {
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub();
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const invalidate = vi
+      .spyOn(bearerModule, "invalidateCquBearer")
+      .mockResolvedValue();
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockRejectedValue(
+      new CQUAPIError("Access Token 无效或已过期", 401),
+    );
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(invalidate).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(messages[0].retry).toHaveBeenCalled();
+    expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it("retries when the CQU fetch throws", async () => {
+    const sid = await insertSub();
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockRejectedValue(
+      new Error("upstream 500"),
+    );
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].retry).toHaveBeenCalled();
+    expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  // ── Cron idempotency guard (duplicate-enqueue protection) ──────────────────
+  //  The hourly producer spreads each due batch over 6h, so intervening cron
+  //  runs re-enqueue subscriptions whose delayed message has not executed. The
+  //  consumer re-checks due-ness for cron messages so duplicates no-op; manual
+  //  refreshes bypass the check and always sync.
+
+  it("cron message: skips and acks a subscription that is not yet due (no resync)", async () => {
+    // Synced 1h ago; default interval is 24h → not due. A cron duplicate must
+    // no-op rather than re-fetch upstream.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ lastSyncedAt: recent });
+    const getBearer = vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule");
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", trigger: "cron" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // Re-check happens before any upstream work — bearer is never even fetched.
+    expect(getBearer).not.toHaveBeenCalled();
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).toBe(recent); // untouched
+  });
+
+  it("manual message: syncs even when the subscription is not yet due", async () => {
+    // Same not-due row, but a manual refresh must always run.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1", lastSyncedAt: recent });
+    await env.CACHE.delete("sync:personal:20210001");
+
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue(fakeBearer("20210001"));
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockResolvedValue({
+      current_session_id: "sess-1",
+      sessions: {},
+    });
+    vi.spyOn(CQUAPIClient.prototype, "getSemesterInfo").mockResolvedValue({
+      id: "sess-1",
+      name: "2024秋",
+      begin_date: "2024-09-01",
+      end_date: "2025-01-15",
+    });
+    const getSchedule = vi.spyOn(CQUAPIClient.prototype, "getSchedule").mockResolvedValue([]);
+    vi.spyOn(CQUAPIClient.prototype, "getExams").mockResolvedValue([]);
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", trigger: "manual" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(getSchedule).toHaveBeenCalledWith("20210001", "sess-1");
+
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.lastSyncedAt).not.toBe(recent); // re-synced
   });
 });

@@ -29,10 +29,15 @@ describe("addSecurityHeaders", () => {
     const result = addSecurityHeaders(new Response(""));
     const csp = result.headers.get("Content-Security-Policy")!;
 
-    // hCaptcha
-    expect(csp).toContain("https://*.hcaptcha.com");
-    expect(csp).toContain("https://hcaptcha.com");
     // Cloudflare Analytics
     expect(csp).toContain("https://static.cloudflareinsights.com");
+    expect(csp).toContain("https://cloudflareinsights.com");
+    // font data: URLs (FullCalendar fcicons)
+    expect(csp).toContain("font-src 'self' data:");
+  });
+
+  it("CSP no longer references hCaptcha (captcha removed in v2)", () => {
+    const csp = addSecurityHeaders(new Response("")).headers.get("Content-Security-Policy")!;
+    expect(csp).not.toContain("hcaptcha");
   });
 });

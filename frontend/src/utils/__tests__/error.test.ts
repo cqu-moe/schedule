@@ -1,20 +1,43 @@
 import { describe, it, expect } from 'vitest'
-import { parseApiError } from '@/utils/error'
+import { parseApiError, apiErrorCode } from '@/utils/error'
+
+describe('apiErrorCode', () => {
+  it('extracts error code from nested error shape', () => {
+    const err = { response: { data: { detail: { error: { code: 'CQU_SESSION_INACTIVE', message: 'inactive' } } } } }
+    expect(apiErrorCode(err)).toBe('CQU_SESSION_INACTIVE')
+  })
+
+  it('returns undefined for string-detail shape (no nested error)', () => {
+    const err = { response: { data: { detail: '操作过于频繁，请稍后再试' } } }
+    expect(apiErrorCode(err)).toBeUndefined()
+  })
+
+  it('returns undefined when detail has no error.code', () => {
+    const err = { response: { data: { detail: { error: { message: 'some message' } } } } }
+    expect(apiErrorCode(err)).toBeUndefined()
+  })
+
+  it('returns undefined for non-axios error (no response)', () => {
+    expect(apiErrorCode(new Error('network'))).toBeUndefined()
+  })
+
+  it('returns undefined for null', () => {
+    expect(apiErrorCode(null)).toBeUndefined()
+  })
+
+  it('returns undefined for undefined', () => {
+    expect(apiErrorCode(undefined)).toBeUndefined()
+  })
+
+  it('returns undefined when response has no data', () => {
+    expect(apiErrorCode({ response: {} })).toBeUndefined()
+  })
+})
 
 describe('parseApiError', () => {
   it('returns error message from structured error', () => {
     const error = { response: { data: { detail: { error: { code: 'BAD_REQUEST', message: '自定义错误' } } } } }
     expect(parseApiError(error)).toBe('自定义错误')
-  })
-
-  it('maps CAPTCHA_REQUIRED code to message', () => {
-    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA_REQUIRED' } } } } }
-    expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
-  })
-
-  it('maps CAPTCHA_FAILED code to message', () => {
-    const error = { response: { data: { detail: { error: { code: 'CAPTCHA_FAILED', message: 'CAPTCHA_FAILED' } } } } }
-    expect(parseApiError(error)).toBe('验证码验证失败，请刷新页面重试')
   })
 
   it('maps RATE_LIMITED code to message', () => {

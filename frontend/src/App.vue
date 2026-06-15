@@ -14,14 +14,22 @@ import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Sonner as Toaster } from '@/components/ui/sonner'
 import { useConfigStore } from '@/stores/config'
+import { useSession } from '@/stores/session'
 
 // Initialize color mode (auto/light/dark), persists to localStorage
 useColorMode({ attribute: 'class', modes: { dark: 'dark', light: '' } })
 
-// Load backend config (public_url etc.) once on app startup
+// Load backend config (public_url) and session (user/caps) once on app startup.
+// getMe uses suppressAuthRedirect so 401 (unauthenticated visitors) is silently
+// swallowed here — public routes remain accessible. Protected pages trigger their
+// own authenticated API calls whose 401s still redirect via the interceptor.
 const configStore = useConfigStore()
+const session = useSession()
 onMounted(() => {
   configStore.load()
+  session.load().catch(() => {
+    // 401 → silently ignored (suppressAuthRedirect); non-401 errors are non-fatal.
+  })
 })
 </script>
 
