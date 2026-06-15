@@ -38,6 +38,8 @@ function buildApp(auth: AuthService) {
   app.get("/probe", (c) =>
     c.json({ user: c.get("user"), caps: c.get("caps") }),
   );
+  // No ExecutionContext is passed, so the middleware awaits the caps KV write
+  // (its non-fetch fallback) — it completes within the request, no storage leak.
   return {
     request(testEnv = { ...env, AUTH: auth }) {
       return app.request("/probe", { method: "GET" }, testEnv);

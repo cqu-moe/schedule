@@ -37,8 +37,10 @@ export async function sessionMiddleware(c: Context<SessionEnv>, next: Next) {
   c.set("user", sess.user);
   c.set("caps", sess.caps);
 
-  // Cache caps for offline (cron) reads; best-effort — never block the request.
-  await c.env.CACHE.put(
+  // Cache caps for offline (cron) reads; best-effort — must NOT block the request
+  // (this runs on every protected request, incl. dashboard polling). Schedule it
+  // with waitUntil so it finishes after the response without adding KV latency.
+  const cacheWrite = c.env.CACHE.put(
     `caps:${sess.user.id}`,
     JSON.stringify(sess.caps.calendar),
     { expirationTtl: CAPS_TTL },
@@ -48,6 +50,13 @@ export async function sessionMiddleware(c: Context<SessionEnv>, next: Next) {
     error: e instanceof Error ? e.message : String(e),
     message: "Failed to cache caps to KV",
   })));
+  try {
+    c.executionCtx.waitUntil(cacheWrite);
+  } catch {
+    // No ExecutionContext (unit tests / non-fetch path) — await so the write still
+    // completes within the request (and within the test's isolated-storage frame).
+    await cacheWrite;
+  }
 
   await next();
 }
