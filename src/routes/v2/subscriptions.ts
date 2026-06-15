@@ -378,6 +378,10 @@ app.post("/:sid/syncs", async (c) => {
   }
 
   // manual_refresh quota: null = unlimited, 0 = disabled, n = n/day.
+  // best-effort 软配额：KV read-then-write 存在 TOCTOU，并发/多地请求可能各自读到
+  // 低于上限就放行，导致轻微超额（与 sub_limit/share_limit 一致的软限制取舍）。
+  // 这是防滥用的软门槛，单次超额代价有限（多几次上游同步）；如需严格保证再换
+  // D1/Durable Object 原子计数。
   const limit = resolveQuota(caps.manual_refresh);
   const dayKey = chinaDateKey(new Date());
   const counterKey = `refresh:${user.id}:${dayKey}`;
