@@ -144,6 +144,46 @@ describe("AUTH binding fail-closed (security)", () => {
   });
 });
 
+describe("AUTH_LIMITER on authenticated v2 routes", () => {
+  /** A limiter binding that always reports the bucket as exhausted. */
+  function rejectingLimiter() {
+    return { limit: async () => ({ success: false }) };
+  }
+
+  it("rate-limits GET /api/v2/me when AUTH_LIMITER trips → 429", async () => {
+    const testEnv = { ...env, AUTH: fakeAuth("userA", FULL_CAPS), AUTH_LIMITER: rejectingLimiter() };
+    const res = await app.request(
+      "/api/v2/me",
+      { headers: { "CF-Connecting-IP": uniqueIp() } },
+      testEnv,
+    );
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("RATE_LIMITED");
+  });
+
+  it("rate-limits GET /api/v2/subscriptions when AUTH_LIMITER trips → 429", async () => {
+    const testEnv = { ...env, AUTH: fakeAuth("userA", FULL_CAPS), AUTH_LIMITER: rejectingLimiter() };
+    const res = await app.request(
+      "/api/v2/subscriptions",
+      { headers: { "CF-Connecting-IP": uniqueIp() } },
+      testEnv,
+    );
+    expect(res.status).toBe(429);
+  });
+
+  it("allows the request through when AUTH_LIMITER has capacity", async () => {
+    const passingLimiter = { limit: async () => ({ success: true }) };
+    const testEnv = { ...env, AUTH: fakeAuth("userA", FULL_CAPS), AUTH_LIMITER: passingLimiter };
+    const res = await app.request(
+      "/api/v2/me",
+      { headers: { "CF-Connecting-IP": uniqueIp() } },
+      testEnv,
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("CORS preflight", () => {
   it("OPTIONS to a link path with PATCH method → allows PATCH", async () => {
     const res = await request("/api/v2/subscriptions/x/links/y", fakeAuth("userA", FULL_CAPS), {

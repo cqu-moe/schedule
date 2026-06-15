@@ -5,6 +5,7 @@ import configRoutes from "./routes/config";
 import adminRoutes from "./routes/admin";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
+import { rateLimit } from "./middleware/rate-limit";
 import { rewriteHtmlMeta } from "./middleware/seo";
 import { errorResponse } from "./utils/error";
 import { createMockAuth } from "./services/auth-mock";
@@ -66,11 +67,14 @@ app.route("/api/v2/admin", adminRoutes);
 
 // v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
 // the AUTH service binding before exposing the current user's subscriptions.
-app.use("/api/v2/me", sessionMiddleware);
+// AUTH_LIMITER (per-IP) runs BEFORE sessionMiddleware so rate-limited requests
+// never spend an AUTH RPC / KV / D1 / queue round-trip. External routes keep
+// their stricter per-route EXTERNAL_LIMITER instead.
+app.use("/api/v2/me", rateLimit("AUTH_LIMITER"), sessionMiddleware);
 app.route("/api/v2/me", meV2);
 
-app.use("/api/v2/subscriptions/*", sessionMiddleware);
-app.use("/api/v2/subscriptions", sessionMiddleware);
+app.use("/api/v2/subscriptions/*", rateLimit("AUTH_LIMITER"), sessionMiddleware);
+app.use("/api/v2/subscriptions", rateLimit("AUTH_LIMITER"), sessionMiddleware);
 app.route("/api/v2/subscriptions", subscriptionsV2);
 
 app.use("/api/v2/external/*", sessionMiddleware);
