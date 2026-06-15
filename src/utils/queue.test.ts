@@ -59,6 +59,25 @@ describe("spreadEnqueue", () => {
     expect(messages[2].delaySeconds).toBe(3600);
   });
 
+  it("returns the number of successfully enqueued items", async () => {
+    const queue = createMockQueue();
+    const n = await spreadEnqueue(queue, [0, 1, 2], (item) => ({ body: item }), 3600);
+    expect(n).toBe(3);
+  });
+
+  it("throws SpreadEnqueueError carrying the partial count when a later batch fails", async () => {
+    const queue = {
+      sendBatch: vi
+        .fn()
+        .mockResolvedValueOnce(undefined) // first chunk (100) ok
+        .mockRejectedValueOnce(new Error("queue down")), // second chunk fails
+    } as any;
+    const items = Array.from({ length: 150 }, (_, i) => i); // 2 chunks: 100 + 50
+    await expect(
+      spreadEnqueue(queue, items, (item) => ({ body: item }), 3600),
+    ).rejects.toMatchObject({ name: "SpreadEnqueueError", enqueued: 100 });
+  });
+
   it("respects custom minInterval", async () => {
     const queue = createMockQueue();
     const items = [0, 1, 2];

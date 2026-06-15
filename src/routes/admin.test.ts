@@ -88,7 +88,20 @@ describe("POST /refresh-all enqueue", () => {
     const res = await post("/refresh-all", env, { Authorization: "Bearer test-secret" });
     expect(res.status).toBe(500);
     const body = (await res.json()) as any;
-    expect(body.enqueued).toBe(0);
-    expect(body.error).toContain("Failed to enqueue");
+    expect(body.enqueued).toBe(0); // first (only) batch failed → nothing enqueued
+    expect(body.error).toContain("Failed");
+  });
+
+  it("reports the partial count when a later batch fails (not 0)", async () => {
+    // 150 subs → 2 batches (100 + 50). First succeeds, second fails.
+    const subs = Array.from({ length: 150 }, (_, i) => ({ id: `s${i}`, user_id: `u${i}` }));
+    const env = mockEnv(subs);
+    env.SCHEDULE_SYNC_QUEUE.sendBatch
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Queue unavailable"));
+    const res = await post("/refresh-all", env, { Authorization: "Bearer test-secret" });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as any;
+    expect(body.enqueued).toBe(100); // first batch was queued — must NOT report 0
   });
 });

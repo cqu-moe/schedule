@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import type { Env } from "../types";
 import { subscriptions } from "../db/schema";
 import { errorResponse } from "../utils/error";
-import { spreadEnqueue } from "../utils/queue";
+import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import type { ScheduleSyncMessage } from "../cron/schedule-sync";
 
 /** Spread window (seconds) for the admin-triggered full refresh. */
@@ -40,8 +40,9 @@ app.post("/refresh-all", async (c) => {
     return c.json({ enqueued: 0 });
   }
 
+  let enqueued: number;
   try {
-    await spreadEnqueue(
+    enqueued = await spreadEnqueue(
       c.env.SCHEDULE_SYNC_QUEUE,
       subs,
       (s) => ({ body: { subscriptionId: s.id, userId: s.userId } satisfies ScheduleSyncMessage }),
@@ -49,17 +50,25 @@ app.post("/refresh-all", async (c) => {
       5,
     );
   } catch (e) {
+    // Report how many were actually enqueued before the failure — admin messages
+    // have no cron trigger (consumer can't dedup), so a retry after a falsely
+    // reported "0" would duplicate the already-queued syncs.
+    const partial = e instanceof SpreadEnqueueError ? e.enqueued : 0;
     console.error(JSON.stringify({
       event: "admin.refresh_all.send_failed",
       total: subs.length,
+      enqueued: partial,
       error: e instanceof Error ? e.message : String(e),
-      message: "Failed to enqueue subscriptions for refresh",
+      message: "Failed to enqueue all subscriptions for refresh",
     }));
-    return c.json({ enqueued: 0, error: `Failed to enqueue ${subs.length} subscriptions` }, 500);
+    return c.json(
+      { enqueued: partial, error: `Failed after enqueuing ${partial}/${subs.length} subscriptions` },
+      500,
+    );
   }
 
-  console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: subs.length, message: `Enqueued ${subs.length} subscriptions for sync` }));
-  return c.json({ enqueued: subs.length });
+  console.log(JSON.stringify({ event: "admin.refresh_all.enqueued", count: enqueued, message: `Enqueued ${enqueued} subscriptions for sync` }));
+  return c.json({ enqueued });
 });
 
 export default app;
