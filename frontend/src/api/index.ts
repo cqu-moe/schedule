@@ -50,10 +50,23 @@ export const redirect = {
 }
 
 // 429 interceptor: normalise into the standard { detail: "..." } shape.
-// 401 interceptor: redirect to auth login, unless suppressAuthRedirect is set on the request config.
+// 401 interceptor: redirect to auth login, unless:
+//   - suppressAuthRedirect is set on the request config (e.g. getMe probe), OR
+//   - the error code is TOKEN_EXPIRED (upstream CQU bearer expired; schedule session is still
+//     valid — the backend already invalidated the bearer and will re-mint on the next request,
+//     so we must NOT redirect the user to the login page).
 client.interceptors.response.use(undefined, (error: AxiosError) => {
   if (error.response?.status === 401) {
-    if (!(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect) {
+    const data = error.response.data as Record<string, unknown> | undefined
+    const errorCode = (data?.detail as Record<string, unknown> | undefined)?.error as
+      | Record<string, unknown>
+      | undefined
+    const isUpstreamTokenExpired = (errorCode?.code as string | undefined) === 'TOKEN_EXPIRED'
+
+    if (
+      !isUpstreamTokenExpired &&
+      !(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect
+    ) {
       redirect.fn(authLoginUrl(window.location.href))
     }
     return Promise.reject(error)
