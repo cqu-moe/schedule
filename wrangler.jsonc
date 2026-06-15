@@ -38,8 +38,12 @@
   ],
 
   // Service Bindings (拓扑①: RPC to cqu-moe-auth)
+  // entrypoint 必须指向 auth 的具名 RPC 类 `AuthService extends WorkerEntrypoint`
+  // （见 ../auth docs/plans/2026-06-14-firstparty-entitlements-plan.md C2）。auth
+  // Worker 同时 export default(Hono HTTP) + named AuthService(RPC)；不指定
+  // entrypoint 会绑到默认 HTTP 入口，verifySession/getCquTicket 等 RPC 不可用。
   "services": [
-    { "binding": "AUTH", "service": "cqu-moe-auth" }
+    { "binding": "AUTH", "service": "cqu-moe-auth", "entrypoint": "AuthService" }
   ],
 
   // Rate Limiting
