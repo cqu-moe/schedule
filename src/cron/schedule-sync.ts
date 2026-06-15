@@ -171,7 +171,7 @@ async function readCaps(env: Env, userId: string): Promise<CalendarCaps | null> 
 
   try {
     const caps = await env.AUTH?.getCaps?.({
-      clientId: "calendar",
+      clientId: env.CALENDAR_CLIENT_ID,
       clientSecret: env.CALENDAR_CLIENT_SECRET,
       userId,
     });

@@ -28,7 +28,12 @@ function fakeAuth(result: GetCquTicketResult): AuthService {
 
 /** Build a test Env with a real KV (from cloudflare:test) + the given AUTH. */
 function buildEnv(auth: AuthService): Env {
-  return { ...env, AUTH: auth, CALENDAR_CLIENT_SECRET: "test-secret" } as unknown as Env;
+  return {
+    ...env,
+    AUTH: auth,
+    CALENDAR_CLIENT_ID: "test-client-id",
+    CALENDAR_CLIENT_SECRET: "test-secret",
+  } as unknown as Env;
 }
 
 const USER_ID = "user-abc-123";
@@ -85,7 +90,7 @@ describe("getCquBearer", () => {
     await getCquBearer(buildEnv(auth), USER_ID);
 
     expect(getTicketSpy).toHaveBeenCalledWith({
-      clientId: "calendar",
+      clientId: "test-client-id",
       clientSecret: "test-secret",
       service: "jwxt",
       userId: USER_ID,

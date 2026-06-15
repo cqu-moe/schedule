@@ -23,8 +23,11 @@ export interface Env {
 
   // Secrets
   ADMIN_SECRET: string;
-  /** OAuth client secret for the "calendar" client, required by AUTH.getCquTicket
-   *  (auth verifies the hashed secret over RPC; see ../auth subsystem guide §1.2). */
+  /** OAuth client id of this app's auth client (auth auto-generates it, e.g.
+   *  "YKJBemj…"; NOT the literal "calendar"). Used as clientId in AUTH RPC calls. */
+  CALENDAR_CLIENT_ID: string;
+  /** OAuth client secret for the above client, required by AUTH.getCquTicket /
+   *  getCaps (auth verifies the hashed secret over RPC; see ../auth subsystem guide §1.2). */
   CALENDAR_CLIENT_SECRET: string;
 
   // Environment Variables

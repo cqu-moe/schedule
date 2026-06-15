@@ -183,6 +183,7 @@ describe("enqueueScheduleSync (producer)", () => {
       ...env,
       SCHEDULE_SYNC_QUEUE: { sendBatch },
       AUTH: { getCaps },
+      CALENDAR_CLIENT_ID: "test-client-id",
       CALENDAR_CLIENT_SECRET: "test-secret",
     } as unknown as Env;
 
@@ -191,7 +192,7 @@ describe("enqueueScheduleSync (producer)", () => {
 
     // getCaps is authenticated like getCquTicket — must pass {clientId, clientSecret, userId}.
     expect(getCaps).toHaveBeenCalledWith({
-      clientId: "calendar",
+      clientId: "test-client-id",
       clientSecret: "test-secret",
       userId: "user-cap-miss",
     });

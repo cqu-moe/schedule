@@ -41,7 +41,7 @@ export async function getCquBearer(
 
   // 2. Mint a fresh CQU service ticket via auth.
   const ticketResult = await env.AUTH.getCquTicket({
-    clientId: "calendar",
+    clientId: env.CALENDAR_CLIENT_ID,
     clientSecret: env.CALENDAR_CLIENT_SECRET,
     service: "jwxt",
     userId,
