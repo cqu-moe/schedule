@@ -54,13 +54,15 @@ export const subscriptions = sqliteTable(
       table.sourceId,
       table.sessionId,
     ),
-    // SQLite treats NULL as distinct in unique indexes, so uq_user_source_session
-    // does NOT prevent duplicate rows when session_id is NULL (the normal case for
-    // personal subscriptions). This partial unique index closes that gap so two
-    // concurrent identical personal creates cannot both insert.
+    // Personal subscriptions identify by (user, type, source) ONLY — session_id is
+    // informational and gets overwritten to the current semester on first sync, so
+    // it must not be part of their uniqueness. (uq_user_source_session can't enforce
+    // this: it includes session_id, and SQLite treats NULLs as distinct.) This
+    // partial unique index covers the personal source types regardless of session_id,
+    // so a user can hold at most one of each personal calendar.
     uniqueIndex("uq_user_source_personal")
       .on(table.userId, table.sourceType, table.sourceId)
-      .where(sql`${table.sessionId} is null`),
+      .where(sql`${table.sourceType} in ('personal_all', 'personal_courses', 'personal_exams')`),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
 );

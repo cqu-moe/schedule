@@ -1,0 +1,2 @@
+DROP INDEX `uq_user_source_personal`;--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_user_source_personal` ON `subscriptions` (`user_id`,`source_type`,`source_id`) WHERE "subscriptions"."source_type" in ('personal_all', 'personal_courses', 'personal_exams');
