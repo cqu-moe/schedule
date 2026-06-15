@@ -63,7 +63,7 @@ describe('API module (v2)', () => {
       const originalFn = redirect.fn
       redirect.fn = redirectSpy
 
-      const error = { response: { status: 401, data: {} } }
+      const error = { response: { status: 401, data: {} }, config: {} }
       await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
 
       // Assert the exact URL passed to redirect.fn by the interceptor.
@@ -72,6 +72,33 @@ describe('API module (v2)', () => {
       // expectedUrl === 'https://auth.cqu.moe/login?redirect=http%3A%2F%2Flocalhost%3A3000%2F'
       expect(redirectSpy).toHaveBeenCalledOnce()
       expect(redirectSpy).toHaveBeenCalledWith(expectedUrl)
+
+      redirect.fn = originalFn
+    })
+
+    it('does NOT redirect on 401 when suppressAuthRedirect is true', async () => {
+      const redirectSpy = vi.fn()
+      const originalFn = redirect.fn
+      redirect.fn = redirectSpy
+
+      const error = { response: { status: 401, data: {} }, config: { suppressAuthRedirect: true } }
+      await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
+
+      expect(redirectSpy).not.toHaveBeenCalled()
+
+      redirect.fn = originalFn
+    })
+
+    it('still redirects on 401 for normal requests (suppressAuthRedirect absent)', async () => {
+      const redirectSpy = vi.fn()
+      const originalFn = redirect.fn
+      redirect.fn = redirectSpy
+
+      // Simulates getSubscriptions: no suppressAuthRedirect flag
+      const error = { response: { status: 401, data: {} }, config: {} }
+      await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
+
+      expect(redirectSpy).toHaveBeenCalledOnce()
 
       redirect.fn = originalFn
     })
@@ -108,7 +135,7 @@ describe('API module (v2)', () => {
 
       const result = await api.getMe()
 
-      expect(mockClient.get).toHaveBeenCalledWith('/me')
+      expect(mockClient.get).toHaveBeenCalledWith('/me', { suppressAuthRedirect: true })
       expect(result).toEqual(me)
     })
   })

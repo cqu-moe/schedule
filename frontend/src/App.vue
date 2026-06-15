@@ -20,13 +20,15 @@ import { useSession } from '@/stores/session'
 useColorMode({ attribute: 'class', modes: { dark: 'dark', light: '' } })
 
 // Load backend config (public_url) and session (user/caps) once on app startup.
-// Session load: on 401 the axios interceptor redirects to auth.cqu.moe/login.
+// getMe uses suppressAuthRedirect so 401 (unauthenticated visitors) is silently
+// swallowed here — public routes remain accessible. Protected pages trigger their
+// own authenticated API calls whose 401s still redirect via the interceptor.
 const configStore = useConfigStore()
 const session = useSession()
 onMounted(() => {
   configStore.load()
   session.load().catch(() => {
-    // 401 → interceptor redirects; non-401 network errors are non-fatal here.
+    // 401 → silently ignored (suppressAuthRedirect); non-401 errors are non-fatal.
   })
 })
 </script>

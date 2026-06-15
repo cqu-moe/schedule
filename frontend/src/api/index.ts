@@ -1,4 +1,4 @@
-import axios, { type AxiosError } from 'axios'
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import type {
   MeResponse,
   SubscriptionList,
@@ -14,6 +14,14 @@ import type {
   CalendarData,
 } from '@/types/api'
 import { authLoginUrl } from '@/config/auth'
+
+// Augment axios config to support per-request auth-redirect suppression.
+declare module 'axios' {
+  interface InternalAxiosRequestConfig {
+    /** When true, a 401 response will NOT trigger a redirect to the login page. */
+    suppressAuthRedirect?: boolean
+  }
+}
 
 const client = axios.create({
   baseURL: '/api/v2',
@@ -42,10 +50,12 @@ export const redirect = {
 }
 
 // 429 interceptor: normalise into the standard { detail: "..." } shape.
-// 401 interceptor: redirect to auth login.
+// 401 interceptor: redirect to auth login, unless suppressAuthRedirect is set on the request config.
 client.interceptors.response.use(undefined, (error: AxiosError) => {
   if (error.response?.status === 401) {
-    redirect.fn(authLoginUrl(window.location.href))
+    if (!(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect) {
+      redirect.fn(authLoginUrl(window.location.href))
+    }
     return Promise.reject(error)
   }
 
@@ -64,7 +74,7 @@ export default {
   // ── Session ────────────────────────────────────────────────────────────────
 
   async getMe(): Promise<MeResponse> {
-    const response = await client.get<MeResponse>('/me')
+    const response = await client.get<MeResponse>('/me', { suppressAuthRedirect: true })
     return response.data
   },
 
