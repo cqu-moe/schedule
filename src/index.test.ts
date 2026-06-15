@@ -182,6 +182,19 @@ describe("AUTH_LIMITER on authenticated v2 routes", () => {
     );
     expect(res.status).toBe(200);
   });
+
+  it("EXTERNAL_LIMITER runs BEFORE session: rejected → 429, not 401 (no auth RPC)", async () => {
+    const rejecting = { limit: async () => ({ success: false }) };
+    // nullAuth would 401 if sessionMiddleware ran first; a 429 proves the limiter
+    // short-circuits before any AUTH.verifySession / caps KV write.
+    const testEnv = { ...env, AUTH: nullAuth(), EXTERNAL_LIMITER: rejecting };
+    const res = await app.request(
+      "/api/v2/external/search?source_type=instructor&keyword=x",
+      { headers: { "CF-Connecting-IP": uniqueIp() } },
+      testEnv,
+    );
+    expect(res.status).toBe(429);
+  });
 });
 
 describe("CORS preflight", () => {

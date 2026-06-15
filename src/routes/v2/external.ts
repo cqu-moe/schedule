@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
 import type { SessionEnv } from "../../middleware/session";
-import { rateLimit } from "../../middleware/rate-limit";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
 import { getCquBearer, invalidateCquBearer } from "../../services/cqu-bearer";
 import { CQUAPIClient, CQUAPIError, type SearchResult } from "../../services/cqu-api";
@@ -50,10 +49,11 @@ async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient 
 }
 
 // ── GET /search — search external (public) timetable sources ──────────────────
-//  Gated by the `external` calendar cap and the EXTERNAL_LIMITER rate limit. The
-//  CQU教务 bearer is minted per-user via getCquBearer (拓扑①); a null bearer means
-//  the user's CQU session is not bound/ready → 409 (re-login/bind required).
-app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
+//  Gated by the `external` calendar cap. EXTERNAL_LIMITER is applied at the mount
+//  (before sessionMiddleware), not here. The CQU教务 bearer is minted per-user via
+//  getCquBearer (拓扑①); a null bearer means the user's CQU session is not
+//  bound/ready → 409 (re-login/bind required).
+app.get("/search", async (c) => {
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
   const sessionId = c.req.query("session_id") ?? "";
@@ -114,7 +114,8 @@ app.get("/search", rateLimit("EXTERNAL_LIMITER"), async (c) => {
 });
 
 // ── GET /departments — department tree for admin_class search drill-down ──────
-app.get("/departments", rateLimit("EXTERNAL_LIMITER"), async (c) => {
+//  EXTERNAL_LIMITER applied at the mount (before sessionMiddleware), not here.
+app.get("/departments", async (c) => {
   const api = await externalApiOrError(c);
   if (api instanceof Response) return api;
 

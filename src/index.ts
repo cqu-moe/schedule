@@ -77,8 +77,12 @@ app.use("/api/v2/subscriptions/*", rateLimit("AUTH_LIMITER"), sessionMiddleware)
 app.use("/api/v2/subscriptions", rateLimit("AUTH_LIMITER"), sessionMiddleware);
 app.route("/api/v2/subscriptions", subscriptionsV2);
 
-app.use("/api/v2/external/*", sessionMiddleware);
-app.use("/api/v2/external", sessionMiddleware);
+// EXTERNAL_LIMITER runs BEFORE sessionMiddleware so flood traffic is rejected
+// without spending an AUTH.verifySession RPC / caps KV write (stricter than
+// AUTH_LIMITER; the external routes hit CQU directly). Owned by the mount here —
+// the external sub-app no longer carries its own per-route limiter.
+app.use("/api/v2/external/*", rateLimit("EXTERNAL_LIMITER"), sessionMiddleware);
+app.use("/api/v2/external", rateLimit("EXTERNAL_LIMITER"), sessionMiddleware);
 app.route("/api/v2/external", externalV2);
 
 // v2 public calendar endpoints: addressed by link token, no login required, so
