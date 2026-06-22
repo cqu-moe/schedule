@@ -381,6 +381,22 @@ export async function processScheduleSyncBatch(
 
         message.ack();
       } catch (e) {
+        // my.cqu.edu.cn 全站部署瑞数 WAF：纯 HTTP 请求（即便携带有效 Bearer）被判为
+        // 非真浏览器，在业务层之前就收到 HTTP 412 + 挑战页。重试同一个纯请求必然再次
+        // 412（瑞数门禁是每请求真浏览器 VM 现算令牌，与 IP/UA/凭证有效性无关），retry
+        // 只会放大对已封端点的无效流量并刷错误日志。当作永久失败 ack —— 待"能过瑞数"
+        // 的取数路径（浏览器铸令牌）上线后再恢复同步。412 不是 bearer 失效，故不清缓存。
+        if (e instanceof CQUAPIError && e.statusCode === 412) {
+          console.warn(
+            JSON.stringify({
+              event: "queue.schedule_sync.waf_challenge",
+              subscriptionId,
+              message: "CQU 瑞数 WAF challenge (HTTP 412); acking without retry",
+            }),
+          );
+          message.ack();
+          return;
+        }
         // A 401 means CQU rejected the bearer (expired/revoked/rebound) — drop the
         // cached bearer so the retry re-mints (a revoked account then resolves to
         // SESSION_INACTIVE and is skipped instead of looping on a stale token).

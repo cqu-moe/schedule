@@ -601,6 +601,31 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
+  it("acks WITHOUT retry on a CQU 412 (瑞数 WAF challenge — retrying the same pure request can't help)", async () => {
+    // my.cqu.edu.cn is fronted by the 瑞数 WAF: a pure HTTP request (even with a
+    // valid bearer) is judged a non-browser and gets HTTP 412 + a challenge page
+    // before reaching the business layer. Retrying the identical request 412s
+    // again, so a retry only amplifies traffic to a blocked endpoint and floods
+    // the error log. Treat 412 as a permanent failure: ack, don't retry.
+    await env.CACHE.delete("session:current");
+    const sid = await insertSub();
+    vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
+    const invalidate = vi
+      .spyOn(bearerModule, "invalidateCquBearer")
+      .mockResolvedValue();
+    vi.spyOn(CQUAPIClient.prototype, "getSessionList").mockRejectedValue(
+      new CQUAPIError("Request failed: HTTP 412", 412),
+    );
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    // 412 is a WAF wall, not a bad bearer — must NOT invalidate the cached token.
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it("retries when the CQU fetch throws", async () => {
     const sid = await insertSub();
     vi.spyOn(bearerModule, "getCquBearer").mockResolvedValue("test-bearer");
