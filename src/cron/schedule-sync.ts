@@ -4,19 +4,13 @@ import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
   type SourceType,
-  type ExternalSourceType,
 } from "../db/schema";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
-import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
-import { getCquBearer, resolveOwnStudentId, invalidateCquBearer } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
+import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
 import {
-  fetchSessionContextCached,
-  fetchSessionContextFor,
-  fetchPersonalScheduleCached,
   buildPersonalSyncResult,
-  buildExternalSyncResult,
   applySyncResult,
   preGenerateIcs,
 } from "../services/sync";
@@ -224,9 +218,10 @@ function isDue(lastSyncedAt: string | null, intervalMinutes: number, now: number
 /**
  * Consumer: process a batch of per-subscription sync messages.
  *
- * Each message resolves a CQU bearer via {@link getCquBearer} (auth 拓扑①). A
- * null bearer (inactive auth session / exchange failure) is logged and acked —
- * never retried — so an offline user does not block the batch.
+ * Each personal message harvests the 课表 through the user's已登录浏览器 via
+ * {@link fetchPersonalHarvest} (auth 拓扑① organic harvest). A harvest failure
+ * (WAF / needs_reauth / timeout) is logged and acked — never retried — so an
+ * offline user does not block the batch. External subs are soft-disabled (frozen).
  */
 export async function processScheduleSyncBatch(
   batch: MessageBatch<ScheduleSyncMessage>,
@@ -307,68 +302,33 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        const bearer = await getCquBearer(env, userId);
-        if (!bearer) {
+        // External subscriptions are soft-disabled (organic-harvest covers only
+        // the personal 课表; the external `{type}/table-detail` POST is瑞数 写专守
+        // with no auto-firing deep link). Freeze existing external subs — ack-skip
+        // without syncing, never delete — per the soft-disable design.
+        if (!PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
           console.log(
             JSON.stringify({
-              event: "queue.schedule_sync.skip_no_bearer",
+              event: "queue.schedule_sync.skip_external_disabled",
               subscriptionId,
-              message: "No CQU bearer available; skipping",
+              sourceType: sub.sourceType,
+              message: "External schedules are temporarily unavailable; freezing (no sync)",
             }),
           );
           message.ack();
           return;
         }
 
-        const api = new CQUAPIClient(bearer);
-        const ctx = await fetchSessionContextCached(api, env.CACHE);
+        // Personal subscription: harvest the 课表 (+ exams + semester) through a
+        // real已登录浏览器 via auth (the only过墙 path for the WRITE endpoint).
+        // The student ID is the bearer-subject's own identity inside the harvest
+        // browser — schedule never sees/needs the stored sourceId here.
+        const { ctx, data: personalData } = await fetchPersonalHarvest(env, userId);
+        const studentId = ctx.semesterInfo.id ?? subscriptionId; // ICS UID namespace
+        const ics = preGenerateIcs(personalData, studentId);
+        const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
         const fallback = { sessionName: sub.sessionName };
-
-        if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-          // Personal subscription: the student ID is resolved from the bearer's
-          // own authenticated subject — NEVER from the stored sub.sourceId
-          // (which is a client-supplied, untrusted value). This prevents a
-          // crafted sourceId from leaking another student's private schedule.
-          const studentId = resolveOwnStudentId(bearer, userId);
-          if (!studentId) {
-            console.log(
-              JSON.stringify({
-                event: "queue.schedule_sync.skip_no_student_id",
-                subscriptionId,
-                message: "No student ID resolvable from bearer; skipping",
-              }),
-            );
-            message.ack();
-            return;
-          }
-          const personalData = await fetchPersonalScheduleCached(
-            api,
-            studentId,
-            ctx,
-            env.CACHE,
-          );
-          const ics = preGenerateIcs(personalData, studentId);
-          const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
-          await applySyncResult(db, sub.id, result, ctx, fallback);
-        } else {
-          // External subscription: sourceId is the target ID; use it as the ICS
-          // UID namespace (stable per subscription). Honor the subscription's
-          // requested session when set (else current) so a past-semester sub
-          // exports THAT semester and keeps its session, instead of silently
-          // switching to current and colliding with sibling-session subs.
-          const targetCtx =
-            sub.sessionId && sub.sessionId !== ctx.sessionId
-              ? await fetchSessionContextFor(api, sub.sessionId)
-              : ctx;
-          const result = await buildExternalSyncResult(
-            api,
-            sub.sourceType as ExternalSourceType,
-            sub.sourceId,
-            sub.sourceId,
-            targetCtx,
-          );
-          await applySyncResult(db, sub.id, result, targetCtx, fallback);
-        }
+        await applySyncResult(db, sub.id, result, ctx, fallback);
 
         console.log(
           JSON.stringify({
@@ -381,27 +341,22 @@ export async function processScheduleSyncBatch(
 
         message.ack();
       } catch (e) {
-        // my.cqu.edu.cn 全站部署瑞数 WAF：纯 HTTP 请求（即便携带有效 Bearer）被判为
-        // 非真浏览器，在业务层之前就收到 HTTP 412 + 挑战页。重试同一个纯请求必然再次
-        // 412（瑞数门禁是每请求真浏览器 VM 现算令牌，与 IP/UA/凭证有效性无关），retry
-        // 只会放大对已封端点的无效流量并刷错误日志。当作永久失败 ack —— 待"能过瑞数"
-        // 的取数路径（浏览器铸令牌）上线后再恢复同步。412 不是 bearer 失效，故不清缓存。
-        if (e instanceof CQUAPIError && e.statusCode === 412) {
+        // Organic-harvest failures (瑞数 WAF challenge, needs_reauth, container
+        // timeout) are surfaced as HarvestError. Retrying the same harvest can't
+        // help within this interval (会话/WAF state won't change mid-batch) and
+        // only amplifies load + floods logs — treat as a止血 ack, no retry. The
+        // hourly cron re-attempts next interval.
+        if (e instanceof HarvestError) {
           console.warn(
             JSON.stringify({
-              event: "queue.schedule_sync.waf_challenge",
+              event: "queue.schedule_sync.harvest_failed",
               subscriptionId,
-              message: "CQU 瑞数 WAF challenge (HTTP 412); acking without retry",
+              error: e.message,
+              message: "Harvest failed (WAF/needs_reauth/timeout); acking without retry",
             }),
           );
           message.ack();
           return;
-        }
-        // A 401 means CQU rejected the bearer (expired/revoked/rebound) — drop the
-        // cached bearer so the retry re-mints (a revoked account then resolves to
-        // SESSION_INACTIVE and is skipped instead of looping on a stale token).
-        if (e instanceof CQUAPIError && e.statusCode === 401) {
-          await invalidateCquBearer(env, userId);
         }
         const msg = e instanceof Error ? e.message : String(e);
         console.error(
