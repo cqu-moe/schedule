@@ -266,6 +266,40 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(ids).toHaveLength(1); // external NOT enqueued
   });
 
+  it("reconciles a frozen external sub to is_active=false on cap revocation, AND does not enqueue it", async () => {
+    // An owner LOSES the `external` cap (revocation) WHILE external subs are frozen
+    // (EXTERNAL_DISABLED). The producer must STILL run the is_active reconciliation
+    // for that sub — so the revoked external sub flips inactive and its public link
+    // stops serving — yet it must NOT be enqueued (external is frozen). The
+    // freeze-skip therefore has to run AFTER the caps/is_active reconciliation.
+    const extSid = await insertSub({
+      userId: "user-ext-rev",
+      sourceType: "instructor",
+      sourceId: "T-99",
+      isPersonal: false,
+      isActive: true,
+      lastSyncedAt: null,
+    });
+    await env.CACHE.put(
+      "caps:user-ext-rev",
+      JSON.stringify({
+        sync: true, external: false, share: true,
+        sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
+      }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-ext-rev");
+
+    // Revocation enforced even while frozen: link stops serving.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, extSid));
+    expect(row.isActive).toBe(false);
+    // Still not enqueued (external frozen).
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
   it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {
     await insertSub({ userId: "user-revoked", lastSyncedAt: null }); // due, but downgraded
     await env.CACHE.put(

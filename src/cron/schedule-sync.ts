@@ -92,12 +92,6 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   const due: ScheduleSyncMessage[] = [];
 
   for (const sub of allSubs) {
-    // 外部订阅冻结(EXTERNAL_DISABLED):consumer 会 ack-skip 这些 sub 但不更新
-    // lastSyncedAt,所以若不在 producer 侧排除,每次 hourly cron 都会因"due"重新
-    // 入队 → 永不停止的空转入队 + skip_external_frozen 日志刷屏。冻结期间直接不
-    // 入队(非破坏性:不改库、不删数据;翻 EXTERNAL_DISABLED 即恢复)。
-    if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
-
     let caps = capsCache.get(sub.userId);
     if (caps === undefined) {
       caps = await readCaps(env, sub.userId);
@@ -109,12 +103,24 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     // Reconcile is_active (hard revocation): when caps are KNOWN, flip the row to
     // match entitlement — revoked → inactive (public links 403), re-granted →
     // active again. Skip when caps are null (transient outage) to avoid flapping.
+    // This MUST run before the external freeze-skip below: an owner who loses the
+    // `external` cap while external subs are frozen still needs the revoked row
+    // flipped inactive so its public link stops serving (the freeze-skip only
+    // suppresses ENQUEUE, not revocation enforcement).
     if (caps !== null && sub.isActive !== entitled) {
       await db
         .update(subscriptions)
         .set({ isActive: entitled, updatedAt: new Date().toISOString() })
         .where(eq(subscriptions.id, sub.id));
     }
+
+    // 外部订阅冻结(EXTERNAL_DISABLED):consumer 会 ack-skip 这些 sub 但不更新
+    // lastSyncedAt,所以若不在 producer 侧排除,每次 hourly cron 都会因"due"重新
+    // 入队 → 永不停止的空转入队 + skip_external_frozen 日志刷屏。冻结期间直接不
+    // 入队(非破坏性:不改库、不删数据;翻 EXTERNAL_DISABLED 即恢复)。放在
+    // is_active 对账之后,故冻结期间被吊销 external 权益的外部订阅仍会被对账成
+    // inactive(吊销照常生效),只是不入队。
+    if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
