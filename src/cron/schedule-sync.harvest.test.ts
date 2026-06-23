@@ -100,7 +100,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
-  it("acks-skips an external sub (软禁用: 冻结,不删数据,不取数)", async () => {
+  it("acks-skips an external sub (no harvest path: 冻结,不删数据,不取数)", async () => {
     const sid = await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false });
     const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
 

@@ -6,7 +6,6 @@ import {
   EXTERNAL_SOURCE_TYPES,
   type SourceType,
 } from "../db/schema";
-import { EXTERNAL_DISABLED } from "../config/external-availability";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
 import { spreadEnqueue } from "../utils/queue";
@@ -114,13 +113,13 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
         .where(eq(subscriptions.id, sub.id));
     }
 
-    // 外部订阅冻结(EXTERNAL_DISABLED):consumer 会 ack-skip 这些 sub 但不更新
-    // lastSyncedAt,所以若不在 producer 侧排除,每次 hourly cron 都会因"due"重新
-    // 入队 → 永不停止的空转入队 + skip_external_frozen 日志刷屏。冻结期间直接不
-    // 入队(非破坏性:不改库、不删数据;翻 EXTERNAL_DISABLED 即恢复)。放在
-    // is_active 对账之后,故冻结期间被吊销 external 权益的外部订阅仍会被对账成
-    // inactive(吊销照常生效),只是不入队。
-    if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
+    // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部
+    // 课表的 harvest 路径(该能力已在本 PR 移除),外部订阅永不入队同步。若仍入队,
+    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 hourly cron 又因"due"重新入队
+    // → 永不停止的空转入队 + 日志刷屏。放在 is_active 对账之后,故被吊销 external 权益
+    // 的外部订阅仍会被对账成 inactive(吊销照常生效),只是不入队。EXTERNAL_DISABLED
+    // 不参与此处判断,仅控制面向用户的提示/守卫。
+    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
@@ -316,17 +315,21 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        // 外部订阅冻结(EXTERNAL_DISABLED):瑞数化后外部课表无法 harvest(external
-        // `{type}/table-detail` POST 同属写专守、无可自动 fire 的深链)。停止同步但
-        // 保留数据——不 harvest、不改 lastSyncedAt,订阅冻结在最后状态。ack 不 retry
-        // (永久跳过)。恢复只需翻 EXTERNAL_DISABLED,与路由/前端共用同一可逆开关。
-        if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
+        // 外部订阅 HARD-SKIP(Option A,无条件):本架构没有外部课表的 harvest 路径
+        // ——瑞数化后 external `{type}/table-detail` POST 同属写专守、无可自动 fire 的
+        // 深链,该能力已在本 PR 移除(详见 config/external-availability.ts)。外部订阅
+        // 绝不可走个人 harvest 路径:否则 fetchPersonalHarvest + buildPersonalSyncResult
+        // 会把订阅主人(owner)自己的个人课表写进这条对外公开链接,污染数据。因此无论
+        // EXTERNAL_DISABLED 真假都直接 ack 跳过(不 harvest、不改 lastSyncedAt,数据冻结
+        // 在最后状态)。EXTERNAL_DISABLED 仅控制面向用户的提示/守卫,不参与此处判断;
+        // 重新启用外部需未来跨仓任务重建其 harvest/search 路径。
+        if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
           console.log(
             JSON.stringify({
               event: "queue.schedule_sync.skip_external_frozen",
               subscriptionId,
               sourceType: sub.sourceType,
-              message: "External subscription frozen (soft-disabled); acking without sync",
+              message: "External subscription has no harvest path; acking without sync",
             }),
           );
           message.ack();

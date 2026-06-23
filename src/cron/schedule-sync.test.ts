@@ -245,12 +245,12 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
-  it("does NOT enqueue frozen external subs while EXTERNAL_DISABLED (no endless no-op churn)", async () => {
-    // A due external sub is frozen (soft-disabled): the consumer ack-skips it
+  it("does NOT enqueue external subs (no external sync path; no endless no-op churn)", async () => {
+    // A due external sub has no harvest path (Option A): the consumer ack-skips it
     // without touching lastSyncedAt, so without producer-side filtering it would
-    // be re-selected every hourly cron forever. The producer must exclude
-    // external sourceTypes while EXTERNAL_DISABLED so they are never enqueued.
-    // A due personal sub for the same user must still be enqueued.
+    // be re-selected every hourly cron forever. The producer must exclude external
+    // sourceTypes UNCONDITIONALLY so they are never enqueued. A due personal sub for
+    // the same user must still be enqueued.
     const personalSid = await insertSub({ sourceType: "personal_all", sourceId: "user-1", lastSyncedAt: null });
     await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false, lastSyncedAt: null });
 
@@ -267,11 +267,11 @@ describe("enqueueScheduleSync (producer)", () => {
   });
 
   it("reconciles a frozen external sub to is_active=false on cap revocation, AND does not enqueue it", async () => {
-    // An owner LOSES the `external` cap (revocation) WHILE external subs are frozen
-    // (EXTERNAL_DISABLED). The producer must STILL run the is_active reconciliation
+    // An owner LOSES the `external` cap (revocation) on an external sub that has no
+    // sync path (Option A). The producer must STILL run the is_active reconciliation
     // for that sub — so the revoked external sub flips inactive and its public link
-    // stops serving — yet it must NOT be enqueued (external is frozen). The
-    // freeze-skip therefore has to run AFTER the caps/is_active reconciliation.
+    // stops serving — yet it must NOT be enqueued (external is never enqueued). The
+    // external skip therefore has to run AFTER the caps/is_active reconciliation.
     const extSid = await insertSub({
       userId: "user-ext-rev",
       sourceType: "instructor",
