@@ -163,7 +163,15 @@ describe("mapHarvestToPersonalData", () => {
     const captures = [
       entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", { classTimetableVOList: [] }),
     ];
-    const data = mapHarvestToPersonalData(captures, [], "2025-09-01");
+    // The exam fetch is REQUIRED — supply a genuine 2xx empty exam list so this test
+    // isolates the empty-课表 (courses) path, not the exam-absence path.
+    const fetches = [
+      entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
+        status: "success",
+        data: { content: [] },
+      }),
+    ];
+    const data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
     expect(data.courses).toEqual([]);
     expect(data.exams).toEqual([]);
   });
@@ -256,17 +264,21 @@ describe("mapHarvestToPersonalData", () => {
     expect(data.exams).toEqual([]);
   });
 
-  it("a MISSING exam fetch → empty exams (no throw) — absence is not a captured failure", () => {
-    // When the exam fetch entry is absent entirely (recipe ran without it), that is
-    // NOT a captured error body — degrade to empty exams rather than failing the
-    // whole personal harvest. (Only a PRESENT-but-non-2xx/unparseable entry fails.)
+  it("throws HarvestError when the exam fetch is ABSENT (dropped/failed fetch, NOT 'no exams')", () => {
+    // Round-5 [P2 DATA LOSS]: buildPersonalHarvestArgs ALWAYS requests the exam URL,
+    // so an ABSENT exam entry means the fetch was DROPPED/timed-out — NOT a
+    // legitimately-empty exam list. Degrading absence to exams=[] and applying that
+    // as a "successful" sync would ERASE a previously-valid exam calendar
+    // (personal_exams / the exam slice of personal_all). The exam entry is REQUIRED:
+    // absence must surface as a HarvestError (ack-no-retry, cached exams intact). A
+    // genuine empty exam list arrives as a 2xx body with {data:{content:[]}} (covered
+    // by the test above), NOT as an absent entry.
     const captures = [
       entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
         classTimetableVOList: [],
       }),
     ];
-    const data = mapHarvestToPersonalData(captures, [], "2025-09-01");
-    expect(data.exams).toEqual([]);
+    expect(() => mapHarvestToPersonalData(captures, [], "2025-09-01")).toThrow(HarvestError);
   });
 });
 
