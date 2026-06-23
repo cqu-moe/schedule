@@ -305,8 +305,9 @@ describe("fetchPersonalHarvest", () => {
     ];
   }
 
-  it("returns typed ctx + data on the happy path (Phase 2 supplies semester dates)", async () => {
-    const cquHarvest = vi
+  /** A `cquHarvest` mock that resolves Phase 1 then Phase 2 (with semester dates). */
+  function happyHarvestMock() {
+    return vi
       .fn()
       // Phase 1: 课表 + session-list captured, exam fetched (no dates).
       .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
@@ -319,7 +320,22 @@ describe("fetchPersonalHarvest", () => {
           }),
         ],
       });
-    const env = { ...CLIENT, AUTH: { cquHarvest } } as never;
+  }
+
+  /** In-memory mock of the CACHE KV binding (get/put only). */
+  function mockCache() {
+    const store = new Map<string, string>();
+    return {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        store.set(key, value);
+      }),
+    };
+  }
+
+  it("returns typed ctx + data on the happy path (Phase 2 supplies semester dates)", async () => {
+    const cquHarvest = happyHarvestMock();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
 
     const { ctx, data } = await fetchPersonalHarvest(env, "user-1");
     expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
@@ -334,9 +350,78 @@ describe("fetchPersonalHarvest", () => {
       .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
       // Phase 2 transient failure (timeout/WAF/reauth) — dates never arrive.
       .mockResolvedValueOnce({ error: "CQU_WAF_BLOCKED" });
-    const env = { ...CLIENT, AUTH: { cquHarvest } } as never;
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
 
     await expect(fetchPersonalHarvest(env, "user-1")).rejects.toBeInstanceOf(HarvestError);
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+  });
+
+  it("dedups: a second call for the SAME user reuses the cached harvest (cquHarvest fires ONCE)", async () => {
+    // PERF: when a user owns multiple personal subs (personal_all + personal_courses
+    // + personal_exams) processed close together, each queue message used to launch
+    // its OWN expensive harvest even though the payload is IDENTICAL. The per-user
+    // cache makes the second call hit env.CACHE and skip the harvest entirely.
+    const cquHarvest = happyHarvestMock();
+    const cache = mockCache();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
+
+    const first = await fetchPersonalHarvest(env, "user-1");
+    const second = await fetchPersonalHarvest(env, "user-1");
+
+    // Phase 1 + Phase 2 = 2 cquHarvest calls for the FIRST harvest, ZERO for the second.
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    expect(cache.put).toHaveBeenCalledTimes(1);
+    expect(cache.get).toHaveBeenCalledWith("harvest:user-1");
+    // The cached value round-trips byte-identically.
+    expect(second.ctx.semesterInfo.begin_date).toBe(first.ctx.semesterInfo.begin_date);
+    expect(second.data.semesterStart).toBe(first.data.semesterStart);
+  });
+
+  it("does NOT cache a failed harvest (next call re-harvests)", async () => {
+    // A transient harvest failure must NOT be memoized, or a single 412/timeout would
+    // poison the cache for the whole TTL. Only SUCCESSFUL harvests are cached.
+    const cquHarvest = vi
+      .fn()
+      // First call: Phase 1 OK, Phase 2 fails → HarvestError (no dates) → not cached.
+      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
+      .mockResolvedValueOnce({ error: "CQU_WAF_BLOCKED" })
+      // Second call: full success.
+      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
+      .mockResolvedValueOnce({
+        captures: [],
+        fetches: [
+          entry("https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9", {
+            data: { id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01 00:00:00", endDate: "2026-01-15 00:00:00" },
+          }),
+        ],
+      });
+    const cache = mockCache();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
+
+    await expect(fetchPersonalHarvest(env, "user-1")).rejects.toBeInstanceOf(HarvestError);
+    expect(cache.put).not.toHaveBeenCalled(); // failure not memoized
+
+    // Second call must actually re-harvest (cache miss) and succeed.
+    const { ctx } = await fetchPersonalHarvest(env, "user-1");
+    expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
+    expect(cquHarvest).toHaveBeenCalledTimes(4); // 2 (failed) + 2 (success)
+    expect(cache.put).toHaveBeenCalledTimes(1); // only the success is cached
+  });
+
+  it("a CACHE get/put failure does NOT break the harvest (best-effort)", async () => {
+    // KV is best-effort: a get/put throwing (KV outage) must be caught so the harvest
+    // still completes. The harvest proceeds and returns real data on a get failure.
+    const cquHarvest = happyHarvestMock();
+    const cache = {
+      get: vi.fn(async () => { throw new Error("KV get down"); }),
+      put: vi.fn(async () => { throw new Error("KV put down"); }),
+    };
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
+
+    const { ctx, data } = await fetchPersonalHarvest(env, "user-1");
+    expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
+    expect(data.semesterStart).toBe("2025-09-01");
+    // A get failure means a cache miss → the harvest ran.
     expect(cquHarvest).toHaveBeenCalledTimes(2);
   });
 });

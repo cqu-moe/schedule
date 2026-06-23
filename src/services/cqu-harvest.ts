@@ -26,6 +26,15 @@ const NAV_URL = "https://my.cqu.edu.cn/workspace/curriculum";
 const EXAM_URL = "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list";
 const SESSION_INFO_URL = "https://my.cqu.edu.cn/api/resourceapi/session/info/";
 
+/** KV key prefix + TTL for the per-user harvest dedup cache (see fetchPersonalHarvest). */
+const HARVEST_CACHE_PREFIX = "harvest:";
+const HARVEST_CACHE_TTL_SECONDS = 600; // 10 min: long enough to dedupe a sync batch
+                                       // where a user's personal subs are processed
+                                       // minutes apart, short enough to stay fresh.
+
+/** The cached harvest payload (the user's own schedule data — NOT a secret). */
+type CachedHarvest = { ctx: SessionContext; data: PersonalScheduleData };
+
 /** URL substrings to capture from the navigation's auto-fired responses. */
 const CAPTURE_TABLE = "my-table-detail";
 const CAPTURE_SESSION_LIST = "session/info-detail";
@@ -212,6 +221,16 @@ export function mapHarvestToPersonalData(
  * PersonalScheduleData. Does the two-phase semester-date fetch by re-using the
  * captured curSessionId.
  *
+ * A user owning multiple personal subs (personal_all + personal_courses +
+ * personal_exams) processed close together would otherwise launch ONE expensive
+ * harvest (up to 2 browser navigations) PER queue message even though the
+ * course/exam payload is IDENTICAL for all personal types. A short-lived per-user
+ * KV cache ({@link HARVEST_CACHE_PREFIX}+userId, {@link HARVEST_CACHE_TTL_SECONDS})
+ * lets subs of the same user reuse ONE harvest. Only SUCCESSFUL harvests are
+ * cached (never a {@link HarvestError}/failure — a transient 412/timeout must not
+ * be memoized for the whole TTL). The cache is best-effort: a KV get/put failure
+ * is caught and the harvest proceeds normally.
+ *
  * Throws {@link HarvestError} on `{error}` from auth or missing required bodies,
  * so the queue consumer can ack-without-retry (止血), same as the 412 path.
  */
@@ -222,6 +241,13 @@ export async function fetchPersonalHarvest(
   if (!env.AUTH?.cquHarvest) {
     throw new HarvestError("AUTH.cquHarvest unavailable");
   }
+
+  // Cache HIT short-circuits the whole harvest (best-effort — a KV get failure is
+  // caught and treated as a miss). The cached value is the user's own schedule data
+  // (not a secret); do not log it.
+  const cacheKey = `${HARVEST_CACHE_PREFIX}${userId}`;
+  const cached = await readHarvestCache(env, cacheKey);
+  if (cached) return cached;
 
   // Phase 1: navigate + capture 课表/session-list + fetch exam list.
   const recipe = buildPersonalHarvestArgs(env, userId);
@@ -263,5 +289,33 @@ export async function fetchPersonalHarvest(
     r1.fetches,
     ctx.semesterInfo.begin_date ?? "",
   );
-  return { ctx, data };
+  // SUCCESS only: cache so the same user's other personal subs (processed close
+  // together) reuse this harvest. Any failure above threw HarvestError before here,
+  // so a transient 412/timeout is never memoized. Best-effort (KV put failure caught).
+  const result: CachedHarvest = { ctx, data };
+  await writeHarvestCache(env, cacheKey, result);
+  return result;
+}
+
+/** Best-effort per-user harvest cache read. A KV outage / parse error is swallowed
+ *  (returns null → treated as a miss) so the cache can never break the harvest. */
+async function readHarvestCache(env: Env, key: string): Promise<CachedHarvest | null> {
+  try {
+    const raw = await env.CACHE?.get(key);
+    return raw ? (JSON.parse(raw) as CachedHarvest) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort per-user harvest cache write. A KV outage is swallowed so a put
+ *  failure can never break the (already-successful) harvest. */
+async function writeHarvestCache(env: Env, key: string, value: CachedHarvest): Promise<void> {
+  try {
+    await env.CACHE?.put(key, JSON.stringify(value), {
+      expirationTtl: HARVEST_CACHE_TTL_SECONDS,
+    });
+  } catch {
+    /* best-effort: harvest already succeeded; a cache write failure is non-fatal */
+  }
 }
