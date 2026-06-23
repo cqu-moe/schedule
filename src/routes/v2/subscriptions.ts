@@ -14,6 +14,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
+import { externalUnavailableResponse } from "../../config/external-availability";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
 import { CHINA_TZ_OFFSET_MS } from "../../utils/time";
@@ -205,6 +206,10 @@ app.post("/", async (c) => {
   // ── Entitlement gating ────────────────────────────────────────────────────
   try {
     if (isExternal) {
+      // 外部课表软禁用(可逆):瑞数化后无法 harvest,拒绝新增外部订阅。在配额/写库
+      // 之前短路,不暴露 WAF。个人订阅不受影响。
+      const unavailable = externalUnavailableResponse();
+      if (unavailable) return unavailable;
       assertFlag(caps, "external", "外部订阅");
     } else {
       assertFlag(caps, "sync", "日历同步");
@@ -388,6 +393,13 @@ app.post("/:sid/syncs", async (c) => {
     .limit(1);
   if (!sub) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+
+  // 外部订阅软禁用:停止接受外部订阅的手动刷新(不入队、不消耗配额、不暴露 WAF)。
+  // 已有数据保持冻结。个人订阅照常。
+  if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
+    const unavailable = externalUnavailableResponse();
+    if (unavailable) return unavailable;
   }
 
   // Entitlement: if the required cap was revoked, this subscription is no longer

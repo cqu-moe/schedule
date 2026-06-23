@@ -300,7 +300,10 @@ describe("POST /api/v2/subscriptions", () => {
     });
   });
 
-  it("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): creating an
+  // external (instructor) sub now short-circuits with 503 before is_personal
+  // derivation. The personal-type derivation is still covered by the test below.
+  it.skip("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
     const app = buildApp("userA");
     // Client lies: an external type (instructor) but claims isPersonal=true.
     const res = await app.request(
@@ -344,7 +347,10 @@ describe("POST /api/v2/subscriptions", () => {
     expect(row.sourceId).toBe("userA");
   });
 
-  it("keeps the client-supplied sourceId for external source types", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): adding an
+  // external sub now returns 503 before the row is written; restore when external
+  // re-enables.
+  it.skip("keeps the client-supplied sourceId for external source types", async () => {
     const app = buildApp("userA");
     const res = await app.request(
       "/",
@@ -408,7 +414,11 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
-  it("external source without `external` cap → 403", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (see external-availability.ts): external
+  // add now short-circuits with 503 EXTERNAL_UNAVAILABLE *before* the `external`
+  // cap check, so this 403 path is unreachable. The dedicated soft-disabled test
+  // below covers the new behavior; restore (.skip → it) when external re-enables.
+  it.skip("external source without `external` cap → 403", async () => {
     const app = buildApp("userA", capsWith({ external: false }));
     const res = await app.request(
       "/",
@@ -417,6 +427,25 @@ describe("POST /api/v2/subscriptions", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+  });
+
+  it("external add → 503 EXTERNAL_UNAVAILABLE (no DB write, no enqueue) while soft-disabled", async () => {
+    const { request, send } = buildApp("userA");
+    const res = await request(
+      "/",
+      jsonBody({ sourceType: "instructor", sourceId: "T-1", sourceName: "张老师" }),
+    );
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+    expect(send).not.toHaveBeenCalled();
+
+    // No subscription row created.
+    const rows = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.sourceType, "instructor"));
+    expect(rows.length).toBe(0);
   });
 
   it("personal source without `sync` cap → 403", async () => {
@@ -878,6 +907,21 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     const app = buildSyncApp("userA");
     const res = await app.request(`/${sid}/syncs`);
     expect(res.status).toBe(404);
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("manual refresh of an external sub → 503 EXTERNAL_UNAVAILABLE (no enqueue)", async () => {
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-9",
+      sourceName: "李老师",
+      isPersonal: false,
+    });
+    const app = buildSyncApp("userA");
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
     expect(app.send).not.toHaveBeenCalled();
   });
 
