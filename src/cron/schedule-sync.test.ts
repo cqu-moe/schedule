@@ -10,6 +10,7 @@ import {
 } from "./schedule-sync";
 import * as harvestModule from "../services/cqu-harvest";
 import { HarvestError } from "../services/cqu-harvest";
+import * as syncModule from "../services/sync";
 import type { Env } from "../types";
 
 const db = drizzle(env.DB);
@@ -306,6 +307,34 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).not.toBeNull();
     expect(row.coursesJson).toBe("[]");
     expect(row.icsContent).toContain("BEGIN:VCALENDAR");
+  });
+
+  it("ICS UID namespace is the per-user sourceId, not the shared semester id (no cross-user UID collision)", async () => {
+    // Two DIFFERENT users syncing the SAME semester (same ctx.semesterInfo.id).
+    // The UID namespace must be per-user (sub.sourceId, pinned to user.id for
+    // personal subs) — using the term/semester id "sess-1" would be identical for
+    // every user and collide UIDs across shared calendars.
+    await env.CACHE.put("caps:user-A", JSON.stringify(FULL_CAPS));
+    await env.CACHE.put("caps:user-B", JSON.stringify(FULL_CAPS));
+    const sidA = await insertSub({ userId: "user-A", sourceType: "personal_all", sourceId: "user-A" });
+    const sidB = await insertSub({ userId: "user-B", sourceType: "personal_all", sourceId: "user-B" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue(okHarvest()); // semesterInfo.id = "sess-1"
+    const preGen = vi.spyOn(syncModule, "preGenerateIcs");
+
+    const { batch } = makeBatch([
+      { subscriptionId: sidA, userId: "user-A" },
+      { subscriptionId: sidB, userId: "user-B" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+    await env.CACHE.delete("caps:user-A");
+    await env.CACHE.delete("caps:user-B");
+
+    // Namespace is the per-user sourceId, and the two users get DIFFERENT ones.
+    const namespaces = preGen.mock.calls.map((c) => c[1]);
+    expect(namespaces).toContain("user-A");
+    expect(namespaces).toContain("user-B");
+    // Never the shared semester id.
+    expect(namespaces).not.toContain("sess-1");
   });
 
   it("SECURITY: harvest is keyed by auth userId, never by the (untrusted) stored sourceId", async () => {

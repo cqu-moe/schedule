@@ -326,8 +326,14 @@ export async function processScheduleSyncBatch(
         // The student ID is the bearer-subject's own identity inside the harvest
         // browser — schedule never sees/needs the stored sourceId here.
         const { ctx, data: personalData } = await fetchPersonalHarvest(env, userId);
-        const studentId = ctx.semesterInfo.id ?? subscriptionId; // ICS UID namespace
-        const ics = preGenerateIcs(personalData, studentId);
+        // ICS UID namespace: the harvest path has no 学号, but sub.sourceId is
+        // pinned to the auth user.id for personal subs (see routes/v2/subscriptions
+        // "pin it to the trusted auth user.id"), so it is per-user-stable and
+        // deterministic per subscription — the property the ICS UID requires.
+        // Using ctx.semesterInfo.id (the term/semester id, e.g. "1060") would be
+        // identical for every user in a semester and collide UIDs across users.
+        const uidNamespace = sub.sourceId;
+        const ics = preGenerateIcs(personalData, uidNamespace);
         const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
         const fallback = { sessionName: sub.sessionName };
         await applySyncResult(db, sub.id, result, ctx, fallback);
