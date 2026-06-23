@@ -73,6 +73,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// ── 外部课表软禁用(EXTERNAL_DISABLED=true)─────────────────────────────────────
+//  瑞数全站化后外部课表无法 harvest;端点统一返回 503 EXTERNAL_UNAVAILABLE,
+//  在 cap/bearer/CQU 调用之前短路,绝不暴露 WAF。恢复只需翻 EXTERNAL_DISABLED。
+describe("external soft-disabled", () => {
+  it("GET /search → 503 EXTERNAL_UNAVAILABLE (before any CQU call)", async () => {
+    const spy = vi.spyOn(CQUAPIClient.prototype, "searchInstructor");
+    const app = buildApp("userA");
+    const res = await app.request("/search?source_type=instructor&keyword=张");
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("GET /departments → 503 EXTERNAL_UNAVAILABLE", async () => {
+    const app = buildApp("userA");
+    const res = await app.request("/departments");
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+  });
+});
+
 // ── GET /search ──────────────────────────────────────────────────────────────
 
 // TODO(external soft-disable task): external search is interim-503'd

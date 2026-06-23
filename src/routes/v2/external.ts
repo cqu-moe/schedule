@@ -3,6 +3,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
 import { CQUAPIClient, CQUAPIError, type SearchResult } from "../../services/cqu-api";
 import { errorResponse, handleCquApiError } from "../../utils/error";
+import { externalUnavailableResponse } from "../../config/external-availability";
 
 const app = new Hono<SessionEnv>();
 
@@ -34,8 +35,14 @@ async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient 
 
   // External schedules are soft-disabled while只有 personal 课表 has an organic-
   // harvest 过墙 path (the external {type}/table-detail POST is瑞数 写专守). Return
-  // a neutral "unavailable" without exposing WAF internals. (Full soft-disable —
-  // frontend entry hiding + per-endpoint messaging — is a separate task.)
+  // a neutral "unavailable" without exposing WAF internals — the single reversible
+  // source of truth is `EXTERNAL_DISABLED` in src/config/external-availability.ts.
+  // When that flag flips to false, this returns null and the handler falls through
+  // to the live CQU教务 path again.
+  const unavailable = externalUnavailableResponse();
+  if (unavailable) return unavailable;
+
+  // External re-enabled but no harvest path wired yet — keep the route fail-safe.
   return errorResponse("EXTERNAL_UNAVAILABLE", "外部课表暂不可用", 503);
 }
 
@@ -44,6 +51,10 @@ async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient 
 //  (before sessionMiddleware), not here. Currently soft-disabled: externalApiOrError
 //  returns 503 EXTERNAL_UNAVAILABLE before any CQU教务 call.
 app.get("/search", async (c) => {
+  // 外部课表软禁用(可逆):在 cap/输入校验/CQU 调用之前短路返回暂不可用,不暴露 WAF。
+  const unavailable = externalUnavailableResponse();
+  if (unavailable) return unavailable;
+
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
   const sessionId = c.req.query("session_id") ?? "";
@@ -104,6 +115,10 @@ app.get("/search", async (c) => {
 // ── GET /departments — department tree for admin_class search drill-down ──────
 //  EXTERNAL_LIMITER applied at the mount (before sessionMiddleware), not here.
 app.get("/departments", async (c) => {
+  // 外部课表软禁用(可逆):在 cap/CQU 调用之前短路返回暂不可用,不暴露 WAF。
+  const unavailable = externalUnavailableResponse();
+  if (unavailable) return unavailable;
+
   const api = await externalApiOrError(c);
   if (api instanceof Response) return api;
 
