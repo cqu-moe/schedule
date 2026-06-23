@@ -3,20 +3,15 @@ import { eq } from "drizzle-orm";
 import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
+  EXTERNAL_SOURCE_TYPES,
   type SourceType,
-  type ExternalSourceType,
 } from "../db/schema";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
-import { CQUAPIClient, CQUAPIError } from "../services/cqu-api";
-import { getCquBearer, resolveOwnStudentId, invalidateCquBearer } from "../services/cqu-bearer";
 import { spreadEnqueue } from "../utils/queue";
+import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
 import {
-  fetchSessionContextCached,
-  fetchSessionContextFor,
-  fetchPersonalScheduleCached,
   buildPersonalSyncResult,
-  buildExternalSyncResult,
   applySyncResult,
   preGenerateIcs,
 } from "../services/sync";
@@ -107,12 +102,24 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     // Reconcile is_active (hard revocation): when caps are KNOWN, flip the row to
     // match entitlement — revoked → inactive (public links 403), re-granted →
     // active again. Skip when caps are null (transient outage) to avoid flapping.
+    // This MUST run before the external freeze-skip below: an owner who loses the
+    // `external` cap while external subs are frozen still needs the revoked row
+    // flipped inactive so its public link stops serving (the freeze-skip only
+    // suppresses ENQUEUE, not revocation enforcement).
     if (caps !== null && sub.isActive !== entitled) {
       await db
         .update(subscriptions)
         .set({ isActive: entitled, updatedAt: new Date().toISOString() })
         .where(eq(subscriptions.id, sub.id));
     }
+
+    // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部
+    // 课表的 harvest 路径(该能力已在本 PR 移除),外部订阅永不入队同步。若仍入队,
+    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 hourly cron 又因"due"重新入队
+    // → 永不停止的空转入队 + 日志刷屏。放在 is_active 对账之后,故被吊销 external 权益
+    // 的外部订阅仍会被对账成 inactive(吊销照常生效),只是不入队。EXTERNAL_DISABLED
+    // 不参与此处判断,仅控制面向用户的提示/守卫。
+    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
@@ -224,9 +231,10 @@ function isDue(lastSyncedAt: string | null, intervalMinutes: number, now: number
 /**
  * Consumer: process a batch of per-subscription sync messages.
  *
- * Each message resolves a CQU bearer via {@link getCquBearer} (auth 拓扑①). A
- * null bearer (inactive auth session / exchange failure) is logged and acked —
- * never retried — so an offline user does not block the batch.
+ * Each personal message harvests the 课表 through the user's已登录浏览器 via
+ * {@link fetchPersonalHarvest} (auth 拓扑① organic harvest). A harvest failure
+ * (WAF / needs_reauth / timeout) is logged and acked — never retried — so an
+ * offline user does not block the batch. External subs are soft-disabled (frozen).
  */
 export async function processScheduleSyncBatch(
   batch: MessageBatch<ScheduleSyncMessage>,
@@ -307,68 +315,43 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        const bearer = await getCquBearer(env, userId);
-        if (!bearer) {
+        // 外部订阅 HARD-SKIP(Option A,无条件):本架构没有外部课表的 harvest 路径
+        // ——瑞数化后 external `{type}/table-detail` POST 同属写专守、无可自动 fire 的
+        // 深链,该能力已在本 PR 移除(详见 config/external-availability.ts)。外部订阅
+        // 绝不可走个人 harvest 路径:否则 fetchPersonalHarvest + buildPersonalSyncResult
+        // 会把订阅主人(owner)自己的个人课表写进这条对外公开链接,污染数据。因此无论
+        // EXTERNAL_DISABLED 真假都直接 ack 跳过(不 harvest、不改 lastSyncedAt,数据冻结
+        // 在最后状态)。EXTERNAL_DISABLED 仅控制面向用户的提示/守卫,不参与此处判断;
+        // 重新启用外部需未来跨仓任务重建其 harvest/search 路径。
+        if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
           console.log(
             JSON.stringify({
-              event: "queue.schedule_sync.skip_no_bearer",
+              event: "queue.schedule_sync.skip_external_frozen",
               subscriptionId,
-              message: "No CQU bearer available; skipping",
+              sourceType: sub.sourceType,
+              message: "External subscription has no harvest path; acking without sync",
             }),
           );
           message.ack();
           return;
         }
 
-        const api = new CQUAPIClient(bearer);
-        const ctx = await fetchSessionContextCached(api, env.CACHE);
+        // Personal subscription: harvest the 课表 (+ exams + semester) through a
+        // real已登录浏览器 via auth (the only过墙 path for the WRITE endpoint).
+        // The student ID is the bearer-subject's own identity inside the harvest
+        // browser — schedule never sees/needs the stored sourceId here.
+        const { ctx, data: personalData } = await fetchPersonalHarvest(env, userId);
+        // ICS UID namespace: the harvest path has no 学号, but sub.sourceId is
+        // pinned to the auth user.id for personal subs (see routes/v2/subscriptions
+        // "pin it to the trusted auth user.id"), so it is per-user-stable and
+        // deterministic per subscription — the property the ICS UID requires.
+        // Using ctx.semesterInfo.id (the term/semester id, e.g. "1060") would be
+        // identical for every user in a semester and collide UIDs across users.
+        const uidNamespace = sub.sourceId;
+        const ics = preGenerateIcs(personalData, uidNamespace);
+        const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
         const fallback = { sessionName: sub.sessionName };
-
-        if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
-          // Personal subscription: the student ID is resolved from the bearer's
-          // own authenticated subject — NEVER from the stored sub.sourceId
-          // (which is a client-supplied, untrusted value). This prevents a
-          // crafted sourceId from leaking another student's private schedule.
-          const studentId = resolveOwnStudentId(bearer, userId);
-          if (!studentId) {
-            console.log(
-              JSON.stringify({
-                event: "queue.schedule_sync.skip_no_student_id",
-                subscriptionId,
-                message: "No student ID resolvable from bearer; skipping",
-              }),
-            );
-            message.ack();
-            return;
-          }
-          const personalData = await fetchPersonalScheduleCached(
-            api,
-            studentId,
-            ctx,
-            env.CACHE,
-          );
-          const ics = preGenerateIcs(personalData, studentId);
-          const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
-          await applySyncResult(db, sub.id, result, ctx, fallback);
-        } else {
-          // External subscription: sourceId is the target ID; use it as the ICS
-          // UID namespace (stable per subscription). Honor the subscription's
-          // requested session when set (else current) so a past-semester sub
-          // exports THAT semester and keeps its session, instead of silently
-          // switching to current and colliding with sibling-session subs.
-          const targetCtx =
-            sub.sessionId && sub.sessionId !== ctx.sessionId
-              ? await fetchSessionContextFor(api, sub.sessionId)
-              : ctx;
-          const result = await buildExternalSyncResult(
-            api,
-            sub.sourceType as ExternalSourceType,
-            sub.sourceId,
-            sub.sourceId,
-            targetCtx,
-          );
-          await applySyncResult(db, sub.id, result, targetCtx, fallback);
-        }
+        await applySyncResult(db, sub.id, result, ctx, fallback);
 
         console.log(
           JSON.stringify({
@@ -381,11 +364,22 @@ export async function processScheduleSyncBatch(
 
         message.ack();
       } catch (e) {
-        // A 401 means CQU rejected the bearer (expired/revoked/rebound) — drop the
-        // cached bearer so the retry re-mints (a revoked account then resolves to
-        // SESSION_INACTIVE and is skipped instead of looping on a stale token).
-        if (e instanceof CQUAPIError && e.statusCode === 401) {
-          await invalidateCquBearer(env, userId);
+        // Organic-harvest failures (瑞数 WAF challenge, needs_reauth, container
+        // timeout) are surfaced as HarvestError. Retrying the same harvest can't
+        // help within this interval (会话/WAF state won't change mid-batch) and
+        // only amplifies load + floods logs — treat as a止血 ack, no retry. The
+        // hourly cron re-attempts next interval.
+        if (e instanceof HarvestError) {
+          console.warn(
+            JSON.stringify({
+              event: "queue.schedule_sync.harvest_failed",
+              subscriptionId,
+              error: e.message,
+              message: "Harvest failed (WAF/needs_reauth/timeout); acking without retry",
+            }),
+          );
+          message.ack();
+          return;
         }
         const msg = e instanceof Error ? e.message : String(e);
         console.error(

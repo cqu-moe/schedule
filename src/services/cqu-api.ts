@@ -120,12 +120,12 @@ const ROOM_CODE_REGEX = /^[A-E][A-Z\d主理研二]\d/;
 
 // ── CQU API response interfaces (key-path only) ────────────────────────────
 
-interface SessionListResponse {
+export interface SessionListResponse {
   curSessionId?: string;
   sessionFinder?: Array<{ id?: string; name?: string }>;
 }
 
-interface SessionDetailResponse {
+export interface SessionDetailResponse {
   data?: {
     id?: string;
     year?: string;
@@ -135,7 +135,7 @@ interface SessionDetailResponse {
   };
 }
 
-interface ScheduleResponse {
+export interface ScheduleResponse {
   classTimetableVOList?: Array<{
     courseName?: string;
     instructorName?: string;
@@ -149,7 +149,7 @@ interface ScheduleResponse {
   }>;
 }
 
-interface ExamListResponse {
+export interface ExamListResponse {
   status?: string;
   data?: {
     content?: Array<{
@@ -236,6 +236,129 @@ export function decodeStudentIdFromBearer(bearer: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse a CQU `my-table-detail` (or `{type}/table-detail`) response into
+ * {@link CourseEntry}[]. Pure — no I/O. Shared by the (retiring) CQUAPIClient
+ * and the organic-harvest path so course parsing stays identical.
+ */
+export function parseCourses(data: ScheduleResponse): CourseEntry[] {
+  const courses: CourseEntry[] = [];
+  const timetableList = data.classTimetableVOList ?? [];
+
+  for (const item of timetableList) {
+    const teachingWeek: string = item.teachingWeek ?? "";
+    const weeks: number[] = [];
+    for (let i = 0; i < teachingWeek.length; i++) {
+      if (teachingWeek[i] === "1") weeks.push(i + 1);
+    }
+    if (weeks.length === 0) continue;
+
+    const period: string = item.period ?? "";
+    if (!period) continue;
+
+    const firstOne = period.indexOf("1");
+    const lastOne = period.lastIndexOf("1");
+    if (firstOne === -1) continue;
+
+    const startSession = firstOne + 1;
+    const endSession = lastOne + 1;
+
+    let lecturer: string = item.instructorName ?? "";
+    const lecturerMatch = LECTURER_REGEX.exec(lecturer);
+    if (lecturerMatch) {
+      lecturer = lecturerMatch[1];
+    }
+
+    const rawRoom = item.roomName ?? "";
+    const rawPosition = item.position ?? item.campusName ?? "";
+    let room: string;
+    let position: string;
+
+    if (ROOM_CODE_REGEX.test(rawRoom)) {
+      room = rawRoom;
+      position = rawPosition;
+    } else if (ROOM_CODE_REGEX.test(rawPosition)) {
+      room = rawPosition;
+      position = rawRoom;
+    } else {
+      room = rawRoom;
+      position = rawPosition;
+      if (rawRoom || rawPosition) {
+        console.warn(JSON.stringify({ event: "cqu_api.parse.unknown_room_format", roomName: rawRoom, position: rawPosition, course: item.courseName, message: "Neither roomName nor position matches room code pattern" }));
+      }
+    }
+
+    const experimentName = item.exprProjectName?.trim() || undefined;
+
+    courses.push({
+      name: item.courseName ?? "",
+      lecturer,
+      room,
+      position,
+      day_of_week: Number(item.weekDay ?? 1),
+      start_session: startSession,
+      end_session: endSession,
+      weeks,
+      ...(experimentName ? { experiment_name: experimentName } : {}),
+    });
+  }
+
+  return courses;
+}
+
+/**
+ * Parse a CQU `get-student-exam-list` response into {@link ExamEntry}[]. Pure.
+ * Shared by the (retiring) CQUAPIClient and the organic-harvest path.
+ */
+export function parseExams(data: ExamListResponse): ExamEntry[] {
+  const exams: ExamEntry[] = [];
+
+  if (data.status !== "success") return [];
+
+  const examList = data.data?.content ?? [];
+
+  for (const item of examList) {
+    try {
+      const examDateStr: string = item.examDate ?? "";
+      const startTimeStr: string = item.startTime ?? "";
+      const endTimeStr: string = item.endTime ?? "";
+
+      if (!examDateStr || !startTimeStr || !endTimeStr) continue;
+
+      const examDate = new Date(examDateStr);
+      if (isNaN(examDate.getTime())) continue;
+
+      const [startH, startM] = startTimeStr.split(":").map(Number);
+      const [endH, endM] = endTimeStr.split(":").map(Number);
+
+      const year = examDate.getFullYear();
+      const month = examDate.getMonth();
+      const day = examDate.getDate();
+
+      const startDt = new Date(
+        Date.UTC(year, month, day, startH, startM) - CHINA_TZ_OFFSET_MS,
+      );
+      const endDt = new Date(
+        Date.UTC(year, month, day, endH, endM) - CHINA_TZ_OFFSET_MS,
+      );
+
+      const seatNum = Number(item.seatNum ?? 0) || 0;
+
+      exams.push({
+        name: `${item.courseName ?? ""}考试`,
+        room: item.roomName ?? "",
+        seat: seatNum,
+        start_time: formatChinaIso(startDt),
+        end_time: formatChinaIso(endDt),
+      });
+    } catch {
+      // skip invalid exam data
+    }
+  }
+
+  return exams;
 }
 
 export class CQUAPIClient {
@@ -376,68 +499,7 @@ export class CQUAPIClient {
   }
 
   private parseCourses(data: ScheduleResponse): CourseEntry[] {
-    const courses: CourseEntry[] = [];
-    const timetableList = data.classTimetableVOList ?? [];
-
-    for (const item of timetableList) {
-      const teachingWeek: string = item.teachingWeek ?? "";
-      const weeks: number[] = [];
-      for (let i = 0; i < teachingWeek.length; i++) {
-        if (teachingWeek[i] === "1") weeks.push(i + 1);
-      }
-      if (weeks.length === 0) continue;
-
-      const period: string = item.period ?? "";
-      if (!period) continue;
-
-      const firstOne = period.indexOf("1");
-      const lastOne = period.lastIndexOf("1");
-      if (firstOne === -1) continue;
-
-      const startSession = firstOne + 1;
-      const endSession = lastOne + 1;
-
-      let lecturer: string = item.instructorName ?? "";
-      const lecturerMatch = LECTURER_REGEX.exec(lecturer);
-      if (lecturerMatch) {
-        lecturer = lecturerMatch[1];
-      }
-
-      const rawRoom = item.roomName ?? "";
-      const rawPosition = item.position ?? item.campusName ?? "";
-      let room: string;
-      let position: string;
-
-      if (ROOM_CODE_REGEX.test(rawRoom)) {
-        room = rawRoom;
-        position = rawPosition;
-      } else if (ROOM_CODE_REGEX.test(rawPosition)) {
-        room = rawPosition;
-        position = rawRoom;
-      } else {
-        room = rawRoom;
-        position = rawPosition;
-        if (rawRoom || rawPosition) {
-          console.warn(JSON.stringify({ event: "cqu_api.parse.unknown_room_format", roomName: rawRoom, position: rawPosition, course: item.courseName, message: "Neither roomName nor position matches room code pattern" }));
-        }
-      }
-
-      const experimentName = item.exprProjectName?.trim() || undefined;
-
-      courses.push({
-        name: item.courseName ?? "",
-        lecturer,
-        room,
-        position,
-        day_of_week: Number(item.weekDay ?? 1),
-        start_session: startSession,
-        end_session: endSession,
-        weeks,
-        ...(experimentName ? { experiment_name: experimentName } : {}),
-      });
-    }
-
-    return courses;
+    return parseCourses(data);
   }
 
   async getExams(): Promise<ExamEntry[]> {
@@ -446,56 +508,7 @@ export class CQUAPIClient {
   }
 
   private parseExams(data: ExamListResponse): ExamEntry[] {
-    const exams: ExamEntry[] = [];
-
-    if (data.status !== "success") return [];
-
-    const examList = data.data?.content ?? [];
-
-    for (const item of examList) {
-      try {
-        const examDateStr: string = item.examDate ?? "";
-        const startTimeStr: string = item.startTime ?? "";
-        const endTimeStr: string = item.endTime ?? "";
-
-        if (!examDateStr || !startTimeStr || !endTimeStr) continue;
-
-        // Parse exam date (ISO format from API)
-        const examDate = new Date(examDateStr);
-        if (isNaN(examDate.getTime())) continue;
-
-        // Parse HH:MM time strings
-        const [startH, startM] = startTimeStr.split(":").map(Number);
-        const [endH, endM] = endTimeStr.split(":").map(Number);
-
-        // Create China timezone datetimes
-        // Construct UTC times representing China local time
-        const year = examDate.getFullYear();
-        const month = examDate.getMonth();
-        const day = examDate.getDate();
-
-        const startDt = new Date(
-          Date.UTC(year, month, day, startH, startM) - CHINA_TZ_OFFSET_MS,
-        );
-        const endDt = new Date(
-          Date.UTC(year, month, day, endH, endM) - CHINA_TZ_OFFSET_MS,
-        );
-
-        const seatNum = Number(item.seatNum ?? 0) || 0;
-
-        exams.push({
-          name: `${item.courseName ?? ""}考试`,
-          room: item.roomName ?? "",
-          seat: seatNum,
-          start_time: formatChinaIso(startDt),
-          end_time: formatChinaIso(endDt),
-        });
-      } catch {
-        // skip invalid exam data
-      }
-    }
-
-    return exams;
+    return parseExams(data);
   }
 
   // ── Search methods ──

@@ -136,7 +136,7 @@ describe('Add view (v2)', () => {
     expect(wrapper.text()).not.toContain('我的全部课表')
   })
 
-  it('renders 5 external source type tabs when can("external")', async () => {
+  it.skip('renders 5 external source type tabs when can("external")', async () => {
     const { wrapper } = await mountAdd()
     const text = wrapper.text()
     expect(text).toContain('教师')
@@ -146,12 +146,43 @@ describe('Add view (v2)', () => {
     expect(text).toContain('行政班')
   })
 
-  it('shows "未开通" hint and hides search when !can("external")', async () => {
+  it.skip('shows "未开通" hint and hides search when !can("external")', async () => {
     const { wrapper } = await mountAdd([], CAPS_NO_EXTERNAL)
     expect(wrapper.text()).toContain('未开通')
     // The search input should not exist
     const input = wrapper.find('input')
     expect(input.exists()).toBe(false)
+  })
+
+  // ── 外部课表软禁用 ────────────────────────────────────────────────────────────
+  describe('external soft-disabled', () => {
+    it('shows "暂不可用" for the external section even with external cap', async () => {
+      const { wrapper } = await mountAdd() // CAPS_FULL has external:true
+      expect(wrapper.text()).toContain('暂不可用')
+    })
+
+    it('renders no search input and no source-type tabs (disabled)', async () => {
+      const { wrapper } = await mountAdd()
+      // The external search input must not exist.
+      expect(wrapper.find('input').exists()).toBe(false)
+      // No tab labels rendered.
+      expect(wrapper.text()).not.toContain('实验室')
+    })
+
+    it('does not call searchExternal under any input', async () => {
+      const { wrapper } = await mountAdd()
+      // No input to type into → search can never fire.
+      expect(wrapper.find('input').exists()).toBe(false)
+      expect(mockApi.searchExternal).not.toHaveBeenCalled()
+    })
+
+    it('never mentions 瑞数 / WAF / 风控 in the external section', async () => {
+      const { wrapper } = await mountAdd()
+      const text = wrapper.text()
+      expect(text).not.toContain('瑞数')
+      expect(text).not.toContain('WAF')
+      expect(text).not.toContain('风控')
+    })
   })
 
   // ── Personal subscription: NO sourceId ────────────────────────────────────
@@ -215,9 +246,11 @@ describe('Add view (v2)', () => {
     expect(mockToast.success).toHaveBeenCalledWith(expect.stringContaining('已订阅'))
   })
 
-  // ── External search ────────────────────────────────────────────────────────
+  // ── External search (SKIPPED while EXTERNAL_DISABLED) ────────────────────────
+  //  External timetable UI is hidden; restore these (.skip → it) when external
+  //  subscriptions are re-enabled.
 
-  it('search triggers api.searchExternal after 300ms debounce', async () => {
+  it.skip('search triggers api.searchExternal after 300ms debounce', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockResolvedValue({ results: [] })
 
@@ -238,7 +271,7 @@ describe('Add view (v2)', () => {
     )
   })
 
-  it('does not search for keywords < 2 chars (non-admin_class)', async () => {
+  it.skip('does not search for keywords < 2 chars (non-admin_class)', async () => {
     vi.useFakeTimers()
 
     const { wrapper } = await mountAdd()
@@ -252,7 +285,7 @@ describe('Add view (v2)', () => {
     expect(mockApi.searchExternal).not.toHaveBeenCalled()
   })
 
-  it('renders external search results', async () => {
+  it.skip('renders external search results', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockResolvedValue({
       results: [
@@ -274,7 +307,7 @@ describe('Add view (v2)', () => {
     expect(wrapper.text()).toContain('李四')
   })
 
-  it('shows "已订阅" for items matching existing external subscriptions', async () => {
+  it.skip('shows "已订阅" for items matching existing external subscriptions', async () => {
     vi.useFakeTimers()
     const existingSub = mockSubscription({
       source_type: 'instructor',
@@ -301,7 +334,7 @@ describe('Add view (v2)', () => {
     expect(subscribedButtons.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('calls api.createSubscription WITH sourceId for external subscribe', async () => {
+  it.skip('calls api.createSubscription WITH sourceId for external subscribe', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockResolvedValue({
       results: [{ id: 'teacher-1', name: '张三', extra: '' }],
@@ -343,7 +376,7 @@ describe('Add view (v2)', () => {
     expect(externalCall![0].isPersonal).not.toBe(true)
   })
 
-  it('shows "未找到结果" when search returns empty', async () => {
+  it.skip('shows "未找到结果" when search returns empty', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockResolvedValue({ results: [] })
 
@@ -358,7 +391,7 @@ describe('Add view (v2)', () => {
     expect(wrapper.text()).toContain('未找到结果')
   })
 
-  it('shows inline error in Alert when search fails', async () => {
+  it.skip('shows inline error in Alert when search fails', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockRejectedValue({
       response: {
@@ -379,7 +412,7 @@ describe('Add view (v2)', () => {
 
   // ── 409 CQU_SESSION_INACTIVE ───────────────────────────────────────────────
 
-  it('shows friendly "CQU 未绑定" message on 409 CQU_SESSION_INACTIVE', async () => {
+  it.skip('shows friendly "CQU 未绑定" message on 409 CQU_SESSION_INACTIVE', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockRejectedValue({
       response: {
@@ -401,7 +434,7 @@ describe('Add view (v2)', () => {
 
   // ── Sub limit ─────────────────────────────────────────────────────────────────
 
-  it('disables external subscribe buttons when at sub_limit', async () => {
+  it.skip('disables external subscribe buttons when at sub_limit', async () => {
     vi.useFakeTimers()
     mockApi.searchExternal.mockResolvedValue({
       results: [{ id: 'teacher-1', name: '张三', extra: '' }],
@@ -425,7 +458,7 @@ describe('Add view (v2)', () => {
 
   // ── Department loading ────────────────────────────────────────────────────────
 
-  it('loads departments when switching to admin_class tab', async () => {
+  it.skip('loads departments when switching to admin_class tab', async () => {
     const { wrapper } = await mountAdd()
 
     const tabsStub = wrapper.findComponent(componentStubs.Tabs as any)
@@ -437,7 +470,7 @@ describe('Add view (v2)', () => {
 
   // ── Race condition: out-of-order search responses ─────────────────────────────
 
-  it('discards stale out-of-order search response via searchSeq guard', async () => {
+  it.skip('discards stale out-of-order search response via searchSeq guard', async () => {
     vi.useFakeTimers()
 
     // Helper to create a manually-resolved promise

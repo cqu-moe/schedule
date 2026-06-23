@@ -79,16 +79,30 @@
         <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           外部订阅
           <span
-            v-if="!session.can('external')"
+            v-if="EXTERNAL_DISABLED"
+            class="ml-2 text-xs font-normal normal-case tracking-normal bg-muted text-muted-foreground px-1.5 py-0.5 rounded"
+          >
+            暂不可用
+          </span>
+          <span
+            v-else-if="!session.can('external')"
             class="ml-2 text-xs font-normal normal-case tracking-normal bg-muted text-muted-foreground px-1.5 py-0.5 rounded"
           >
             未开通
           </span>
         </h2>
 
+        <!-- Soft-disabled: external timetables temporarily unavailable -->
+        <div
+          v-if="EXTERNAL_DISABLED"
+          class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
+        >
+          外部订阅（教师、教室、课程、行政班等）功能暂不可用。
+        </div>
+
         <!-- Not enabled hint -->
         <div
-          v-if="!session.can('external')"
+          v-else-if="!session.can('external')"
           class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
         >
           外部订阅（教师、教室、课程、行政班等）功能尚未开通。
@@ -271,6 +285,11 @@ import api from '@/api'
 import type { SearchResult, SourceType, DepartmentNode } from '@/types/api'
 import { parseApiError, apiErrorCode } from '@/utils/error'
 import { AUTH_BASE_URL } from '@/config/auth'
+
+// 外部课表软禁用(可逆):瑞数化后外部课表无法获取,前端隐藏入口标"暂不可用"。
+// 恢复只需把 EXTERNAL_DISABLED 改回 false。绝不在 UI 暴露瑞数/WAF/风控原因。
+const EXTERNAL_DISABLED = true
+
 import Navbar from '@/components/Navbar.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
