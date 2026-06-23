@@ -92,6 +92,12 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   const due: ScheduleSyncMessage[] = [];
 
   for (const sub of allSubs) {
+    // 外部订阅冻结(EXTERNAL_DISABLED):consumer 会 ack-skip 这些 sub 但不更新
+    // lastSyncedAt,所以若不在 producer 侧排除,每次 hourly cron 都会因"due"重新
+    // 入队 → 永不停止的空转入队 + skip_external_frozen 日志刷屏。冻结期间直接不
+    // 入队(非破坏性:不改库、不删数据;翻 EXTERNAL_DISABLED 即恢复)。
+    if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
+
     let caps = capsCache.get(sub.userId);
     if (caps === undefined) {
       caps = await readCaps(env, sub.userId);

@@ -245,6 +245,27 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
+  it("does NOT enqueue frozen external subs while EXTERNAL_DISABLED (no endless no-op churn)", async () => {
+    // A due external sub is frozen (soft-disabled): the consumer ack-skips it
+    // without touching lastSyncedAt, so without producer-side filtering it would
+    // be re-selected every hourly cron forever. The producer must exclude
+    // external sourceTypes while EXTERNAL_DISABLED so they are never enqueued.
+    // A due personal sub for the same user must still be enqueued.
+    const personalSid = await insertSub({ sourceType: "personal_all", sourceId: "user-1", lastSyncedAt: null });
+    await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false, lastSyncedAt: null });
+
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    const ids = batch.map((m) => m.body.subscriptionId);
+    expect(ids).toContain(personalSid); // personal still enqueued
+    expect(ids).toHaveLength(1); // external NOT enqueued
+  });
+
   it("does NOT enqueue a personal sub when the sync cap is revoked (caps.sync=false)", async () => {
     await insertSub({ userId: "user-revoked", lastSyncedAt: null }); // due, but downgraded
     await env.CACHE.put(
