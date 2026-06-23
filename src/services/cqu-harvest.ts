@@ -168,6 +168,17 @@ export async function fetchPersonalHarvest(
     }
   }
 
+  // 止血 invariant: never return data without a real semester begin_date. If
+  // Phase 2 errored (transient timeout/WAF/reauth) or returned no usable
+  // session/info, begin_date stays null → the consumer's ICS would use
+  // semesterStart="" (new Date("") is Invalid) → courses can't be dated → an
+  // empty/broken ICS would OVERWRITE the user's previously-valid calendar while
+  // marking it synced. Treat missing dates as a harvest failure so the consumer
+  // acks WITHOUT retry and leaves the existing calendar untouched.
+  if (ctx.semesterInfo.begin_date === null) {
+    throw new HarvestError("harvest missing semester dates");
+  }
+
   const data = mapHarvestToPersonalData(
     r1.captures,
     r1.fetches,

@@ -3,6 +3,7 @@ import {
   buildPersonalHarvestArgs,
   mapHarvestToSessionContext,
   mapHarvestToPersonalData,
+  fetchPersonalHarvest,
   HarvestError,
 } from "./cqu-harvest";
 import type { CquHarvestResult, HarvestEntry } from "./auth-rpc";
@@ -117,5 +118,64 @@ describe("mapHarvestToPersonalData", () => {
 
   it("throws HarvestError when the 课表 capture is missing entirely (harvest failed to fire it)", () => {
     expect(() => mapHarvestToPersonalData([], [], "2025-09-01")).toThrow(HarvestError);
+  });
+});
+
+describe("fetchPersonalHarvest", () => {
+  /** Phase-1 captures: 课表 + session/info-detail (curSessionId, no dates yet). */
+  function phase1Captures(): HarvestEntry[] {
+    return [
+      entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
+        classTimetableVOList: [],
+      }),
+      entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
+        curSessionId: "sess-9",
+        sessionFinder: [{ id: "sess-9", name: "2025秋" }],
+      }),
+    ];
+  }
+  /** Phase-1 in-page fetches: exam list only (no semester dates yet). */
+  function phase1Fetches(): HarvestEntry[] {
+    return [
+      entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
+        status: "success",
+        data: { content: [] },
+      }),
+    ];
+  }
+
+  it("returns typed ctx + data on the happy path (Phase 2 supplies semester dates)", async () => {
+    const cquHarvest = vi
+      .fn()
+      // Phase 1: 课表 + session-list captured, exam fetched (no dates).
+      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
+      // Phase 2: session/info/{id} GET returns the semester dates.
+      .mockResolvedValueOnce({
+        captures: [],
+        fetches: [
+          entry("https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9", {
+            data: { id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01 00:00:00", endDate: "2026-01-15 00:00:00" },
+          }),
+        ],
+      });
+    const env = { ...CLIENT, AUTH: { cquHarvest } } as never;
+
+    const { ctx, data } = await fetchPersonalHarvest(env, "user-1");
+    expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
+    expect(data.semesterStart).toBe("2025-09-01");
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects with HarvestError when Phase 2 errors and semester dates stay missing (止血: no broken-ICS overwrite)", async () => {
+    const cquHarvest = vi
+      .fn()
+      // Phase 1 OK but session/info-detail carries no semester dates → begin_date null.
+      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
+      // Phase 2 transient failure (timeout/WAF/reauth) — dates never arrive.
+      .mockResolvedValueOnce({ error: "CQU_WAF_BLOCKED" });
+    const env = { ...CLIENT, AUTH: { cquHarvest } } as never;
+
+    await expect(fetchPersonalHarvest(env, "user-1")).rejects.toBeInstanceOf(HarvestError);
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
   });
 });
