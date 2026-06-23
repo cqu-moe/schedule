@@ -1,14 +1,24 @@
 import { errorResponse } from "../utils/error";
 
 /**
- * 外部课表(按教师/教室/课程/行政班加别人的课表)软禁用开关 —— 可逆。
+ * 外部课表(按教师/教室/课程/行政班加别人的课表)禁用开关 —— Option A:诚实禁用。
  *
  * 背景:my.cqu.edu.cn 全站瑞数化后,外部课表的 `{type}/table-detail` POST 同属
  * 写专守,且必须交互选中后才查、无深链可自动 fire,organic harvest 无法覆盖
- * (详见 docs/plans/2026-06-23-cqu-organic-harvest-design.md §6/§9)。本期外部
- * 课表软禁用:前端隐藏入口 + 后端端点返回"暂不可用" + 已有外部订阅停止同步。
+ * (详见 docs/plans/2026-06-23-cqu-organic-harvest-design.md §6/§9)。
  *
- * 恢复:把 EXTERNAL_DISABLED 改回 false(或删除引用),数据从未删除,即时复活。
+ * ⚠️ 这个开关 **不是、也无法** 一翻即复活外部功能的可逆开关:本 PR 已**移除**外部
+ * harvest 能力(搜索/同步:按 instructor/room/course/admin_class 取数),因为它过不了
+ * 瑞数 WAF。因此:
+ *  - EXTERNAL_DISABLED 仅控制 **面向用户的提示 / 守卫**(前端隐藏入口、外部端点回
+ *    503"暂不可用"、外部订阅停止入队/同步);它 **不会、也不能** 恢复外部取数能力。
+ *  - 外部订阅在 consumer/producer 中是 **无条件硬跳过**(与本开关无关),永不走个人
+ *    harvest 路径——否则会把订阅主人自己的个人课表写进对外公开链接,污染数据
+ *    (见 src/cron/schedule-sync.ts)。
+ *  - 外部路由保持 503 是 **预期行为**,不是 bug。
+ *
+ * 重新启用外部:是一个 **未来的跨仓任务**,需要重新实现外部 search/sync 的取数路径
+ * (能过瑞数),而不仅仅是把此处翻回 false。数据从未删除,但仅翻此 flag 不能复活功能。
  */
 export const EXTERNAL_DISABLED = true;
 
