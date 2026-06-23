@@ -1,7 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
-import { getCquBearer, invalidateCquBearer } from "../../services/cqu-bearer";
 import { CQUAPIClient, CQUAPIError, type SearchResult } from "../../services/cqu-api";
 import { errorResponse, handleCquApiError } from "../../utils/error";
 
@@ -18,13 +17,13 @@ function entitlementError(e: unknown): Response {
   throw e;
 }
 
-// ── Shared bearer preamble for external (CQU教务) routes ────────────────────────
-//  Enforces the `external` calendar cap and mints the per-user CQU bearer
-//  (拓扑①). Returns either a ready CQUAPIClient, or a Response to short-circuit
-//  the route (403 if the cap is missing, 409 if the CQU session is not ready).
+// ── Shared preamble for external (CQU教务) routes ──────────────────────────────
+//  Enforces the `external` calendar cap, then short-circuits with a 503 while
+//  external schedules are soft-disabled (no organic-harvest 过墙 path for the
+//  external {type}/table-detail POST). Kept returning `CQUAPIClient | Response`
+//  so the call sites are ready to re-enable once an external harvest path lands.
 //  Rate limiting stays as route-level middleware and is NOT handled here.
 async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient | Response> {
-  const user = c.get("user");
   const caps = c.get("caps").calendar;
 
   try {
@@ -33,26 +32,17 @@ async function externalApiOrError(c: Context<SessionEnv>): Promise<CQUAPIClient 
     return entitlementError(e);
   }
 
-  const bearer = await getCquBearer(c.env, user.id);
-  if (!bearer) {
-    console.log(
-      JSON.stringify({
-        event: "external.v2.skip_no_bearer",
-        userId: user.id,
-        message: "No CQU bearer; user must (re)bind CQU",
-      }),
-    );
-    return errorResponse("CQU_SESSION_INACTIVE", "CQU 会话未就绪，请重新登录或绑定 CQU", 409);
-  }
-
-  return new CQUAPIClient(bearer);
+  // External schedules are soft-disabled while只有 personal 课表 has an organic-
+  // harvest 过墙 path (the external {type}/table-detail POST is瑞数 写专守). Return
+  // a neutral "unavailable" without exposing WAF internals. (Full soft-disable —
+  // frontend entry hiding + per-endpoint messaging — is a separate task.)
+  return errorResponse("EXTERNAL_UNAVAILABLE", "外部课表暂不可用", 503);
 }
 
 // ── GET /search — search external (public) timetable sources ──────────────────
 //  Gated by the `external` calendar cap. EXTERNAL_LIMITER is applied at the mount
-//  (before sessionMiddleware), not here. The CQU教务 bearer is minted per-user via
-//  getCquBearer (拓扑①); a null bearer means the user's CQU session is not
-//  bound/ready → 409 (re-login/bind required).
+//  (before sessionMiddleware), not here. Currently soft-disabled: externalApiOrError
+//  returns 503 EXTERNAL_UNAVAILABLE before any CQU教务 call.
 app.get("/search", async (c) => {
   const sourceType = c.req.query("source_type") ?? "";
   const keyword = c.req.query("keyword") ?? "";
@@ -105,8 +95,6 @@ app.get("/search", async (c) => {
     return c.json({ results });
   } catch (e) {
     if (e instanceof CQUAPIError) {
-      // 401 → bearer rejected by CQU; drop it so the next request re-mints.
-      if (e.statusCode === 401) await invalidateCquBearer(c.env, c.get("user").id);
       return handleCquApiError(c, e, "Search failed");
     }
     throw e;
@@ -124,7 +112,6 @@ app.get("/departments", async (c) => {
     return c.json({ departments });
   } catch (e) {
     if (e instanceof CQUAPIError) {
-      if (e.statusCode === 401) await invalidateCquBearer(c.env, c.get("user").id);
       return handleCquApiError(c, e, "Failed to load departments");
     }
     throw e;
