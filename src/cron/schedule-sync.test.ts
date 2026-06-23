@@ -324,17 +324,29 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(harvest).not.toHaveBeenCalledWith(expect.anything(), "20219999");
   });
 
-  it("freezes (ack-skips) an external subscription without harvesting", async () => {
-    const sid = await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false });
+  it("freezes external subscriptions: acks without retry, no harvest, lastSyncedAt unchanged", async () => {
+    // Pre-set lastSyncedAt to a known value so we can prove the freeze does NOT
+    // overwrite it (data preserved at the last-synced state, not deleted/reset).
+    const frozenAt = "2024-01-01T00:00:00.000Z";
+    const sid = await insertSub({
+      sourceType: "instructor",
+      sourceId: "T-42",
+      isPersonal: false,
+      lastSyncedAt: frozenAt,
+    });
     const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
 
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
+    // Acked (not retried — permanent skip), and no upstream harvest was attempted.
     expect(messages[0].ack).toHaveBeenCalled();
+    expect(messages[0].retry).not.toHaveBeenCalled();
     expect(harvest).not.toHaveBeenCalled();
+
+    // Data frozen: lastSyncedAt unchanged (no overwrite), row not deleted.
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
-    expect(row.lastSyncedAt).toBeNull(); // frozen, not deleted
+    expect(row.lastSyncedAt).toBe(frozenAt);
   });
 
   it("entitlement gate: acks without harvesting when the sync cap is revoked", async () => {

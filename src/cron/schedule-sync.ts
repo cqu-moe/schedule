@@ -3,8 +3,10 @@ import { eq } from "drizzle-orm";
 import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
+  EXTERNAL_SOURCE_TYPES,
   type SourceType,
 } from "../db/schema";
+import { EXTERNAL_DISABLED } from "../config/external-availability";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
 import { spreadEnqueue } from "../utils/queue";
@@ -302,17 +304,17 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        // External subscriptions are soft-disabled (organic-harvest covers only
-        // the personal 课表; the external `{type}/table-detail` POST is瑞数 写专守
-        // with no auto-firing deep link). Freeze existing external subs — ack-skip
-        // without syncing, never delete — per the soft-disable design.
-        if (!PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
+        // 外部订阅冻结(EXTERNAL_DISABLED):瑞数化后外部课表无法 harvest(external
+        // `{type}/table-detail` POST 同属写专守、无可自动 fire 的深链)。停止同步但
+        // 保留数据——不 harvest、不改 lastSyncedAt,订阅冻结在最后状态。ack 不 retry
+        // (永久跳过)。恢复只需翻 EXTERNAL_DISABLED,与路由/前端共用同一可逆开关。
+        if (EXTERNAL_DISABLED && EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
           console.log(
             JSON.stringify({
-              event: "queue.schedule_sync.skip_external_disabled",
+              event: "queue.schedule_sync.skip_external_frozen",
               subscriptionId,
               sourceType: sub.sourceType,
-              message: "External schedules are temporarily unavailable; freezing (no sync)",
+              message: "External subscription frozen (soft-disabled); acking without sync",
             }),
           );
           message.ack();
