@@ -44,6 +44,35 @@ function findEntry(entries: HarvestEntry[], needle: string): HarvestEntry | unde
   return entries.find((e) => e.url.includes(needle));
 }
 
+/** True for any non-2xx HTTP status (the harvest captured an error/challenge body). */
+function isNon2xx(status: number): boolean {
+  return status < 200 || status >= 300;
+}
+
+/**
+ * Resolve a REQUIRED harvest entry by URL substring, rejecting both absence AND a
+ * non-2xx status. A non-2xx required capture means the harvest browser recorded a
+ * challenge/error response (e.g. a 412 瑞数 challenge HTML or 401/5xx error JSON)
+ * instead of the real 课表/session body. Parsing that would either throw on
+ * JSON.parse or yield EMPTY courses/exams — and applying that empty result as a
+ * "successful" sync would WIPE the user's cached data. Treat it as a harvest
+ * failure so the consumer acks-without-retry and leaves the existing data intact.
+ */
+function requireEntry(
+  entries: HarvestEntry[],
+  needle: string,
+  label: string,
+): HarvestEntry {
+  const found = findEntry(entries, needle);
+  if (!found) {
+    throw new HarvestError(`harvest missing ${label} capture`);
+  }
+  if (isNon2xx(found.status)) {
+    throw new HarvestError(`harvest ${label} capture returned non-2xx status ${found.status}`);
+  }
+  return found;
+}
+
 function parseBody<T>(entry: HarvestEntry): T {
   return JSON.parse(entry.body) as T;
 }
@@ -75,10 +104,9 @@ export function mapHarvestToSessionContext(
   captures: HarvestEntry[],
   fetches: HarvestEntry[],
 ): SessionContext {
-  const listEntry = findEntry(captures, CAPTURE_SESSION_LIST);
-  if (!listEntry) {
-    throw new HarvestError("harvest missing session/info-detail capture");
-  }
+  // Required capture: a non-2xx (412 challenge / 401 / 5xx) here is a harvest
+  // failure, not a legitimately-empty session (which would clobber cached data).
+  const listEntry = requireEntry(captures, CAPTURE_SESSION_LIST, "session/info-detail");
   const list = parseBody<SessionListResponse>(listEntry);
   const sessionId = list.curSessionId ?? "";
 
@@ -116,14 +144,19 @@ export function mapHarvestToPersonalData(
   fetches: HarvestEntry[],
   semesterStart: string,
 ): PersonalScheduleData {
-  const tableEntry = findEntry(captures, CAPTURE_TABLE);
-  if (!tableEntry) {
-    throw new HarvestError("harvest missing my-table-detail capture");
-  }
+  // Required capture: reject absence AND non-2xx (412 challenge / 401 / 5xx). An
+  // error body parses to EMPTY courses, and applying that empty result as a
+  // "successful" sync would WIPE the user's cached 课表 — so fail the harvest.
+  const tableEntry = requireEntry(captures, CAPTURE_TABLE, "my-table-detail");
   const courses = parseCourses(parseBody<ScheduleResponse>(tableEntry));
 
+  // The exam fetch is OPTIONAL: a missing OR non-2xx entry degrades to empty
+  // exams (don't fail the whole harvest over the secondary read-豁免 GET).
   const examEntry = findEntry(fetches, "get-student-exam-list");
-  const exams = examEntry ? parseExams(parseBody<ExamListResponse>(examEntry)) : [];
+  const exams =
+    examEntry && !isNon2xx(examEntry.status)
+      ? parseExams(parseBody<ExamListResponse>(examEntry))
+      : [];
 
   return { courses, exams, semesterStart };
 }

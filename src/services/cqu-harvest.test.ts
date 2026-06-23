@@ -19,6 +19,12 @@ function entry(url: string, body: unknown): HarvestEntry {
   return { url, status: 200, contentType: "application/json", body: JSON.stringify(body) };
 }
 
+/** Like `entry` but with an explicit (typically non-2xx) status code. */
+function entryWithStatus(url: string, status: number, body: unknown): HarvestEntry {
+  const raw = typeof body === "string" ? body : JSON.stringify(body);
+  return { url, status, contentType: "text/html", body: raw };
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("buildPersonalHarvestArgs", () => {
@@ -71,6 +77,20 @@ describe("mapHarvestToSessionContext", () => {
   it("throws HarvestError when no session/info-detail capture is present", () => {
     expect(() => mapHarvestToSessionContext([], [])).toThrow(HarvestError);
   });
+
+  it("throws HarvestError when the session/info-detail capture is non-2xx (challenge/error body)", () => {
+    // A 412 瑞数 challenge (or 401/5xx) on the required session capture must NOT
+    // be parsed as a successful (empty) result — that would wipe the cached
+    // session/semester. Treat a non-2xx required capture as a harvest failure.
+    const captures = [
+      entryWithStatus(
+        "https://my.cqu.edu.cn/api/resourceapi/session/info-detail",
+        412,
+        "<html>瑞数 challenge</html>",
+      ),
+    ];
+    expect(() => mapHarvestToSessionContext(captures, [])).toThrow(HarvestError);
+  });
 });
 
 describe("mapHarvestToPersonalData", () => {
@@ -118,6 +138,40 @@ describe("mapHarvestToPersonalData", () => {
 
   it("throws HarvestError when the 课表 capture is missing entirely (harvest failed to fire it)", () => {
     expect(() => mapHarvestToPersonalData([], [], "2025-09-01")).toThrow(HarvestError);
+  });
+
+  it("throws HarvestError when the my-table-detail capture is non-2xx (412 challenge → no empty-courses overwrite)", () => {
+    // The 课表 capture came back 401/412/5xx (challenge HTML or error JSON). Feeding
+    // that to parseCourses yields EMPTY courses, which — applied as a "successful"
+    // sync — would WIPE the user's cached 课表. Reject the non-2xx required capture.
+    const captures = [
+      entryWithStatus(
+        "https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail",
+        412,
+        "<html>瑞数 challenge</html>",
+      ),
+    ];
+    expect(() => mapHarvestToPersonalData(captures, [], "2025-09-01")).toThrow(HarvestError);
+  });
+
+  it("degrades a non-2xx exam fetch to empty exams (optional; does NOT throw)", () => {
+    // The exam fetch is OPTIONAL — a non-2xx there degrades to empty exams (matching
+    // the missing-entry behavior), but must not fail the whole harvest.
+    const captures = [
+      entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
+        classTimetableVOList: [],
+      }),
+    ];
+    const fetches = [
+      entryWithStatus(
+        "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list",
+        500,
+        "<html>error</html>",
+      ),
+    ];
+    const data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
+    expect(data.courses).toEqual([]);
+    expect(data.exams).toEqual([]);
   });
 });
 
