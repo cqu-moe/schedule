@@ -91,6 +91,38 @@ describe("mapHarvestToSessionContext", () => {
     ];
     expect(() => mapHarvestToSessionContext(captures, [])).toThrow(HarvestError);
   });
+
+  it("throws HarvestError (not SyntaxError) when the session/info/{id} semester-detail fetch is non-2xx", () => {
+    // The session-list capture is fine (2xx) but the session/info/{id} semester
+    // detail FETCH came back 412/401/5xx with an HTML challenge body. Running
+    // JSON.parse on that HTML would throw a plain SyntaxError → the queue consumer
+    // treats it as a GENERIC failure and RETRIES (amplifying load mid-WAF) instead
+    // of the ack-no-retry HarvestError path. The non-2xx required detail fetch must
+    // surface as a HarvestError.
+    const captures = [
+      entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
+        curSessionId: "sess-9",
+        sessionFinder: [{ id: "sess-9", name: "2025秋" }],
+      }),
+    ];
+    const fetches = [
+      entryWithStatus(
+        "https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9",
+        412,
+        "<html>瑞数 challenge</html>",
+      ),
+    ];
+    let thrown: unknown;
+    try {
+      mapHarvestToSessionContext(captures, fetches);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(HarvestError);
+    // Guard the bug precisely: a raw SyntaxError (JSON.parse on HTML) means the
+    // entry parse was NOT routed through the non-2xx guard.
+    expect(thrown).not.toBeInstanceOf(SyntaxError);
+  });
 });
 
 describe("mapHarvestToPersonalData", () => {
@@ -172,6 +204,34 @@ describe("mapHarvestToPersonalData", () => {
     const data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
     expect(data.courses).toEqual([]);
     expect(data.exams).toEqual([]);
+  });
+
+  it("degrades a 2xx-but-unparseable exam fetch to empty exams (no SyntaxError throw)", () => {
+    // Even a 2xx exam entry can carry a truncated/HTML body (proxy hiccup). The
+    // OPTIONAL exam parse must swallow a JSON.parse failure → empty exams, NOT
+    // throw a SyntaxError that would fail (and retry) the whole personal harvest.
+    const captures = [
+      entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
+        classTimetableVOList: [],
+      }),
+    ];
+    const fetches: HarvestEntry[] = [
+      {
+        url: "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list",
+        status: 200,
+        contentType: "application/json",
+        body: "{not valid json",
+      },
+    ];
+    let thrown: unknown;
+    let data: ReturnType<typeof mapHarvestToPersonalData> | undefined;
+    try {
+      data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeUndefined();
+    expect(data?.exams).toEqual([]);
   });
 });
 

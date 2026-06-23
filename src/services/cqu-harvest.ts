@@ -73,8 +73,45 @@ function requireEntry(
   return found;
 }
 
-function parseBody<T>(entry: HarvestEntry): T {
-  return JSON.parse(entry.body) as T;
+/**
+ * Centralized entry-body parse — the ONE place a harvest entry body becomes JSON.
+ * Guards every path against two failure modes a `JSON.parse` would otherwise let
+ * slip through as the WRONG kind of error:
+ *
+ *  1. Non-2xx status — the harvest captured a challenge/error body (a 412 瑞数
+ *     challenge HTML, a 401/5xx error). Parsing it would either throw a plain
+ *     SyntaxError (on HTML) or yield EMPTY data (on `{}`-ish error JSON).
+ *  2. Unparseable 2xx body — a truncated/HTML body from a proxy hiccup. A raw
+ *     `JSON.parse` throws a plain `SyntaxError`.
+ *
+ * For a REQUIRED entry either mode throws {@link HarvestError} so the queue
+ * consumer acks-without-retry (止血) instead of treating a SyntaxError as a
+ * GENERIC failure and RETRYING. For an OPTIONAL entry either mode returns `null`
+ * so the caller degrades (e.g. empty exams) without failing the whole harvest.
+ *
+ * Pre-resolved (non-null) entries only — absence of a REQUIRED capture is handled
+ * by {@link requireEntry} before this is called.
+ */
+function parseEntry<T>(entry: HarvestEntry, opts: { required: true }): T;
+function parseEntry<T>(entry: HarvestEntry, opts: { required: false }): T | null;
+function parseEntry<T>(entry: HarvestEntry, opts: { required: boolean }): T | null {
+  if (isNon2xx(entry.status)) {
+    if (opts.required) {
+      throw new HarvestError(
+        `harvest entry ${entry.url} returned non-2xx status ${entry.status}`,
+      );
+    }
+    return null;
+  }
+  try {
+    return JSON.parse(entry.body) as T;
+  } catch (e) {
+    if (opts.required) {
+      const reason = e instanceof Error ? e.message : String(e);
+      throw new HarvestError(`harvest entry ${entry.url} body is not valid JSON: ${reason}`);
+    }
+    return null;
+  }
 }
 
 /**
@@ -107,7 +144,7 @@ export function mapHarvestToSessionContext(
   // Required capture: a non-2xx (412 challenge / 401 / 5xx) here is a harvest
   // failure, not a legitimately-empty session (which would clobber cached data).
   const listEntry = requireEntry(captures, CAPTURE_SESSION_LIST, "session/info-detail");
-  const list = parseBody<SessionListResponse>(listEntry);
+  const list = parseEntry<SessionListResponse>(listEntry, { required: true });
   const sessionId = list.curSessionId ?? "";
 
   // Match curSessionId's display name from the finder list (best-effort).
@@ -117,7 +154,11 @@ export function mapHarvestToSessionContext(
     ?? findEntry(fetches, "session/info/");
   let semesterInfo: SemesterInfo;
   if (detailEntry) {
-    const detail = parseBody<SessionDetailResponse>(detailEntry).data ?? {};
+    // REQUIRED when present: a non-2xx (412 challenge / 401 / 5xx) or unparseable
+    // semester-detail body must surface as a HarvestError (ack-no-retry), NOT a raw
+    // SyntaxError from JSON.parse-ing challenge HTML (which the consumer would treat
+    // as a generic failure and RETRY mid-WAF).
+    const detail = parseEntry<SessionDetailResponse>(detailEntry, { required: true }).data ?? {};
     const beginDate = detail.beginDate ?? "";
     const endDate = detail.endDate ?? "";
     semesterInfo = {
@@ -148,15 +189,14 @@ export function mapHarvestToPersonalData(
   // error body parses to EMPTY courses, and applying that empty result as a
   // "successful" sync would WIPE the user's cached 课表 — so fail the harvest.
   const tableEntry = requireEntry(captures, CAPTURE_TABLE, "my-table-detail");
-  const courses = parseCourses(parseBody<ScheduleResponse>(tableEntry));
+  const courses = parseCourses(parseEntry<ScheduleResponse>(tableEntry, { required: true }));
 
-  // The exam fetch is OPTIONAL: a missing OR non-2xx entry degrades to empty
-  // exams (don't fail the whole harvest over the secondary read-豁免 GET).
+  // The exam fetch is OPTIONAL: a missing, non-2xx, OR unparseable entry degrades
+  // to empty exams (don't fail the whole harvest over the secondary read-豁免 GET;
+  // parseEntry returns null on non-2xx/parse-fail rather than throwing SyntaxError).
   const examEntry = findEntry(fetches, "get-student-exam-list");
-  const exams =
-    examEntry && !isNon2xx(examEntry.status)
-      ? parseExams(parseBody<ExamListResponse>(examEntry))
-      : [];
+  const examBody = examEntry ? parseEntry<ExamListResponse>(examEntry, { required: false }) : null;
+  const exams = examBody ? parseExams(examBody) : [];
 
   return { courses, exams, semesterStart };
 }
