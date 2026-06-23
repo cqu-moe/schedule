@@ -191,11 +191,17 @@ export function mapHarvestToPersonalData(
   const tableEntry = requireEntry(captures, CAPTURE_TABLE, "my-table-detail");
   const courses = parseCourses(parseEntry<ScheduleResponse>(tableEntry, { required: true }));
 
-  // The exam fetch is OPTIONAL: a missing, non-2xx, OR unparseable entry degrades
-  // to empty exams (don't fail the whole harvest over the secondary read-豁免 GET;
-  // parseEntry returns null on non-2xx/parse-fail rather than throwing SyntaxError).
+  // The exam fetch is REQUIRED-WHEN-PRESENT (round-4 [P1 DATA LOSS] fix): a MISSING
+  // entry degrades to empty exams (absence is not a captured failure), but a PRESENT
+  // entry that is non-2xx (412 瑞数 challenge / 401 / 5xx) or 2xx-but-unparseable is a
+  // harvest FAILURE — NOT empty exams. Degrading those to [] and applying the result
+  // as a "successful" sync would OVERWRITE a previously-valid exam calendar
+  // (personal_exams, and the exam slice of personal_all) with nothing. parseEntry's
+  // `required: true` throws HarvestError on both modes → the consumer acks-without-
+  // retry and leaves the cached exams intact. A genuine 2xx exam body with an empty
+  // content list ({data:{content:[]}}) is still a valid empty-exams result.
   const examEntry = findEntry(fetches, "get-student-exam-list");
-  const examBody = examEntry ? parseEntry<ExamListResponse>(examEntry, { required: false }) : null;
+  const examBody = examEntry ? parseEntry<ExamListResponse>(examEntry, { required: true }) : null;
   const exams = examBody ? parseExams(examBody) : [];
 
   return { courses, exams, semesterStart };

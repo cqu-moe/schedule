@@ -186,9 +186,13 @@ describe("mapHarvestToPersonalData", () => {
     expect(() => mapHarvestToPersonalData(captures, [], "2025-09-01")).toThrow(HarvestError);
   });
 
-  it("degrades a non-2xx exam fetch to empty exams (optional; does NOT throw)", () => {
-    // The exam fetch is OPTIONAL — a non-2xx there degrades to empty exams (matching
-    // the missing-entry behavior), but must not fail the whole harvest.
+  it("throws HarvestError when the exam fetch is PRESENT-but-non-2xx (no exam-data loss)", () => {
+    // Round-4 [P1 DATA LOSS]: the exam fetch is REQUIRED-when-present. A present-but
+    // non-2xx exam entry (412 瑞数 challenge / 401 / 5xx) used to DEGRADE to empty
+    // exams; applying that empty result as a "successful" sync overwrites a
+    // previously-valid exam calendar (personal_exams / the exam slice of
+    // personal_all) with nothing. Treat a present non-2xx exam capture as a harvest
+    // FAILURE so the consumer acks-without-retry and leaves the cached exams intact.
     const captures = [
       entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
         classTimetableVOList: [],
@@ -197,19 +201,18 @@ describe("mapHarvestToPersonalData", () => {
     const fetches = [
       entryWithStatus(
         "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list",
-        500,
-        "<html>error</html>",
+        412,
+        "<html>瑞数 challenge</html>",
       ),
     ];
-    const data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
-    expect(data.courses).toEqual([]);
-    expect(data.exams).toEqual([]);
+    expect(() => mapHarvestToPersonalData(captures, fetches, "2025-09-01")).toThrow(HarvestError);
   });
 
-  it("degrades a 2xx-but-unparseable exam fetch to empty exams (no SyntaxError throw)", () => {
-    // Even a 2xx exam entry can carry a truncated/HTML body (proxy hiccup). The
-    // OPTIONAL exam parse must swallow a JSON.parse failure → empty exams, NOT
-    // throw a SyntaxError that would fail (and retry) the whole personal harvest.
+  it("throws HarvestError (not SyntaxError) when the exam fetch is 2xx-but-unparseable", () => {
+    // Even a 2xx exam entry can carry a truncated/HTML body (proxy hiccup). Parsing
+    // it as JSON would throw a raw SyntaxError → the consumer treats it as a GENERIC
+    // failure and RETRIES (amplifying load mid-WAF). The REQUIRED-when-present exam
+    // parse must surface a HarvestError instead (ack-no-retry, no exam-data loss).
     const captures = [
       entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
         classTimetableVOList: [],
@@ -224,14 +227,46 @@ describe("mapHarvestToPersonalData", () => {
       },
     ];
     let thrown: unknown;
-    let data: ReturnType<typeof mapHarvestToPersonalData> | undefined;
     try {
-      data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
+      mapHarvestToPersonalData(captures, fetches, "2025-09-01");
     } catch (e) {
       thrown = e;
     }
-    expect(thrown).toBeUndefined();
-    expect(data?.exams).toEqual([]);
+    expect(thrown).toBeInstanceOf(HarvestError);
+    expect(thrown).not.toBeInstanceOf(SyntaxError);
+  });
+
+  it("a genuine 2xx exam response with an empty content list → empty exams (no throw)", () => {
+    // A REAL 2xx exam body that legitimately has no exams ({data:{content:[]}}) is a
+    // VALID empty-exams result, NOT a failure — only a non-2xx/parse-failure is an
+    // error. The harvest must succeed with exams=[].
+    const captures = [
+      entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
+        classTimetableVOList: [],
+      }),
+    ];
+    const fetches = [
+      entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
+        status: "success",
+        data: { content: [] },
+      }),
+    ];
+    const data = mapHarvestToPersonalData(captures, fetches, "2025-09-01");
+    expect(data.courses).toEqual([]);
+    expect(data.exams).toEqual([]);
+  });
+
+  it("a MISSING exam fetch → empty exams (no throw) — absence is not a captured failure", () => {
+    // When the exam fetch entry is absent entirely (recipe ran without it), that is
+    // NOT a captured error body — degrade to empty exams rather than failing the
+    // whole personal harvest. (Only a PRESENT-but-non-2xx/unparseable entry fails.)
+    const captures = [
+      entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
+        classTimetableVOList: [],
+      }),
+    ];
+    const data = mapHarvestToPersonalData(captures, [], "2025-09-01");
+    expect(data.exams).toEqual([]);
   });
 });
 
