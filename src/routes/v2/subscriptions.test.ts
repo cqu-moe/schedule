@@ -300,7 +300,10 @@ describe("POST /api/v2/subscriptions", () => {
     });
   });
 
-  it("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): creating an
+  // external (instructor) sub now short-circuits with 503 before is_personal
+  // derivation. The personal-type derivation is still covered by the test below.
+  it.skip("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
     const app = buildApp("userA");
     // Client lies: an external type (instructor) but claims isPersonal=true.
     const res = await app.request(
@@ -344,7 +347,10 @@ describe("POST /api/v2/subscriptions", () => {
     expect(row.sourceId).toBe("userA");
   });
 
-  it("keeps the client-supplied sourceId for external source types", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): adding an
+  // external sub now returns 503 before the row is written; restore when external
+  // re-enables.
+  it.skip("keeps the client-supplied sourceId for external source types", async () => {
     const app = buildApp("userA");
     const res = await app.request(
       "/",
@@ -408,7 +414,11 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
-  it("external source without `external` cap → 403", async () => {
+  // SKIPPED while EXTERNAL_DISABLED=true (see external-availability.ts): external
+  // add now short-circuits with 503 EXTERNAL_UNAVAILABLE *before* the `external`
+  // cap check, so this 403 path is unreachable. The dedicated soft-disabled test
+  // below covers the new behavior; restore (.skip → it) when external re-enables.
+  it.skip("external source without `external` cap → 403", async () => {
     const app = buildApp("userA", capsWith({ external: false }));
     const res = await app.request(
       "/",
@@ -417,6 +427,25 @@ describe("POST /api/v2/subscriptions", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+  });
+
+  it("external add → 503 EXTERNAL_UNAVAILABLE (no DB write, no enqueue) while soft-disabled", async () => {
+    const { request, send } = buildApp("userA");
+    const res = await request(
+      "/",
+      jsonBody({ sourceType: "instructor", sourceId: "T-1", sourceName: "张老师" }),
+    );
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+    expect(send).not.toHaveBeenCalled();
+
+    // No subscription row created.
+    const rows = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.sourceType, "instructor"));
+    expect(rows.length).toBe(0);
   });
 
   it("personal source without `sync` cap → 403", async () => {
@@ -879,6 +908,86 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     const res = await app.request(`/${sid}/syncs`);
     expect(res.status).toBe(404);
     expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("manual refresh of an external sub → 503 EXTERNAL_UNAVAILABLE (no enqueue)", async () => {
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-9",
+      sourceName: "李老师",
+      isPersonal: false,
+    });
+    const app = buildSyncApp("userA");
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("manual refresh of a still-entitled external sub → 503, row STAYS active (no spurious revoke)", async () => {
+    // EXTERNAL_DISABLED freezes the sub, but the owner still HAS the `external`
+    // cap — the frozen sub must remain isActive=true so it instantly resumes when
+    // the flag flips. The revocation reconcile must NOT fire for an entitled owner.
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-7",
+      sourceName: "王老师",
+      isPersonal: false,
+      isActive: true,
+    });
+    const app = buildSyncApp("userA"); // FULL_CAPS → external granted
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
+  it("manual refresh of a REVOKED external sub (owner lost `external`) → 503 AND reconciles isActive=false", async () => {
+    // REVOCATION GAP (Codex round-3): with EXTERNAL_DISABLED=true the manual-refresh
+    // route short-circuits with 503 BEFORE the entitlement reconcile. An owner who
+    // lost the `external` cap on a frozen external sub would keep serving the public
+    // link until the hourly producer catches up. The isActive=false revocation
+    // reconcile MUST run before the external soft-disable 503 for an EXISTING sub.
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-8",
+      sourceName: "赵老师",
+      isPersonal: false,
+      isActive: true,
+    });
+    const app = buildSyncApp("userA", capsWith({ external: false })); // owner revoked
+    const res = await app.request(`/${sid}/syncs`);
+    // Still 503 (external soft-disabled) — never expose WAF — but the link is cut now.
+    expect(res.status).toBe(503);
+    expect(app.send).not.toHaveBeenCalled();
+    // Hard revocation reconciled BEFORE the 503: public calendar route stops serving.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(false);
+  });
+
+  it("manual refresh of a RE-ENTITLED frozen external sub → 503 AND reconciles isActive=true", async () => {
+    // REACTIVATION GAP (Codex round-4): the reactivation reconcile (!isActive → set
+    // active when the owner REGAINS the cap) ran AFTER the external 503 short-circuit,
+    // so a re-entitled frozen external sub stayed inactive until the next cron. Mirror
+    // the revocation reorder: reconcile the active/inactive state FULLY before the
+    // external unavailable 503. The sub was inactive from an earlier revocation; the
+    // owner now HAS `external` again → flip it active NOW, but STILL return 503 (no
+    // external sync path — never expose WAF).
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-6",
+      sourceName: "钱老师",
+      isPersonal: false,
+      isActive: false, // frozen/revoked earlier
+    });
+    const app = buildSyncApp("userA"); // FULL_CAPS → external regained
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    expect(app.send).not.toHaveBeenCalled();
+    // Reactivation reconciled BEFORE the 503: link resumes immediately, not next cron.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
   });
 
   it("reactivates a previously-revoked sub when the cap is restored", async () => {

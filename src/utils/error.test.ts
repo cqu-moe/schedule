@@ -24,6 +24,20 @@ describe("handleCquApiError", () => {
     });
   });
 
+  it("returns 503 CQU_WAF_BLOCKED for CQUAPIError with statusCode 412 (瑞数 WAF challenge)", async () => {
+    const app = new Hono();
+    app.get("/test", (c) =>
+      handleCquApiError(c, new CQUAPIError("Request failed: HTTP 412", 412), "Fallback"),
+    );
+    const res = await app.request("/test");
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { detail: { error: { code: string; message: string } } };
+    expect(body.detail.error.code).toBe("CQU_WAF_BLOCKED");
+    // Friendly, actionable message — must NOT leak the raw "HTTP 412".
+    expect(body.detail.error.message).toContain("风控");
+    expect(body.detail.error.message).not.toContain("412");
+  });
+
   it("returns 502 UPSTREAM_ERROR for CQUAPIError with non-401 status", async () => {
     const app = new Hono();
     app.get("/test", (c) => handleCquApiError(c, new CQUAPIError("Server error", 500), "Fallback"));
