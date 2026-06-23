@@ -38,6 +38,52 @@ export interface GetCquTicketArgs {
 
 export type GetCquTicketResult = { ticket: string } | { error: string };
 
+// ── cquHarvest (拓扑①: organic harvest 取数原语) ──────────────────────────────
+//
+// my.cqu.edu.cn 全站瑞数化后,后端纯 HTTP 取课表(POST)被 412 专守;唯一过墙路径
+// 是让 auth 在用户已登录的浏览器会话里有机 fire 请求、截获响应。cquHarvest 是
+// 业务无关的批量取数原语:auth 起一个临时浏览器、注入该用户保活的 storageState、
+// 导航 navUrl(过瑞数,页面自动 fire 课表/学期)、按 `capture` 模式截获响应、再对
+// `fetch` 列表逐个做 in-page GET(同源、读豁免),一次 RPC 返回 {captures, fetches}。
+// host 白名单(仅 my.cqu.edu.cn)/ 限流 / needs_reauth 熔断全在 auth 侧。
+
+/** One in-page GET to run inside the already-past-瑞数 browser context. */
+export interface HarvestFetchSpec {
+  /** Only GET is supported (read 豁免); POST writes are 412 专守, never harvest via fetch. */
+  method: "GET";
+  /** Absolute URL on my.cqu.edu.cn (auth host-whitelists it). */
+  url: string;
+}
+
+export interface CquHarvestArgs {
+  clientId: string;
+  /** Per-client OAuth secret; auth constant-time compares it (same gate as getCquTicket). */
+  clientSecret: string;
+  /** The auth user whose保活 CQU session is hydrated into the harvest browser. */
+  userId: string;
+  /** URL to navigate (过瑞数; the page organically fires 课表/学期 requests). */
+  navUrl: string;
+  /**
+   * Response-URL substrings to capture: the harvest browser records the body of
+   * every response whose URL contains one of these (e.g. "my-table-detail").
+   */
+  capture: string[];
+  /** In-page GETs to run in the same已过瑞数 context after navigation settles. */
+  fetch: HarvestFetchSpec[];
+}
+
+/** One captured/fetched response body. `body` is the raw text (caller JSON.parses). */
+export interface HarvestEntry {
+  url: string;
+  status: number;
+  contentType?: string;
+  body: string;
+}
+
+export type CquHarvestResult =
+  | { captures: HarvestEntry[]; fetches: HarvestEntry[] }
+  | { error: string };
+
 /** Args for getCaps — authenticated like getCquTicket (RPC caller self-reports
  *  clientId, so auth verifies clientSecret; getCaps enumerates by arbitrary userId). */
 export interface GetCapsArgs {
@@ -51,6 +97,9 @@ export interface AuthService {
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;
   getCquTicket(args: GetCquTicketArgs): Promise<GetCquTicketResult>;
   getCaps?(args: GetCapsArgs): Promise<{ calendar: CalendarCaps } | null>;
+  /** Organic-harvest 取数原语 (拓扑①). Optional so older auth deploys typecheck;
+   *  callers must null-guard (`env.AUTH.cquHarvest?.(...)`). */
+  cquHarvest?(args: CquHarvestArgs): Promise<CquHarvestResult>;
 }
 
 /** 缺省/兜底 caps：未授予时的安全保守值（全部拒绝、零配额、最长间隔） */
