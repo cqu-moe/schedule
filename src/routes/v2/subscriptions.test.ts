@@ -966,6 +966,30 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(row.isActive).toBe(false);
   });
 
+  it("manual refresh of a RE-ENTITLED frozen external sub → 503 AND reconciles isActive=true", async () => {
+    // REACTIVATION GAP (Codex round-4): the reactivation reconcile (!isActive → set
+    // active when the owner REGAINS the cap) ran AFTER the external 503 short-circuit,
+    // so a re-entitled frozen external sub stayed inactive until the next cron. Mirror
+    // the revocation reorder: reconcile the active/inactive state FULLY before the
+    // external unavailable 503. The sub was inactive from an earlier revocation; the
+    // owner now HAS `external` again → flip it active NOW, but STILL return 503 (no
+    // external sync path — never expose WAF).
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-6",
+      sourceName: "钱老师",
+      isPersonal: false,
+      isActive: false, // frozen/revoked earlier
+    });
+    const app = buildSyncApp("userA"); // FULL_CAPS → external regained
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    expect(app.send).not.toHaveBeenCalled();
+    // Reactivation reconciled BEFORE the 503: link resumes immediately, not next cron.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
   it("reactivates a previously-revoked sub when the cap is restored", async () => {
     // isActive=false from an earlier revocation; cap now granted → manual refresh
     // should flip it back active immediately (not wait for the hourly cron).

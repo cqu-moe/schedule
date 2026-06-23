@@ -395,29 +395,33 @@ app.post("/:sid/syncs", async (c) => {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
 
-  // Entitlement: if the required cap was revoked, this subscription is no longer
-  // serviceable. Mark it inactive (hard revocation — public links stop serving)
-  // and reject WITHOUT consuming the manual-refresh quota; otherwise the consumer
-  // would silently drop the enqueued message and the user would wait forever.
-  //
-  // This reconcile MUST run BEFORE the external soft-disable 503 short-circuit
-  // below: an owner who lost the `external` cap on a FROZEN external sub still
-  // needs the revoked row flipped inactive NOW, or the public link keeps serving
-  // until the hourly producer catches up (Codex round-3 REVOCATION GAP). The
-  // freeze only suppresses ENQUEUE — it must not suppress revocation enforcement.
+  // Entitlement / is_active reconcile — runs FULLY before the external soft-disable
+  // 503 short-circuit below, so a frozen external sub's active/inactive state is
+  // reconciled regardless of whether it gets serviced:
+  //  - REVOKED (cap lost): flip inactive NOW so the public link stops serving,
+  //    without waiting for the hourly producer (Codex round-3 REVOCATION GAP).
+  //  - RE-ENTITLED (cap regained, was inactive): flip active NOW so the link
+  //    resumes immediately, without waiting for the cron (Codex round-4
+  //    REACTIVATION GAP). Both reconciles must precede the external 503: the
+  //    freeze only suppresses ENQUEUE — it must not suppress is_active enforcement.
   const isPersonal = PERSONAL_SOURCE_TYPES.has(sub.sourceType);
   const revoked = isPersonal ? !caps.sync : !caps.external;
-  if (revoked) {
+  if (revoked && sub.isActive) {
     await db
       .update(subscriptions)
       .set({ isActive: false, updatedAt: new Date().toISOString() })
       .where(eq(subscriptions.id, sid));
+  } else if (!revoked && !sub.isActive) {
+    await db
+      .update(subscriptions)
+      .set({ isActive: true, updatedAt: new Date().toISOString() })
+      .where(eq(subscriptions.id, sid));
   }
 
   // 外部订阅软禁用:停止接受外部订阅的手动刷新(不入队、不消耗配额、不暴露 WAF)。
-  // 已有数据保持冻结(若上面因吊销已对账 inactive,则已止血)。个人订阅照常。
-  // 放在吊销对账之后:被吊销 external 权益的冻结外部订阅会先被对账成 inactive,
-  // 然后才统一以"暂不可用"503 回应(不按权益区分响应,绝不暴露 WAF/瑞数细节)。
+  // 已有数据保持冻结。个人订阅照常。放在 is_active 对账之后:被吊销 external 权益的
+  // 外部订阅已被对账成 inactive、被重新授权的已对账成 active,然后才统一以"暂不可用"
+  // 503 回应(不按权益区分响应,绝不暴露 WAF/瑞数细节)。
   if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
     const unavailable = externalUnavailableResponse();
     if (unavailable) return unavailable;
@@ -432,15 +436,6 @@ app.post("/:sid/syncs", async (c) => {
       `${isPersonal ? "日历同步" : "外部订阅"}未开通`,
       403,
     );
-  }
-
-  // Cap is granted: if this sub was previously revoked (isActive=false), reactivate
-  // it NOW (cap restored) so its public links resume without waiting for the cron.
-  if (!sub.isActive) {
-    await db
-      .update(subscriptions)
-      .set({ isActive: true, updatedAt: new Date().toISOString() })
-      .where(eq(subscriptions.id, sid));
   }
 
   // manual_refresh quota: null = unlimited, 0 = disabled, n = n/day.
