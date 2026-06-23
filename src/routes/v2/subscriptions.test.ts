@@ -925,6 +925,47 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(app.send).not.toHaveBeenCalled();
   });
 
+  it("manual refresh of a still-entitled external sub → 503, row STAYS active (no spurious revoke)", async () => {
+    // EXTERNAL_DISABLED freezes the sub, but the owner still HAS the `external`
+    // cap — the frozen sub must remain isActive=true so it instantly resumes when
+    // the flag flips. The revocation reconcile must NOT fire for an entitled owner.
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-7",
+      sourceName: "王老师",
+      isPersonal: false,
+      isActive: true,
+    });
+    const app = buildSyncApp("userA"); // FULL_CAPS → external granted
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(503);
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(true);
+  });
+
+  it("manual refresh of a REVOKED external sub (owner lost `external`) → 503 AND reconciles isActive=false", async () => {
+    // REVOCATION GAP (Codex round-3): with EXTERNAL_DISABLED=true the manual-refresh
+    // route short-circuits with 503 BEFORE the entitlement reconcile. An owner who
+    // lost the `external` cap on a frozen external sub would keep serving the public
+    // link until the hourly producer catches up. The isActive=false revocation
+    // reconcile MUST run before the external soft-disable 503 for an EXISTING sub.
+    const sid = await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "T-8",
+      sourceName: "赵老师",
+      isPersonal: false,
+      isActive: true,
+    });
+    const app = buildSyncApp("userA", capsWith({ external: false })); // owner revoked
+    const res = await app.request(`/${sid}/syncs`);
+    // Still 503 (external soft-disabled) — never expose WAF — but the link is cut now.
+    expect(res.status).toBe(503);
+    expect(app.send).not.toHaveBeenCalled();
+    // Hard revocation reconciled BEFORE the 503: public calendar route stops serving.
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.isActive).toBe(false);
+  });
+
   it("reactivates a previously-revoked sub when the cap is restored", async () => {
     // isActive=false from an earlier revocation; cap now granted → manual refresh
     // should flip it back active immediately (not wait for the hourly cron).
