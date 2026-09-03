@@ -35,7 +35,9 @@ describe("buildPersonalHarvestArgs", () => {
     expect(args.clientSecret).toBe("csec");
     expect(args.userId).toBe("user-1");
     // Navigating /workspace/curriculum is what organically fires the 课表 POST.
-    expect(args.navUrl).toBe("https://my.cqu.edu.cn/workspace/curriculum");
+    expect(args.navUrl).toBe(
+      "https://my-cqu-edu-cn-s.atrust.cqu.edu.cn/workspace/curriculum",
+    );
     // Capture the auto-fired 课表 + session-list responses by URL substring.
     expect(args.capture).toContain("my-table-detail");
     expect(args.capture).toContain("session/info-detail");
@@ -45,10 +47,12 @@ describe("buildPersonalHarvestArgs", () => {
     expect(args.fetch.every((f) => f.method === "GET")).toBe(true);
   });
 
-  it("only targets my.cqu.edu.cn hosts (auth host-whitelists; keep recipe in-bound)", () => {
+  it("only targets the aTrust rewritten host (auth host-whitelists; keep recipe in-bound)", () => {
     const args = buildPersonalHarvestArgs(envWith(async () => ({ captures: [], fetches: [] })) as never, "user-1");
     const hosts = [args.navUrl, ...args.fetch.map((f) => f.url)].map((u) => new URL(u).host);
-    expect(hosts.every((h) => h === "my.cqu.edu.cn")).toBe(true);
+    expect(
+      hosts.every((h) => h === "my-cqu-edu-cn-s.atrust.cqu.edu.cn"),
+    ).toBe(true);
   });
 });
 
@@ -341,6 +345,16 @@ describe("fetchPersonalHarvest", () => {
     expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
     expect(data.semesterStart).toBe("2025-09-01");
     expect(cquHarvest).toHaveBeenCalledTimes(2);
+    for (const [args] of cquHarvest.mock.calls) {
+      const urls = [args.navUrl, ...args.fetch.map((item) => item.url)];
+      expect(
+        urls.every(
+          (url) =>
+            new URL(url).hostname ===
+            "my-cqu-edu-cn-s.atrust.cqu.edu.cn",
+        ),
+      ).toBe(true);
+    }
   });
 
   it("rejects with HarvestError when Phase 2 errors and semester dates stay missing (止血: no broken-ICS overwrite)", async () => {

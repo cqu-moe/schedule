@@ -22,9 +22,11 @@ import type { SessionContext, PersonalScheduleData } from "./sync";
 // endpoint (纯 HTTP POST is 412 专守). We capture those auto-fired responses, and
 // run the read-豁免 GETs (exam list + semester dates) in the same已过瑞数 context.
 
-const NAV_URL = "https://my.cqu.edu.cn/workspace/curriculum";
-const EXAM_URL = "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list";
-const SESSION_INFO_URL = "https://my.cqu.edu.cn/api/resourceapi/session/info/";
+const CQU_HARVEST_ORIGIN =
+  "https://my-cqu-edu-cn-s.atrust.cqu.edu.cn";
+const NAV_URL = `${CQU_HARVEST_ORIGIN}/workspace/curriculum`;
+const EXAM_URL = `${CQU_HARVEST_ORIGIN}/api/exam/examTask/get-student-exam-list`;
+const SESSION_INFO_URL = `${CQU_HARVEST_ORIGIN}/api/resourceapi/session/info/`;
 
 /** KV key prefix + TTL for the per-user harvest dedup cache (see fetchPersonalHarvest). */
 const HARVEST_CACHE_PREFIX = "harvest:";
