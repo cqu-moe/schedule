@@ -50,6 +50,42 @@ export class HarvestError extends Error {
   }
 }
 
+function requireSchedulePayload(value: unknown): ScheduleResponse {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray(
+      (value as { classTimetableVOList?: unknown }).classTimetableVOList,
+    )
+  ) {
+    throw new HarvestError(
+      "harvest timetable body missing classTimetableVOList array",
+    );
+  }
+  return value as ScheduleResponse;
+}
+
+function requireExamPayload(value: unknown): ExamListResponse {
+  if (typeof value !== "object" || value === null) {
+    throw new HarvestError("harvest exam body is not an object");
+  }
+  const candidate = value as {
+    status?: unknown;
+    data?: { content?: unknown } | null;
+  };
+  if (
+    candidate.status !== "success" ||
+    typeof candidate.data !== "object" ||
+    candidate.data === null ||
+    !Array.isArray(candidate.data.content)
+  ) {
+    throw new HarvestError(
+      "harvest exam body missing successful data.content array",
+    );
+  }
+  return value as ExamListResponse;
+}
+
 /** Find the first harvest entry whose URL contains `needle`. */
 function findEntry(entries: HarvestEntry[], needle: string): HarvestEntry | undefined {
   return entries.find((e) => e.url.includes(needle));
@@ -200,7 +236,9 @@ export function mapHarvestToPersonalData(
   // error body parses to EMPTY courses, and applying that empty result as a
   // "successful" sync would WIPE the user's cached 课表 — so fail the harvest.
   const tableEntry = requireEntry(captures, CAPTURE_TABLE, "my-table-detail");
-  const courses = parseCourses(parseEntry<ScheduleResponse>(tableEntry, { required: true }));
+  const courses = parseCourses(
+    requireSchedulePayload(parseEntry<unknown>(tableEntry, { required: true })),
+  );
 
   // The exam fetch is REQUIRED (round-5 [P2 DATA LOSS] fix). buildPersonalHarvestArgs
   // ALWAYS requests the exam URL, so an ABSENT exam entry means the fetch was
@@ -213,7 +251,9 @@ export function mapHarvestToPersonalData(
   // exams intact. A genuine empty exam list arrives as a real 2xx body with
   // {data:{content:[]}}, which parses to exams=[] without throwing.
   const examEntry = requireEntry(fetches, "get-student-exam-list", "get-student-exam-list");
-  const exams = parseExams(parseEntry<ExamListResponse>(examEntry, { required: true }));
+  const exams = parseExams(
+    requireExamPayload(parseEntry<unknown>(examEntry, { required: true })),
+  );
 
   return { courses, exams, semesterStart };
 }

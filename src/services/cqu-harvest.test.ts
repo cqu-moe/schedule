@@ -180,6 +180,50 @@ describe("mapHarvestToPersonalData", () => {
     expect(data.exams).toEqual([]);
   });
 
+  it("rejects a 200 business-error timetable body instead of treating it as empty", () => {
+    const captures = [
+      entry(
+        "https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail",
+        { status: "failed", message: "session expired" },
+      ),
+    ];
+    const fetches = [
+      entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
+        status: "success",
+        data: { content: [] },
+      }),
+    ];
+
+    expect(() =>
+      mapHarvestToPersonalData(captures, fetches, "2025-09-01")
+    ).toThrow(HarvestError);
+  });
+
+  it("rejects 200 exam business errors or malformed success data", () => {
+    const captures = [
+      entry(
+        "https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail",
+        { classTimetableVOList: [] },
+      ),
+    ];
+    const examUrl =
+      "https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list";
+
+    for (const body of [
+      { status: "failed", data: { content: [] } },
+      { status: "success", data: {} },
+      { status: "success", data: { content: null } },
+    ]) {
+      expect(() =>
+        mapHarvestToPersonalData(
+          captures,
+          [entry(examUrl, body)],
+          "2025-09-01",
+        )
+      ).toThrow(HarvestError);
+    }
+  });
+
   it("throws HarvestError when the 课表 capture is missing entirely (harvest failed to fire it)", () => {
     expect(() => mapHarvestToPersonalData([], [], "2025-09-01")).toThrow(HarvestError);
   });
