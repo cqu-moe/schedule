@@ -140,19 +140,19 @@ describe('ShareLinksDialog', () => {
 
   // ── Default link restrictions ────────────────────────────────────────────────
 
-  it('does NOT show "编辑" button for the default link', async () => {
+  it('shows a disabled "修改" button for the default link', async () => {
     const { wrapper } = await mountDialog([makeDefaultLink()])
-    // There should be no edit button
-    const editBtns = wrapper.findAll('button').filter(b => b.text().trim() === '编辑')
-    expect(editBtns.length).toBe(0)
+    const editBtn = wrapper.findAll('button').find(b => b.attributes('aria-label') === '修改')
+    expect(editBtn).toBeDefined()
+    expect(editBtn!.attributes('disabled')).toBeDefined()
   })
 
-  it('does NOT show link-row "删除" button for the default link', async () => {
+  it('shows a disabled link-row "删除" button for the default link', async () => {
     const { wrapper } = await mountDialog([makeDefaultLink()])
-    // The link-row delete button has class text-destructive.
-    // (The AlertDialogAction confirm button stub lacks that class — it's a separate "删除".)
-    const deleteBtns = wrapper.findAll('button.text-destructive')
-    expect(deleteBtns.length).toBe(0)
+    const deleteBtn = wrapper.findAll('button')
+      .find(b => b.attributes('aria-label') === '删除')
+    expect(deleteBtn).toBeDefined()
+    expect(deleteBtn!.attributes('disabled')).toBeDefined()
   })
 
   it('shows "不可删除" note for the default link', async () => {
@@ -168,11 +168,13 @@ describe('ShareLinksDialog', () => {
 
   // ── Share link actions ───────────────────────────────────────────────────────
 
-  it('shows "编辑" and link-row "删除" buttons for non-default share links', async () => {
+  it('shows enabled "修改" and link-row "删除" buttons for non-default share links', async () => {
     const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
-    const editBtns = wrapper.findAll('button').filter(b => b.text().trim() === '编辑')
+    const editBtns = wrapper.findAll('button')
+      .filter(b => b.attributes('aria-label') === '修改' && b.attributes('disabled') === undefined)
     // Link-row delete button has class text-destructive
     const deleteBtns = wrapper.findAll('button.text-destructive')
+      .filter(b => b.attributes('aria-label') === '删除' && b.attributes('disabled') === undefined)
     expect(editBtns.length).toBeGreaterThanOrEqual(1)
     expect(deleteBtns.length).toBeGreaterThanOrEqual(1)
   })
@@ -256,7 +258,8 @@ describe('ShareLinksDialog', () => {
 
   it('opens delete confirm when "删除" button is clicked for a share link', async () => {
     const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
-    const deleteBtn = wrapper.findAll('button').find(b => b.text().includes('删除'))
+    const deleteBtn = wrapper.findAll('button.text-destructive')
+      .find(b => b.attributes('aria-label') === '删除' && b.attributes('disabled') === undefined)
     await deleteBtn!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('确认删除共享链接')
@@ -267,7 +270,8 @@ describe('ShareLinksDialog', () => {
     const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
 
     // Step 1: click Delete button
-    const deleteBtn = wrapper.findAll('button').find(b => b.text().includes('删除'))
+    const deleteBtn = wrapper.findAll('button.text-destructive')
+      .find(b => b.attributes('aria-label') === '删除' && b.attributes('disabled') === undefined)
     await deleteBtn!.trigger('click')
     await flushPromises()
 
@@ -291,7 +295,8 @@ describe('ShareLinksDialog', () => {
     })
     const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
 
-    const deleteBtn = wrapper.findAll('button').find(b => b.text().includes('删除'))
+    const deleteBtn = wrapper.findAll('button.text-destructive')
+      .find(b => b.attributes('aria-label') === '删除' && b.attributes('disabled') === undefined)
     await deleteBtn!.trigger('click')
     await flushPromises()
 
@@ -489,7 +494,8 @@ describe('ShareLinksDialog', () => {
     const shareLink = makeShareLink({ label: '朋友链接', formats: ['ics'] })
     const { wrapper } = await mountDialog([makeDefaultLink(), shareLink])
 
-    const editBtn = wrapper.findAll('button').find(b => b.text().trim() === '编辑')
+    const editBtn = wrapper.findAll('button')
+      .find(b => b.attributes('aria-label') === '修改' && b.attributes('disabled') === undefined)
     await editBtn!.trigger('click')
     await flushPromises()
 
@@ -507,7 +513,8 @@ describe('ShareLinksDialog', () => {
 
     const { wrapper } = await mountDialog([makeDefaultLink(), shareLink])
 
-    const editBtn = wrapper.findAll('button').find(b => b.text().trim() === '编辑')
+    const editBtn = wrapper.findAll('button')
+      .find(b => b.attributes('aria-label') === '修改' && b.attributes('disabled') === undefined)
     await editBtn!.trigger('click')
     await flushPromises()
 

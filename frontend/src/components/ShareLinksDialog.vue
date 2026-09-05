@@ -1,142 +1,171 @@
 <template>
   <Dialog :open="open" @update:open="handleOpenChange">
-    <DialogContent class="max-w-lg max-h-[85vh] overflow-y-auto">
-      <DialogHeader>
-        <DialogTitle>管理共享链接</DialogTitle>
-        <DialogDescription>
-          为「{{ subscription.source_name }}」配置共享链接，允许他人访问此课表。
-        </DialogDescription>
-      </DialogHeader>
+    <DialogContent class="max-h-[90vh] overflow-hidden p-0 sm:max-w-[96vw] lg:max-w-6xl">
+      <div class="flex max-h-[90vh] flex-col">
+        <DialogHeader class="border-b px-5 py-4 sm:px-6">
+          <DialogTitle>管理共享链接</DialogTitle>
+          <DialogDescription>
+            「{{ subscription.source_name }}」的共享链接。
+          </DialogDescription>
+        </DialogHeader>
 
-      <!-- Link list -->
-      <div class="space-y-3 mt-2">
-        <div
-          v-for="link in localLinks"
-          :key="link.id"
-          class="border rounded-md p-3 space-y-2"
-        >
-          <!-- Link header: label + badges -->
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-sm font-medium">
-              {{ link.label ?? (link.is_default ? '默认链接' : '未命名') }}
-            </span>
-            <Badge v-if="link.is_default" variant="secondary" class="text-xs">默认</Badge>
-            <Badge
-              v-for="fmt in link.formats"
-              :key="fmt"
-              variant="outline"
-              class="text-xs"
-            >
-              {{ FORMAT_LABELS[fmt] }}
-            </Badge>
-          </div>
+        <div class="overflow-y-auto px-5 py-5 sm:px-6">
+          <div class="overflow-x-auto rounded-md border">
+            <table class="w-full min-w-[720px] table-fixed border-collapse text-sm">
+              <colgroup>
+                <col class="w-[150px] sm:w-[180px]">
+                <col v-for="fmt in TABLE_FORMATS" :key="fmt" class="w-[74px]">
+                <col class="w-[164px]">
+              </colgroup>
+              <thead class="bg-muted/60 text-muted-foreground">
+                <tr class="border-b">
+                  <th class="sticky left-0 z-20 border-r bg-muted px-4 py-3 text-left font-medium">链接</th>
+                  <th
+                    v-for="fmt in TABLE_FORMATS"
+                    :key="fmt"
+                    class="px-2 py-3 text-center font-medium"
+                    :title="FORMAT_META[fmt].label"
+                  >
+                    <span aria-hidden="true">{{ FORMAT_META[fmt].headerLabel }}</span>
+                    <span class="sr-only">{{ FORMAT_META[fmt].label }}</span>
+                  </th>
+                  <th class="sticky right-0 z-20 border-l bg-muted px-4 py-3 text-center font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="link in localLinks"
+                  :key="link.id"
+                  class="border-b last:border-b-0"
+                >
+                  <td class="sticky left-0 z-10 border-r bg-background px-4 py-3 align-middle">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span class="truncate font-medium">
+                        {{ link.label ?? (link.is_default ? '默认链接' : '未命名') }}
+                      </span>
+                      <Badge v-if="link.is_default" variant="secondary" class="shrink-0 text-xs">默认</Badge>
+                    </div>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {{ link.is_default ? '不可删除 / 不可改格式' : '额外共享链接' }}
+                    </p>
+                  </td>
 
-          <!-- Copy buttons: one per format -->
-          <div class="flex flex-wrap gap-1.5">
-            <Button
-              v-for="fmt in link.formats"
-              :key="fmt"
-              variant="outline"
-              size="sm"
-              class="cursor-pointer h-7 text-xs px-2"
-              :class="{
-                'bg-green-600 hover:bg-green-600 text-white border-transparent':
-                  copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success',
-              }"
-              @click="handleCopy(link, fmt)"
-            >
-              <Check
-                v-if="copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success'"
-                class="h-3 w-3 mr-1"
-              />
-              <Copy v-else class="h-3 w-3 mr-1" />
-              {{ FORMAT_SHORT_LABELS[fmt] }}
-            </Button>
-          </div>
+                  <td
+                    v-for="fmt in TABLE_FORMATS"
+                    :key="fmt"
+                    class="px-2 py-3 text-center align-middle"
+                  >
+                    <Button
+                      v-if="hasFormat(link, fmt)"
+                      variant="outline"
+                      size="icon"
+                      class="h-11 w-11 cursor-pointer"
+                      :class="{
+                        'border-transparent bg-green-600 text-white hover:bg-green-600 hover:text-white':
+                          copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success',
+                      }"
+                      :title="`复制 ${FORMAT_META[fmt].label}`"
+                      :aria-label="`复制 ${FORMAT_META[fmt].label}`"
+                      @click="handleCopy(link, fmt)"
+                    >
+                      <Check
+                        v-if="copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success'"
+                        class="h-4 w-4"
+                      />
+                      <Copy v-else class="h-4 w-4" />
+                      <span class="sr-only">复制 {{ FORMAT_META[fmt].shortLabel }}</span>
+                    </Button>
+                    <span
+                      v-else
+                      class="inline-flex h-11 w-11 items-center justify-center text-muted-foreground/70"
+                      :title="`${FORMAT_META[fmt].label}不可用`"
+                    >
+                      <Minus aria-hidden="true" class="h-4 w-4" />
+                      <span class="sr-only">{{ FORMAT_META[fmt].label }}不可用</span>
+                    </span>
+                  </td>
 
-          <!-- Actions row -->
-          <div class="flex items-center gap-1.5 pt-1">
-            <!-- Rotate token -->
-            <Button
-              variant="outline"
-              size="sm"
-              class="cursor-pointer h-7 text-xs px-2"
-              @click="openRotateConfirm(link)"
-            >
-              <RotateCw class="h-3 w-3 mr-1" />
-              轮换
-            </Button>
+                  <td class="sticky right-0 z-10 border-l bg-background px-4 py-3 align-middle">
+                    <div class="flex justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        class="h-11 w-11 cursor-pointer"
+                        title="轮换"
+                        aria-label="轮换"
+                        @click="openRotateConfirm(link)"
+                      >
+                        <RotateCw class="h-4 w-4" />
+                        <span class="sr-only">轮换</span>
+                      </Button>
 
-            <!-- Edit (share links only) -->
-            <Button
-              v-if="!link.is_default"
-              variant="outline"
-              size="sm"
-              class="cursor-pointer h-7 text-xs px-2"
-              @click="openEditLink(link)"
-            >
-              <Pencil class="h-3 w-3 mr-1" />
-              编辑
-            </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        class="h-11 w-11 cursor-pointer disabled:border-dashed disabled:bg-muted/20 disabled:text-muted-foreground/35 disabled:opacity-100"
+                        title="修改"
+                        aria-label="修改"
+                        :disabled="link.is_default"
+                        @click="openEditLink(link)"
+                      >
+                        <Pencil class="h-4 w-4" />
+                        <span class="sr-only">修改</span>
+                      </Button>
 
-            <!-- Delete (share links only) -->
-            <Button
-              v-if="!link.is_default"
-              variant="outline"
-              size="sm"
-              class="cursor-pointer h-7 text-xs px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-              @click="openDeleteConfirm(link)"
-            >
-              <Trash2 class="h-3 w-3 mr-1" />
-              删除
-            </Button>
-
-            <!-- Default link note -->
-            <span
-              v-if="link.is_default"
-              class="text-xs text-muted-foreground ml-1"
-            >
-              默认链接 · 不可删除 / 不可改格式
-            </span>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        class="h-11 w-11 cursor-pointer disabled:border-dashed disabled:bg-muted/20 disabled:text-muted-foreground/35 disabled:opacity-100"
+                        :class="{
+                          'text-destructive hover:bg-destructive/10 hover:text-destructive': !link.is_default,
+                        }"
+                        title="删除"
+                        aria-label="删除"
+                        :disabled="link.is_default"
+                        @click="openDeleteConfirm(link)"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                        <span class="sr-only">删除</span>
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="localLinks.length === 0">
+                  <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">
+                    暂无链接
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <!-- Empty state (no links at all, shouldn't normally happen) -->
-        <p v-if="localLinks.length === 0" class="text-sm text-muted-foreground text-center py-4">
-          暂无链接
-        </p>
-      </div>
+        <!-- Share limit usage + create button -->
+        <div class="flex flex-col gap-3 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div>
+            <p class="text-sm font-medium tabular-nums">{{ shareFooterText }}</p>
+            <p class="mt-0.5 text-xs text-muted-foreground">{{ shareFooterHint }}</p>
+          </div>
 
-      <!-- Share limit usage + create button -->
-      <div class="flex items-center justify-between mt-4 pt-3 border-t">
-        <span class="text-xs text-muted-foreground">
-          共享链接
-          <template v-if="session.quota('share_limit') !== null">
-            {{ subStore.shareLinkCount }} / {{ session.quota('share_limit') }}
-          </template>
-          <template v-else>
-            {{ subStore.shareLinkCount }} / 无限
-          </template>
-        </span>
-
-        <Button
-          v-if="session.can('share')"
-          variant="outline"
-          size="sm"
-          class="cursor-pointer"
-          :disabled="subStore.atShareLimit"
-          :title="subStore.atShareLimit ? '共享链接数量已达上限' : undefined"
-          @click="openCreateForm"
-        >
-          <Plus class="h-4 w-4 mr-1.5" />
-          新建共享链接
-        </Button>
-        <span
-          v-else
-          class="text-xs text-muted-foreground"
-        >
-          共享链接未开通
-        </span>
+          <Button
+            v-if="session.can('share')"
+            variant="outline"
+            size="sm"
+            class="h-11 cursor-pointer"
+            :disabled="subStore.atShareLimit"
+            :title="subStore.atShareLimit ? '共享链接数量已达上限' : undefined"
+            @click="openCreateForm"
+          >
+            <Plus class="h-4 w-4" />
+            新建共享链接
+          </Button>
+          <span
+            v-else
+            class="text-sm text-muted-foreground"
+          >
+            共享链接未开通
+          </span>
+        </div>
       </div>
     </DialogContent>
   </Dialog>
@@ -198,7 +227,7 @@
     :open="linkForm.open"
     @update:open="v => { if (!v) closeLinkForm() }"
   >
-    <DialogContent class="max-w-sm">
+    <DialogContent class="sm:max-w-lg">
       <DialogHeader>
         <DialogTitle>{{ linkForm.editingId ? '编辑共享链接' : '新建共享链接' }}</DialogTitle>
         <DialogDescription>
@@ -227,7 +256,7 @@
               :key="fmt"
               type="button"
               :data-format="fmt"
-              class="cursor-pointer rounded-full border px-3 py-1 text-xs transition-colors"
+              class="min-h-11 cursor-pointer rounded-md border px-3 py-2 text-sm transition-colors"
               :class="
                 linkForm.formats.includes(fmt)
                   ? 'bg-primary text-primary-foreground border-primary'
@@ -236,7 +265,7 @@
               :aria-pressed="linkForm.formats.includes(fmt)"
               @click="toggleFormat(fmt)"
             >
-              {{ FORMAT_LABELS[fmt] }}
+              {{ FORMAT_META[fmt].label }}
             </button>
           </div>
           <p v-if="linkFormError" class="text-xs text-destructive">{{ linkFormError }}</p>
@@ -265,10 +294,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 import {
   Copy,
   Check,
+  Minus,
   Trash2,
   RotateCw,
   Pencil,
@@ -323,23 +353,36 @@ const emit = defineEmits<{
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ALL_FORMATS: LinkFormat[] = ['ics', 'web', 'data_json', 'origin_json', 'csv']
+const TABLE_FORMATS: LinkFormat[] = ['ics', 'web', 'data_json', 'origin_json', 'csv']
 
 const DEFAULT_CREATE_FORMATS: LinkFormat[] = ['ics', 'web']
 
-const FORMAT_LABELS: Record<LinkFormat, string> = {
-  ics: '日历订阅 (ICS)',
-  web: '网页查看',
-  data_json: '格式化 JSON',
-  origin_json: '原始 JSON',
-  csv: 'CSV',
-}
-
-const FORMAT_SHORT_LABELS: Record<LinkFormat, string> = {
-  ics: 'ICS',
-  web: '网页',
-  data_json: '课表 JSON',
-  origin_json: '原始 JSON',
-  csv: 'CSV',
+const FORMAT_META: Record<LinkFormat, { label: string; headerLabel: string; shortLabel: string }> = {
+  ics: {
+    label: '日历订阅 (ICS)',
+    headerLabel: '订阅',
+    shortLabel: 'ICS',
+  },
+  web: {
+    label: '日历网页查看',
+    headerLabel: '网页',
+    shortLabel: '网页',
+  },
+  data_json: {
+    label: 'JSON',
+    headerLabel: 'JSON',
+    shortLabel: 'JSON',
+  },
+  origin_json: {
+    label: '原始 JSON',
+    headerLabel: '原始',
+    shortLabel: '原始 JSON',
+  },
+  csv: {
+    label: 'CSV',
+    headerLabel: 'CSV',
+    shortLabel: 'CSV',
+  },
 }
 
 // ── Stores ────────────────────────────────────────────────────────────────────
@@ -356,6 +399,19 @@ const configStore = useConfigStore()
  */
 const localLinks = ref<CalendarLink[]>([...props.subscription.links])
 
+const customLinkCount = computed(() => localLinks.value.filter(link => !link.is_default).length)
+const shareLimit = computed(() => session.quota('share_limit'))
+const shareFooterText = computed(() => {
+  if (shareLimit.value === null) return `共享链接 ${subStore.shareLinkCount} / 无限`
+  return `共享链接 ${subStore.shareLinkCount} / ${shareLimit.value}`
+})
+const shareFooterHint = computed(() => {
+  if (!session.can('share')) return '默认链接仍可复制使用，额外共享链接需开通后创建。'
+  if (subStore.atShareLimit) return '已达到账号共享链接上限，删除旧链接后才能新建。'
+  if (customLinkCount.value === 0) return '本课表还没有额外共享链接。'
+  return `本课表 ${customLinkCount.value} 个额外共享链接；额度按账号统计。`
+})
+
 // Re-seed localLinks when the store-derived subscription prop changes identity
 // (covers store reloads after mutation AND reopen for a different subscription).
 // In-place localLinks mutations remain the optimistic layer; the reload reconciles.
@@ -371,6 +427,10 @@ watch(
 const copyFeedback = useButtonFeedback()
 
 // ── Copy ──────────────────────────────────────────────────────────────────────
+
+function hasFormat(link: CalendarLink, fmt: LinkFormat): boolean {
+  return link.formats.includes(fmt)
+}
 
 async function handleCopy(link: CalendarLink, fmt: LinkFormat) {
   const url = buildLinkUrl(configStore.publicUrl, link.token, fmt)
