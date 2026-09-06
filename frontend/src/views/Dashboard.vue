@@ -17,6 +17,17 @@
               </span>
             </h3>
             <p
+              class="mt-1 inline-flex items-center gap-1.5 text-xs"
+              :class="session.can('sync') ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'"
+            >
+              <span
+                aria-hidden="true"
+                class="h-1.5 w-1.5 rounded-full"
+                :class="session.can('sync') ? 'bg-emerald-500' : 'bg-muted-foreground/50'"
+              />
+              {{ session.can('sync') ? '自动同步已开启' : '自动同步未开通' }}
+            </p>
+            <p
               v-if="subStore.atLimit"
               class="text-xs text-amber-600 dark:text-amber-400 mt-0.5"
             >

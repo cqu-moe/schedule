@@ -88,6 +88,22 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('(1/5)')
   })
 
+  it('shows when automatic sync is enabled without exposing its interval', async () => {
+    const { wrapper } = await mountDashboard([mockSubscription()])
+
+    expect(wrapper.text()).toContain('自动同步已开启')
+    expect(wrapper.text()).not.toMatch(/自动同步[^\n]*每\s*\d/)
+  })
+
+  it('shows when automatic sync is not enabled', async () => {
+    const { wrapper } = await mountDashboard(
+      [mockSubscription()],
+      { caps: { ...DEFAULT_SESSION.caps, sync: false } },
+    )
+
+    expect(wrapper.text()).toContain('自动同步未开通')
+  })
+
   it('shows count without limit denominator when sub_limit is null', async () => {
     const { wrapper } = await mountDashboard(
       [mockSubscription()],

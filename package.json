@@ -9,12 +9,13 @@
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm install && npm run build",
-    "deploy": "npm run build:frontend && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
+    "deploy": "npm run build:frontend && npm run db:migrate:remote && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
     "test": "vitest run",
     "test:frontend": "cd frontend && npm test",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local"
+    "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
