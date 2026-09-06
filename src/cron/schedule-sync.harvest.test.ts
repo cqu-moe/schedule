@@ -27,6 +27,7 @@ beforeAll(async () => {
       sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
       sync_requested_at text, sync_started_at text, sync_finished_at text,
       sync_error_code text, sync_error_message text,
+      manual_refresh_at text,
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
@@ -95,6 +96,26 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(harvest).toHaveBeenCalledTimes(1);
     expect(messages.every(message => message.ack.mock.calls.length === 1)).toBe(true);
     expect(messages.every(message => message.retry.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("syncing any one personal subscription updates the entire personal trio", async () => {
+    const allSid = await insertSub({ sourceType: "personal_all", sourceName: "全部" });
+    const coursesSid = await insertSub({ sourceType: "personal_courses", sourceName: "课程" });
+    const examsSid = await insertSub({ sourceType: "personal_exams", sourceName: "考试" });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
+      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
+    });
+
+    const { batch, messages } = makeBatch([{ subscriptionId: coursesSid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(harvest).toHaveBeenCalledTimes(1);
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    const rows = await db.select().from(subscriptions);
+    expect(rows.map(row => row.id)).toEqual(expect.arrayContaining([allSid, coursesSid, examsSid]));
+    expect(rows.every(row => row.lastSyncedAt !== null)).toBe(true);
+    expect(rows.every(row => row.icsContent?.includes("BEGIN:VCALENDAR"))).toBe(true);
   });
 
   it("retries a transient HarvestError with backoff", async () => {

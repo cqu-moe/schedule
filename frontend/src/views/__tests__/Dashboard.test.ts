@@ -421,6 +421,22 @@ describe('Dashboard view (v2)', () => {
     expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('e-sub-1')
   })
 
+  it('sync all sends only one request for the complete personal trio', async () => {
+    const personalSubs = [
+      mockSubscription({ id: 'personal-all', source_type: 'personal_all', is_personal: true }),
+      mockSubscription({ id: 'personal-courses', source_type: 'personal_courses', is_personal: true }),
+      mockSubscription({ id: 'personal-exams', source_type: 'personal_exams', is_personal: true }),
+    ]
+    const { wrapper } = await mountDashboard(personalSubs)
+
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
+    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('personal-all')
+  })
+
   it('keeps sync all in progress after requests are only accepted into the queue', async () => {
     const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
@@ -696,6 +712,22 @@ describe('Dashboard view (v2)', () => {
     )
     expect(refreshBtn).toBeDefined()
     expect(refreshBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('disables a subscription during its manual refresh cooldown and shows remaining time', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-06T12:02:00.000Z'))
+    const sub = mockSubscription({
+      manual_refresh_at: '2026-09-06T12:00:00.000Z',
+    } as any)
+    const { wrapper } = await mountDashboard([sub])
+    const refreshBtn = wrapper.findAll('button').find(
+      b => b.text().includes('后可同步'),
+    )
+
+    expect(refreshBtn).toBeDefined()
+    expect(refreshBtn!.attributes('disabled')).toBeDefined()
+    expect(refreshBtn!.text()).toContain('3 分钟后可同步')
   })
 
   it('"同步个人课表" button is disabled when manual_refresh is 0', async () => {

@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   subscriptions,
   PERSONAL_SOURCE_TYPES,
@@ -286,6 +286,7 @@ export async function processScheduleSyncBatch(
     batch.messages.map(async (message) => {
       const { subscriptionId, userId, trigger } = message.body;
       let runId = message.body.runId;
+      let syncTargetIds = [subscriptionId];
       try {
         const [sub] = await db
           .select({
@@ -403,10 +404,32 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        // Personal subscription: harvest the 课表 (+ exams + semester) through a
-        // real已登录浏览器 via auth (the only过墙 path for the WRITE endpoint).
-        // The student ID is the bearer-subject's own identity inside the harvest
-        // browser — schedule never sees/needs the stored sourceId here.
+        // One personal harvest returns both courses and exams. Materialize that
+        // result into every existing personal view (all/courses/exams) so clicking
+        // any one of the trio never causes another upstream request.
+        const personalSubs = await db
+          .select({
+            id: subscriptions.id,
+            sourceType: subscriptions.sourceType,
+            sourceId: subscriptions.sourceId,
+            sessionName: subscriptions.sessionName,
+            syncRunId: subscriptions.syncRunId,
+          })
+          .from(subscriptions)
+          .where(and(
+            eq(subscriptions.userId, userId),
+            inArray(subscriptions.sourceType, [...PERSONAL_SOURCE_TYPES]),
+          ));
+        const runTargets = personalSubs
+          .filter(target => target.syncRunId === runId)
+          .map(target => target.id);
+        syncTargetIds = runTargets.length > 0 ? runTargets : [subscriptionId];
+        await Promise.all(
+          syncTargetIds
+            .filter(targetId => targetId !== subscriptionId)
+            .map(targetId => markSyncRunning(db, targetId, runId!)),
+        );
+
         const { ctx, data: personalData } = await fetchBatchPersonalHarvest(userId);
         // ICS UID namespace: the harvest path has no 学号, but sub.sourceId is
         // pinned to the auth user.id for personal subs (see routes/v2/subscriptions
@@ -416,9 +439,14 @@ export async function processScheduleSyncBatch(
         // identical for every user in a semester and collide UIDs across users.
         const uidNamespace = sub.sourceId;
         const ics = preGenerateIcs(personalData, uidNamespace);
-        const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
-        const fallback = { sessionName: sub.sessionName };
-        await applySyncResult(db, sub.id, result, ctx, fallback, runId);
+        await Promise.all(personalSubs.map(target => applySyncResult(
+          db,
+          target.id,
+          buildPersonalSyncResult(target.sourceType, personalData, ics),
+          ctx,
+          { sessionName: target.sessionName },
+          target.syncRunId === runId ? runId : undefined,
+        )));
 
         console.log(
           JSON.stringify({
@@ -436,7 +464,8 @@ export async function processScheduleSyncBatch(
           const failure = publicSyncFailure(e);
           if (runId && isRetryableSyncFailure(e) && attempt <= SYNC_RETRY_DELAYS_SECONDS.length) {
             const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[attempt - 1];
-            await markSyncRetrying(db, subscriptionId, runId, failure);
+            await Promise.all(syncTargetIds.map(targetId =>
+              markSyncRetrying(db, targetId, runId!, failure)));
             console.warn(JSON.stringify({
               event: "queue.schedule_sync.harvest_retry",
               subscriptionId,
@@ -448,7 +477,8 @@ export async function processScheduleSyncBatch(
             message.retry({ delaySeconds });
             return;
           }
-          if (runId) await markSyncError(db, subscriptionId, runId, failure);
+          if (runId) await Promise.all(syncTargetIds.map(targetId =>
+            markSyncError(db, targetId, runId!, failure)));
           console.warn(
             JSON.stringify({
               event: "queue.schedule_sync.harvest_failed",
@@ -466,7 +496,8 @@ export async function processScheduleSyncBatch(
         const failure = publicSyncFailure(e);
         if (runId && attempt <= SYNC_RETRY_DELAYS_SECONDS.length) {
           const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[attempt - 1];
-          await markSyncRetrying(db, subscriptionId, runId, failure);
+          await Promise.all(syncTargetIds.map(targetId =>
+            markSyncRetrying(db, targetId, runId!, failure)));
           console.error(JSON.stringify({
             event: "queue.schedule_sync.retry",
             subscriptionId,
@@ -478,7 +509,8 @@ export async function processScheduleSyncBatch(
           message.retry({ delaySeconds });
           return;
         }
-        if (runId) await markSyncError(db, subscriptionId, runId, failure);
+        if (runId) await Promise.all(syncTargetIds.map(targetId =>
+          markSyncError(db, targetId, runId!, failure)));
         console.error(
           JSON.stringify({
             event: "queue.schedule_sync.failed",

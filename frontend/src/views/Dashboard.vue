@@ -30,7 +30,7 @@
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncAllButtonState === 'loading' || personalSubs.length === 0 || !canManualRefresh"
+              :disabled="syncAllButtonState === 'loading' || personalSubs.length === 0 || !canManualRefresh || syncAllCooldownSeconds > 0"
               :class="{
                 'bg-green-600 hover:bg-green-600 text-white border-transparent':
                   syncAllButtonState === 'success',
@@ -55,7 +55,7 @@
               {{
                 { loading: '同步中', success: '已同步', error: '失败' }[
                     syncAllButtonState
-                ] || '同步个人课表'
+                ] || (syncAllCooldownSeconds > 0 ? cooldownLabel(syncAllCooldownSeconds) : '同步个人课表')
               }}
             </Button>
 
@@ -128,7 +128,7 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="refreshButtonState(item.sub) === 'loading' || !canManualRefresh"
+                :disabled="refreshButtonState(item.sub) === 'loading' || !canManualRefresh || isRefreshCoolingDown(item.sub)"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white border-transparent':
                     refreshButtonState(item.sub) === 'success',
@@ -150,11 +150,7 @@
                   class="h-4 w-4 mr-1.5"
                 />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
-                {{
-                  { loading: '同步中', success: '已刷新', error: '失败' }[
-                    refreshButtonState(item.sub)
-                  ] || '同步'
-                }}
+                {{ refreshButtonLabel(item.sub) }}
               </Button>
 
               <!-- Copy subscribe URL (ICS) -->
@@ -433,10 +429,13 @@ const activeShareSub = computed(() =>
 interface PendingRefresh { runId: string | null; oldSyncedAt: string | null }
 const pendingRefresh = reactive<Record<string, PendingRefresh>>({})
 const localSyncErrors = reactive<Record<string, string>>({})
+const localCooldownUntil = reactive<Record<string, number>>({})
+const cooldownClock = ref(Date.now())
 
 const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let pollStartTime = 0
 
 // ── Computed ──────────────────────────────────────────────────────────────────
@@ -450,6 +449,24 @@ const personalSubs = computed(() => subStore.subscriptions.filter(s => s.is_pers
  * When 0, the backend will always return 429; disable the controls proactively.
  */
 const canManualRefresh = computed(() => session.quota('manual_refresh') !== 0)
+
+const MANUAL_REFRESH_COOLDOWN_MS = 5 * 60_000
+
+function refreshCooldownSeconds(sub: Subscription): number {
+  const persistedUntil = sub.manual_refresh_at
+    ? Date.parse(sub.manual_refresh_at) + MANUAL_REFRESH_COOLDOWN_MS
+    : 0
+  const until = Math.max(persistedUntil, localCooldownUntil[sub.id] ?? 0)
+  return Math.max(0, Math.ceil((until - cooldownClock.value) / 1000))
+}
+
+function isRefreshCoolingDown(sub: Subscription): boolean {
+  return refreshCooldownSeconds(sub) > 0
+}
+
+function cooldownLabel(seconds: number): string {
+  return `${Math.ceil(seconds / 60)} 分钟后可同步`
+}
 
 function isSubSyncing(sub: Subscription): boolean {
   return sub.id in pendingRefresh || sub.sync_status === 'queued' || sub.sync_status === 'running'
@@ -477,6 +494,19 @@ function refreshButtonState(sub: Subscription) {
   if (isSubSyncing(sub)) return 'loading'
   return refreshFeedback.stateOf(sub.id)
 }
+
+function refreshButtonLabel(sub: Subscription): string {
+  const state = refreshButtonState(sub)
+  if (state === 'loading') return '同步中'
+  if (state === 'success') return '已刷新'
+  if (state === 'error') return '失败'
+  const remaining = refreshCooldownSeconds(sub)
+  return remaining > 0 ? cooldownLabel(remaining) : '同步'
+}
+
+const syncAllCooldownSeconds = computed(() =>
+  personalSubs.value.reduce((remaining, sub) => Math.max(remaining, refreshCooldownSeconds(sub)), 0),
+)
 
 const syncAllButtonState = computed(() => {
   if (personalSubs.value.some(isSubSyncing)) return 'loading'
@@ -640,7 +670,12 @@ async function handleRefreshSub(sid: string) {
     await refreshFeedback.run(async () => {
       const result = await api.refreshSubscription(sid)
       toast.success('已加入刷新队列')
-      trackRefresh([{ id: sid, runId: result.run_id }])
+      const affectedIds = result.affected_subscription_ids?.length
+        ? result.affected_subscription_ids
+        : [sid]
+      const cooldownUntil = Date.parse(result.cooldown_until ?? '') || Date.now() + MANUAL_REFRESH_COOLDOWN_MS
+      for (const id of affectedIds) localCooldownUntil[id] = cooldownUntil
+      trackRefresh(affectedIds.map(id => ({ id, runId: result.run_id })))
     }, sid)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
@@ -662,18 +697,15 @@ async function handleSyncAll() {
   if (personalSubs.value.length === 0) return
   try {
     await syncFeedback.run(async () => {
-      const results = await Promise.allSettled(
-        personalSubs.value.map(sub => api.refreshSubscription(sub.id)),
-      )
-      trackRefresh(results.flatMap((result, index) => result.status === 'fulfilled'
-        ? [{ id: personalSubs.value[index].id, runId: result.value.run_id }]
-        : []))
-      const failures = results.filter(r => r.status === 'rejected')
-      if (failures.length > 0) {
-        throw failures.length === 1
-          ? (failures[0] as PromiseRejectedResult).reason
-          : new Error(`${failures.length} 个订阅同步失败`)
-      }
+      const target = personalSubs.value.find(sub => sub.source_type === 'personal_all')
+        ?? personalSubs.value[0]
+      const result = await api.refreshSubscription(target.id)
+      const affectedIds = result.affected_subscription_ids?.length
+        ? result.affected_subscription_ids
+        : personalSubs.value.map(sub => sub.id)
+      const cooldownUntil = Date.parse(result.cooldown_until ?? '') || Date.now() + MANUAL_REFRESH_COOLDOWN_MS
+      for (const id of affectedIds) localCooldownUntil[id] = cooldownUntil
+      trackRefresh(affectedIds.map(id => ({ id, runId: result.run_id })))
       await subStore.load(true).catch(() => {})
     })
   } catch (error) {
@@ -684,6 +716,9 @@ async function handleSyncAll() {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  cooldownTimer = setInterval(() => {
+    cooldownClock.value = Date.now()
+  }, 1000)
   try {
     await subStore.load()
     const activeRuns = subStore.subscriptions
@@ -699,5 +734,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  if (cooldownTimer) clearInterval(cooldownTimer)
 })
 </script>

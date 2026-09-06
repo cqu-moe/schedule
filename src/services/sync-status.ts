@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { subscriptions, type SyncTrigger } from "../db/schema";
 import { HarvestError } from "./cqu-harvest";
@@ -16,6 +16,17 @@ export async function queueSyncRun(
   trigger: SyncTrigger,
   runId = crypto.randomUUID(),
 ): Promise<string> {
+  return queueSyncRuns(db, [subscriptionId], trigger, runId);
+}
+
+/** Queue one logical sync run for one or more subscription rows. */
+export async function queueSyncRuns(
+  db: Db,
+  subscriptionIds: string[],
+  trigger: SyncTrigger,
+  runId = crypto.randomUUID(),
+): Promise<string> {
+  if (subscriptionIds.length === 0) return runId;
   const now = new Date().toISOString();
   await db.update(subscriptions).set({
     syncStatus: "queued",
@@ -27,7 +38,7 @@ export async function queueSyncRun(
     syncErrorCode: null,
     syncErrorMessage: null,
     updatedAt: now,
-  }).where(eq(subscriptions.id, subscriptionId));
+  }).where(inArray(subscriptions.id, subscriptionIds));
   return runId;
 }
 

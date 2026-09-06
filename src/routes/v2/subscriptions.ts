@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, isNull, lte, or } from "drizzle-orm";
 import {
   subscriptions,
   calendarLinks,
@@ -19,12 +19,13 @@ import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
 import { CHINA_TZ_OFFSET_MS } from "../../utils/time";
 import type { ScheduleSyncMessage } from "../../cron/schedule-sync";
-import { markSyncError, queueSyncRun } from "../../services/sync-status";
+import { markSyncError, queueSyncRuns } from "../../services/sync-status";
 
 const app = new Hono<SessionEnv>();
 
 /** Max length for a user-supplied link label. */
 const LABEL_MAX_LEN = 100;
+const MANUAL_REFRESH_COOLDOWN_MS = 5 * 60_000;
 
 const SOURCE_TYPE_SET: ReadonlySet<string> = new Set<string>(SOURCE_TYPES);
 
@@ -403,6 +404,7 @@ app.post("/:sid/syncs", async (c) => {
       id: subscriptions.id,
       sourceType: subscriptions.sourceType,
       isActive: subscriptions.isActive,
+      manualRefreshAt: subscriptions.manualRefreshAt,
     })
     .from(subscriptions)
     .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, user.id)))
@@ -472,8 +474,60 @@ app.post("/:sid/syncs", async (c) => {
     }
   }
 
-  const runId = await queueSyncRun(db, sid, "manual");
+  // One personal harvest already returns both courses and exams, so the three
+  // personal subscription views are one logical refresh group. External
+  // subscriptions keep an independent per-subscription cooldown.
+  const refreshTargets = isPersonal
+    ? await db
+        .select({ id: subscriptions.id, manualRefreshAt: subscriptions.manualRefreshAt })
+        .from(subscriptions)
+        .where(and(
+          eq(subscriptions.userId, user.id),
+          inArray(subscriptions.sourceType, [...PERSONAL_SOURCE_TYPES]),
+        ))
+    : [{ id: sub.id, manualRefreshAt: sub.manualRefreshAt }];
+  const affectedSubscriptionIds = refreshTargets.map(target => target.id);
+  const cooldownOwner = [...refreshTargets].sort((a, b) => a.id.localeCompare(b.id))[0];
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const cooldownUntil = new Date(nowDate.getTime() + MANUAL_REFRESH_COOLDOWN_MS).toISOString();
+  const cooldownCutoff = new Date(nowDate.getTime() - MANUAL_REFRESH_COOLDOWN_MS).toISOString();
+
+  const latestRefreshAt = refreshTargets.reduce<string | null>((latest, target) => {
+    if (!target.manualRefreshAt) return latest;
+    return !latest || target.manualRefreshAt > latest ? target.manualRefreshAt : latest;
+  }, null);
+  if (latestRefreshAt && latestRefreshAt > cooldownCutoff) {
+    return manualRefreshCooldownResponse(latestRefreshAt, nowDate);
+  }
+
+  // The conditional update is the concurrency gate: simultaneous requests for
+  // any member of the personal trio choose the same stable owner row, and only
+  // one can advance its timestamp from an expired value.
+  const claim = await db
+    .update(subscriptions)
+    .set({ manualRefreshAt: now })
+    .where(and(
+      eq(subscriptions.id, cooldownOwner.id),
+      or(isNull(subscriptions.manualRefreshAt), lte(subscriptions.manualRefreshAt, cooldownCutoff)),
+    ));
+  if ((claim.meta?.changes ?? 0) === 0) {
+    const [current] = await db
+      .select({ manualRefreshAt: subscriptions.manualRefreshAt })
+      .from(subscriptions)
+      .where(eq(subscriptions.id, cooldownOwner.id))
+      .limit(1);
+    return manualRefreshCooldownResponse(current?.manualRefreshAt ?? now, nowDate);
+  }
+
+  await db
+    .update(subscriptions)
+    .set({ manualRefreshAt: now })
+    .where(inArray(subscriptions.id, affectedSubscriptionIds));
+
+  const runId = crypto.randomUUID();
   try {
+    await queueSyncRuns(db, affectedSubscriptionIds, "manual", runId);
     await c.env.SCHEDULE_SYNC_QUEUE.send({
       subscriptionId: sid,
       userId: user.id,
@@ -481,10 +535,17 @@ app.post("/:sid/syncs", async (c) => {
       runId,
     } satisfies ScheduleSyncMessage);
   } catch (error) {
-    await markSyncError(db, sid, runId, {
+    await Promise.all(affectedSubscriptionIds.map(targetId => markSyncError(db, targetId, runId, {
       code: "QUEUE_UNAVAILABLE",
       message: "同步服务暂时不可用，请稍后重试",
-    });
+    })));
+    await db
+      .update(subscriptions)
+      .set({ manualRefreshAt: null })
+      .where(and(
+        inArray(subscriptions.id, affectedSubscriptionIds),
+        eq(subscriptions.manualRefreshAt, now),
+      ));
     throw error;
   }
 
@@ -505,8 +566,32 @@ app.post("/:sid/syncs", async (c) => {
     }),
   );
 
-  return c.json({ status: "queued", run_id: runId }, 202);
+  return c.json({
+    status: "queued",
+    run_id: runId,
+    affected_subscription_ids: affectedSubscriptionIds,
+    cooldown_until: cooldownUntil,
+  }, 202);
 });
+
+function manualRefreshCooldownResponse(lastRefreshAt: string, now: Date): Response {
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil((Date.parse(lastRefreshAt) + MANUAL_REFRESH_COOLDOWN_MS - now.getTime()) / 1000),
+  );
+  return Response.json(
+    {
+      detail: {
+        error: {
+          code: "MANUAL_REFRESH_COOLDOWN",
+          message: `请在 ${retryAfterSeconds} 秒后再次刷新`,
+          retry_after_seconds: retryAfterSeconds,
+        },
+      },
+    },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
 
 /** China-local date key (YYYY-MM-DD) for the per-day refresh counter. */
 function chinaDateKey(now: Date): string {
@@ -830,6 +915,7 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     sync_finished_at: sub.syncFinishedAt,
     sync_error_code: sub.syncErrorCode,
     sync_error_message: sub.syncErrorMessage,
+    manual_refresh_at: sub.manualRefreshAt,
     created_at: sub.createdAt,
     updated_at: sub.updatedAt,
   };

@@ -65,6 +65,7 @@ export interface Subscription {
   sync_finished_at: string | null
   sync_error_code: string | null
   sync_error_message: string | null
+  manual_refresh_at: string | null
   created_at: string
   updated_at: string
   links: CalendarLink[]
@@ -73,6 +74,8 @@ export interface Subscription {
 export interface SyncQueuedResponse {
   status: 'queued'
   run_id: string
+  affected_subscription_ids: string[]
+  cooldown_until: string
 }
 
 export interface SubscriptionList {

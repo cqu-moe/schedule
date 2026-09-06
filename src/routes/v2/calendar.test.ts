@@ -132,6 +132,7 @@ beforeAll(async () => {
       sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
       sync_requested_at text, sync_started_at text, sync_finished_at text,
       sync_error_code text, sync_error_message text,
+      manual_refresh_at text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,

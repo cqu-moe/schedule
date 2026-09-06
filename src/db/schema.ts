@@ -59,6 +59,9 @@ export const subscriptions = sqliteTable(
     syncErrorCode: text("sync_error_code"),
     syncErrorMessage: text("sync_error_message"),
 
+    /** Last accepted manual refresh. Personal trio rows share the same value. */
+    manualRefreshAt: text("manual_refresh_at"),
+
     // Timestamps (ISO 8601 strings)
     createdAt: text("created_at")
       .notNull()

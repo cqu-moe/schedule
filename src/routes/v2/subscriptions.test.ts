@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
@@ -106,6 +106,7 @@ beforeAll(async () => {
       sync_finished_at text,
       sync_error_code text,
       sync_error_message text,
+      manual_refresh_at text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -902,6 +903,10 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     await env.CACHE.delete(`refresh:userA:${dayKey()}`);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("enqueues a sync and returns 202", async () => {
     const sid = await insertSub("userA");
     const app = buildSyncApp("userA");
@@ -1083,6 +1088,79 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     const second = await app.request(`/${sid}/syncs`);
     expect(second.status).toBe(429);
     expect(app.send).toHaveBeenCalledOnce();
+  });
+
+  it("shares a five-minute manual refresh cooldown across the personal trio", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));
+    const allSid = await insertSub("userA", { sourceType: "personal_all", sourceName: "全部" });
+    const coursesSid = await insertSub("userA", { sourceType: "personal_courses", sourceName: "课程" });
+    const app = buildSyncApp("userA");
+
+    const first = await app.request(`/${allSid}/syncs`);
+    expect(first.status).toBe(202);
+    const firstBody = (await first.json()) as {
+      affected_subscription_ids: string[];
+      cooldown_until: string;
+    };
+    expect(firstBody.affected_subscription_ids).toEqual(expect.arrayContaining([allSid, coursesSid]));
+    expect(firstBody.cooldown_until).toBe("2026-09-06T12:05:00.000Z");
+
+    const second = await app.request(`/${coursesSid}/syncs`);
+    expect(second.status).toBe(429);
+    expect(second.headers.get("Retry-After")).toBe("300");
+    const secondBody = (await second.json()) as {
+      detail: { error: { code: string; retry_after_seconds: number } };
+    };
+    expect(secondBody.detail.error).toMatchObject({
+      code: "MANUAL_REFRESH_COOLDOWN",
+      retry_after_seconds: 300,
+    });
+    expect(app.send).toHaveBeenCalledOnce();
+  });
+
+  it("allows the personal trio to refresh again after the five-minute cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));
+    const allSid = await insertSub("userA", { sourceType: "personal_all", sourceName: "全部" });
+    const examsSid = await insertSub("userA", { sourceType: "personal_exams", sourceName: "考试" });
+    const app = buildSyncApp("userA");
+
+    expect((await app.request(`/${allSid}/syncs`)).status).toBe(202);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect((await app.request(`/${examsSid}/syncs`)).status).toBe(202);
+    expect(app.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("atomically rejects a concurrent second refresh for the personal trio", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));
+    const allSid = await insertSub("userA", { sourceType: "personal_all", sourceName: "全部" });
+    const coursesSid = await insertSub("userA", { sourceType: "personal_courses", sourceName: "课程" });
+    const app = buildSyncApp("userA");
+
+    const responses = await Promise.all([
+      app.request(`/${allSid}/syncs`),
+      app.request(`/${coursesSid}/syncs`),
+    ]);
+
+    expect(responses.map(response => response.status).sort()).toEqual([202, 429]);
+    expect(app.send).toHaveBeenCalledOnce();
+  });
+
+  it("does not start the cooldown when enqueueing fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));
+    const sid = await insertSub("userA");
+    const app = buildSyncApp("userA");
+    app.send.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    const failed = await app.request(`/${sid}/syncs`);
+    expect(failed.status).toBe(500);
+
+    const retried = await app.request(`/${sid}/syncs`);
+    expect(retried.status).toBe(202);
+    expect(app.send).toHaveBeenCalledTimes(2);
   });
 });
 

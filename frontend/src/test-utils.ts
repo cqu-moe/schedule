@@ -58,6 +58,7 @@ export function mockSubscription(overrides: Partial<Subscription> = {}): Subscri
     sync_finished_at: '2026-03-01T10:00:00Z',
     sync_error_code: null,
     sync_error_message: null,
+    manual_refresh_at: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-03-01T10:00:00Z',
     links: [
