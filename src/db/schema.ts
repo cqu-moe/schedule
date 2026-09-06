@@ -49,6 +49,16 @@ export const subscriptions = sqliteTable(
     /** ISO 8601 datetime string */
     lastSyncedAt: text("last_synced_at"),
 
+    /** Persisted lifecycle for the latest sync attempt. */
+    syncStatus: text("sync_status").notNull().default("idle").$type<SyncStatus>(),
+    syncRunId: text("sync_run_id"),
+    syncTrigger: text("sync_trigger").$type<SyncTrigger>(),
+    syncRequestedAt: text("sync_requested_at"),
+    syncStartedAt: text("sync_started_at"),
+    syncFinishedAt: text("sync_finished_at"),
+    syncErrorCode: text("sync_error_code"),
+    syncErrorMessage: text("sync_error_message"),
+
     // Timestamps (ISO 8601 strings)
     createdAt: text("created_at")
       .notNull()
@@ -123,6 +133,9 @@ export type SourceType = (typeof SOURCE_TYPES)[number];
 
 export type PersonalSourceType = Extract<SourceType, "personal_all" | "personal_courses" | "personal_exams">;
 export type ExternalSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
+
+export type SyncStatus = "idle" | "queued" | "running" | "success" | "error";
+export type SyncTrigger = "cron" | "manual" | "initial" | "admin";
 
 export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSourceType>([
   "personal_all",

@@ -19,6 +19,7 @@ import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
 import { CHINA_TZ_OFFSET_MS } from "../../utils/time";
 import type { ScheduleSyncMessage } from "../../cron/schedule-sync";
+import { markSyncError, queueSyncRun } from "../../services/sync-status";
 
 const app = new Hono<SessionEnv>();
 
@@ -248,6 +249,7 @@ app.post("/", async (c) => {
   const token = await generateUniqueToken((t) => linkTokenExists(db, t));
   const linkId = crypto.randomUUID();
   const now = new Date().toISOString();
+  const initialRunId = crypto.randomUUID();
   const formatsJson = JSON.stringify([...LINK_FORMATS]);
 
   try {
@@ -263,6 +265,10 @@ app.post("/", async (c) => {
         semesterStart,
         isPersonal,
         isActive: true,
+        syncStatus: "queued",
+        syncRunId: initialRunId,
+        syncTrigger: "initial",
+        syncRequestedAt: now,
         createdAt: now,
         updatedAt: now,
       }),
@@ -293,15 +299,17 @@ app.post("/", async (c) => {
     subscriptionId: subId,
     userId: user.id,
     trigger: "initial",
+    runId: initialRunId,
   } satisfies ScheduleSyncMessage).catch((e) =>
-    console.warn(
-      JSON.stringify({
-        event: "subscription.v2.initial_sync_enqueue_failed",
-        subscriptionId: subId,
-        error: e instanceof Error ? e.message : String(e),
-        message: "Failed to enqueue initial sync; cron will sync later",
-      }),
-    ),
+    markSyncError(db, subId, initialRunId, {
+      code: "QUEUE_UNAVAILABLE",
+      message: "同步服务暂时不可用，请稍后重试",
+    }).then(() => console.warn(JSON.stringify({
+      event: "subscription.v2.initial_sync_enqueue_failed",
+      subscriptionId: subId,
+      error: e instanceof Error ? e.message : String(e),
+      message: "Failed to enqueue initial sync; cron will sync later",
+    }))),
   );
 
   console.log(
@@ -327,6 +335,14 @@ app.post("/", async (c) => {
       semester_start: semesterStart,
       is_personal: isPersonal,
       last_synced_at: null,
+      sync_status: "queued",
+      sync_run_id: initialRunId,
+      sync_trigger: "initial",
+      sync_requested_at: now,
+      sync_started_at: null,
+      sync_finished_at: null,
+      sync_error_code: null,
+      sync_error_message: null,
       created_at: now,
       updated_at: now,
       links: [
@@ -456,11 +472,21 @@ app.post("/:sid/syncs", async (c) => {
     }
   }
 
-  await c.env.SCHEDULE_SYNC_QUEUE.send({
-    subscriptionId: sid,
-    userId: user.id,
-    trigger: "manual",
-  } satisfies ScheduleSyncMessage);
+  const runId = await queueSyncRun(db, sid, "manual");
+  try {
+    await c.env.SCHEDULE_SYNC_QUEUE.send({
+      subscriptionId: sid,
+      userId: user.id,
+      trigger: "manual",
+      runId,
+    } satisfies ScheduleSyncMessage);
+  } catch (error) {
+    await markSyncError(db, sid, runId, {
+      code: "QUEUE_UNAVAILABLE",
+      message: "同步服务暂时不可用，请稍后重试",
+    });
+    throw error;
+  }
 
   // Increment the daily counter (best-effort). TTL covers the rest of the day
   // plus a margin; an exact midnight rollover is not required for a soft quota.
@@ -479,7 +505,7 @@ app.post("/:sid/syncs", async (c) => {
     }),
   );
 
-  return c.json({ status: "queued" }, 202);
+  return c.json({ status: "queued", run_id: runId }, 202);
 });
 
 /** China-local date key (YYYY-MM-DD) for the per-day refresh counter. */
@@ -796,6 +822,14 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     semester_start: sub.semesterStart,
     is_personal: sub.isPersonal,
     last_synced_at: sub.lastSyncedAt,
+    sync_status: sub.syncStatus,
+    sync_run_id: sub.syncRunId,
+    sync_trigger: sub.syncTrigger,
+    sync_requested_at: sub.syncRequestedAt,
+    sync_started_at: sub.syncStartedAt,
+    sync_finished_at: sub.syncFinishedAt,
+    sync_error_code: sub.syncErrorCode,
+    sync_error_message: sub.syncErrorMessage,
     created_at: sub.createdAt,
     updated_at: sub.updatedAt,
   };

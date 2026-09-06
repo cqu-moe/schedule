@@ -8,13 +8,22 @@ import {
 } from "../db/schema";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
-import { spreadEnqueue } from "../utils/queue";
+import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
 import {
   buildPersonalSyncResult,
   applySyncResult,
   preGenerateIcs,
 } from "../services/sync";
+import {
+  markSyncError,
+  markSyncRetrying,
+  markSyncRunning,
+  markSyncSuccess,
+  publicSyncFailure,
+  queueSyncRun,
+  isRetryableSyncFailure,
+} from "../services/sync-status";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
@@ -29,6 +38,8 @@ export interface ScheduleSyncMessage {
    * legacy/undefined always sync, bypassing the due re-check.
    */
   trigger?: "cron" | "manual" | "initial";
+  /** Identifies this attempt so delayed/stale queue messages cannot overwrite a newer run. */
+  runId?: string;
 }
 
 /** Default sync interval (minutes) when caps are missing/unparseable. */
@@ -46,6 +57,7 @@ const CAPS_CACHE_TTL_SECONDS = 3600;
  * within 1h avoids the churn entirely).
  */
 const SYNC_SPREAD_SECONDS = 3600;
+const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
 
 /**
  * Producer: pick subscriptions due for sync and enqueue them.
@@ -75,6 +87,8 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
       sourceType: subscriptions.sourceType,
       isActive: subscriptions.isActive,
       lastSyncedAt: subscriptions.lastSyncedAt,
+      syncStatus: subscriptions.syncStatus,
+      syncRequestedAt: subscriptions.syncRequestedAt,
     })
     .from(subscriptions);
 
@@ -124,8 +138,13 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
 
-    if (isDue(sub.lastSyncedAt, capsSyncInterval(caps), now)) {
-      due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron" });
+    const activeRunAge = sub.syncRequestedAt ? now - Date.parse(sub.syncRequestedAt) : Infinity;
+    const hasActiveRun = (sub.syncStatus === "queued" || sub.syncStatus === "running")
+      && Number.isFinite(activeRunAge)
+      && activeRunAge < 2 * 60 * 60_000;
+    if (!hasActiveRun && isDue(sub.lastSyncedAt, capsSyncInterval(caps), now)) {
+      const runId = await queueSyncRun(db, sub.id, "cron");
+      due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron", runId });
     }
   }
 
@@ -140,14 +159,25 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
     return;
   }
 
-  await spreadEnqueue(
-    env.SCHEDULE_SYNC_QUEUE,
-    due,
-    (m) => ({ body: m }),
-    SYNC_SPREAD_SECONDS,
-    10,
-    SYNC_SPREAD_SECONDS, // hard-cap every delay at 1h so nothing spills past the next cron
-  );
+  try {
+    await spreadEnqueue(
+      env.SCHEDULE_SYNC_QUEUE,
+      due,
+      (m) => ({ body: m }),
+      SYNC_SPREAD_SECONDS,
+      10,
+      SYNC_SPREAD_SECONDS, // hard-cap every delay at 1h so nothing spills past the next cron
+    );
+  } catch (error) {
+    const enqueued = error instanceof SpreadEnqueueError ? error.enqueued : 0;
+    await Promise.all(due.slice(enqueued).map((item) =>
+      markSyncError(db, item.subscriptionId, item.runId!, {
+        code: "QUEUE_UNAVAILABLE",
+        message: "同步服务暂时不可用，请稍后重试",
+      }),
+    ));
+    throw error;
+  }
 
   console.log(
     JSON.stringify({
@@ -233,8 +263,8 @@ function isDue(lastSyncedAt: string | null, intervalMinutes: number, now: number
  *
  * Each personal message harvests the 课表 through the user's已登录浏览器 via
  * {@link fetchPersonalHarvest} (auth 拓扑① organic harvest). A harvest failure
- * (WAF / needs_reauth / timeout) is logged and acked — never retried — so an
- * offline user does not block the batch. External subs are soft-disabled (frozen).
+ * Transient WAF/aTrust/network failures are retried with bounded backoff. Errors
+ * that require user action are persisted and acknowledged immediately.
  */
 export async function processScheduleSyncBatch(
   batch: MessageBatch<ScheduleSyncMessage>,
@@ -245,6 +275,7 @@ export async function processScheduleSyncBatch(
   await Promise.allSettled(
     batch.messages.map(async (message) => {
       const { subscriptionId, userId, trigger } = message.body;
+      let runId = message.body.runId;
       try {
         const [sub] = await db
           .select({
@@ -255,6 +286,7 @@ export async function processScheduleSyncBatch(
             sessionId: subscriptions.sessionId,
             sessionName: subscriptions.sessionName,
             lastSyncedAt: subscriptions.lastSyncedAt,
+            syncRunId: subscriptions.syncRunId,
           })
           .from(subscriptions)
           .where(eq(subscriptions.id, subscriptionId))
@@ -262,6 +294,23 @@ export async function processScheduleSyncBatch(
 
         if (!sub) {
           // Subscription deleted between enqueue and processing.
+          message.ack();
+          return;
+        }
+
+        if (runId && sub.syncRunId !== runId) {
+          console.log(JSON.stringify({
+            event: "queue.schedule_sync.skip_stale",
+            subscriptionId,
+            message: "A newer sync run superseded this queue message",
+          }));
+          message.ack();
+          return;
+        }
+        if (!runId) {
+          runId = await queueSyncRun(db, subscriptionId, trigger ?? "admin");
+        }
+        if (!(await markSyncRunning(db, subscriptionId, runId))) {
           message.ack();
           return;
         }
@@ -292,6 +341,9 @@ export async function processScheduleSyncBatch(
                 : "Caps unresolved; failing closed (skip sync, keep is_active)",
             }),
           );
+          await markSyncError(db, subscriptionId, runId, caps !== null
+            ? { code: "FEATURE_NOT_ENABLED", message: "日历同步未开通" }
+            : { code: "CAPS_UNAVAILABLE", message: "暂时无法确认同步权限，请稍后重试" });
           message.ack();
           return;
         }
@@ -311,6 +363,7 @@ export async function processScheduleSyncBatch(
               message: "Already synced within interval; dropping duplicate",
             }),
           );
+          await markSyncSuccess(db, subscriptionId, runId);
           message.ack();
           return;
         }
@@ -332,6 +385,10 @@ export async function processScheduleSyncBatch(
               message: "External subscription has no harvest path; acking without sync",
             }),
           );
+          await markSyncError(db, subscriptionId, runId, {
+            code: "EXTERNAL_SYNC_UNAVAILABLE",
+            message: "外部订阅同步暂不可用",
+          });
           message.ack();
           return;
         }
@@ -351,7 +408,7 @@ export async function processScheduleSyncBatch(
         const ics = preGenerateIcs(personalData, uidNamespace);
         const result = buildPersonalSyncResult(sub.sourceType, personalData, ics);
         const fallback = { sessionName: sub.sessionName };
-        await applySyncResult(db, sub.id, result, ctx, fallback);
+        await applySyncResult(db, sub.id, result, ctx, fallback, runId);
 
         console.log(
           JSON.stringify({
@@ -364,24 +421,54 @@ export async function processScheduleSyncBatch(
 
         message.ack();
       } catch (e) {
-        // Organic-harvest failures (瑞数 WAF challenge, needs_reauth, container
-        // timeout) are surfaced as HarvestError. Retrying the same harvest can't
-        // help within this interval (会话/WAF state won't change mid-batch) and
-        // only amplifies load + floods logs — treat as a止血 ack, no retry. The
-        // hourly cron re-attempts next interval.
         if (e instanceof HarvestError) {
+          const attempt = message.attempts ?? 1;
+          const failure = publicSyncFailure(e);
+          if (runId && isRetryableSyncFailure(e) && attempt <= SYNC_RETRY_DELAYS_SECONDS.length) {
+            const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[attempt - 1];
+            await markSyncRetrying(db, subscriptionId, runId, failure);
+            console.warn(JSON.stringify({
+              event: "queue.schedule_sync.harvest_retry",
+              subscriptionId,
+              attempt,
+              delaySeconds,
+              error: e.message,
+              message: "Transient harvest failure; scheduling retry",
+            }));
+            message.retry({ delaySeconds });
+            return;
+          }
+          if (runId) await markSyncError(db, subscriptionId, runId, failure);
           console.warn(
             JSON.stringify({
               event: "queue.schedule_sync.harvest_failed",
               subscriptionId,
               error: e.message,
-              message: "Harvest failed (WAF/needs_reauth/timeout); acking without retry",
+              attempt,
+              message: "Harvest failed permanently or retries exhausted",
             }),
           );
           message.ack();
           return;
         }
         const msg = e instanceof Error ? e.message : String(e);
+        const attempt = message.attempts ?? 1;
+        const failure = publicSyncFailure(e);
+        if (runId && attempt <= SYNC_RETRY_DELAYS_SECONDS.length) {
+          const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[attempt - 1];
+          await markSyncRetrying(db, subscriptionId, runId, failure);
+          console.error(JSON.stringify({
+            event: "queue.schedule_sync.retry",
+            subscriptionId,
+            attempt,
+            delaySeconds,
+            error: msg,
+            message: "Schedule sync failed; scheduling retry",
+          }));
+          message.retry({ delaySeconds });
+          return;
+        }
+        if (runId) await markSyncError(db, subscriptionId, runId, failure);
         console.error(
           JSON.stringify({
             event: "queue.schedule_sync.failed",
@@ -390,7 +477,7 @@ export async function processScheduleSyncBatch(
             message: "Schedule sync failed",
           }),
         );
-        message.retry();
+        message.ack();
       }
     }),
   );

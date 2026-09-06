@@ -98,6 +98,14 @@ beforeAll(async () => {
       courses_json text,
       exams_json text,
       last_synced_at text,
+      sync_status text NOT NULL DEFAULT 'idle',
+      sync_run_id text,
+      sync_trigger text,
+      sync_requested_at text,
+      sync_started_at text,
+      sync_finished_at text,
+      sync_error_code text,
+      sync_error_message text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -292,11 +300,13 @@ describe("POST /api/v2/subscriptions", () => {
     const app = buildApp("userA");
     const res = await app.request("/", jsonBody(VALID_CREATE));
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string };
+    const body = (await res.json()) as { id: string; sync_run_id: string; sync_status: string };
+    expect(body.sync_status).toBe("queued");
     expect(app.send).toHaveBeenCalledWith({
       subscriptionId: body.id,
       userId: "userA",
       trigger: "initial",
+      runId: body.sync_run_id,
     });
   });
 
@@ -899,7 +909,23 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(res.status).toBe(202);
     // Manual refreshes carry trigger:"manual" so the consumer bypasses the cron
     // due re-check and always syncs.
-    expect(app.send).toHaveBeenCalledWith({ subscriptionId: sid, userId: "userA", trigger: "manual" });
+    const body = (await res.json()) as { status: string; run_id: string };
+    expect(body.status).toBe("queued");
+    expect(body.run_id).toEqual(expect.any(String));
+    expect(app.send).toHaveBeenCalledWith({
+      subscriptionId: sid,
+      userId: "userA",
+      trigger: "manual",
+      runId: body.run_id,
+    });
+    const state = await env.DB.prepare(
+      "SELECT sync_status, sync_run_id, sync_trigger FROM subscriptions WHERE id = ?",
+    ).bind(sid).first<{ sync_status: string; sync_run_id: string; sync_trigger: string }>();
+    expect(state).toEqual({
+      sync_status: "queued",
+      sync_run_id: body.run_id,
+      sync_trigger: "manual",
+    });
   });
 
   it("returns 404 for another user's subscription (no enqueue)", async () => {

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import {
   subscriptions,
@@ -197,6 +197,7 @@ export async function applySyncResult(
   result: SyncResult,
   ctx: SessionContext,
   fallback: { sessionName: string | null },
+  syncRunId?: string,
 ): Promise<void> {
   const now = new Date().toISOString();
   await db
@@ -208,7 +209,15 @@ export async function applySyncResult(
       semesterStart: result.semesterStart,
       sessionName: ctx.semesterInfo.name || fallback.sessionName,
       lastSyncedAt: now,
+      ...(syncRunId ? {
+        syncStatus: "success" as const,
+        syncFinishedAt: now,
+        syncErrorCode: null,
+        syncErrorMessage: null,
+      } : {}),
       updatedAt: now,
     })
-    .where(eq(subscriptions.id, subId));
+    .where(syncRunId
+      ? and(eq(subscriptions.id, subId), eq(subscriptions.syncRunId, syncRunId))
+      : eq(subscriptions.id, subId));
 }

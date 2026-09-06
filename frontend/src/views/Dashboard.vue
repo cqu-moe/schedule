@@ -30,31 +30,31 @@
               variant="outline"
               size="sm"
               class="cursor-pointer"
-              :disabled="syncFeedback.stateOf() === 'loading' || personalSubs.length === 0 || !canManualRefresh"
+              :disabled="syncAllButtonState === 'loading' || personalSubs.length === 0 || !canManualRefresh"
               :class="{
                 'bg-green-600 hover:bg-green-600 text-white border-transparent':
-                  syncFeedback.stateOf() === 'success',
+                  syncAllButtonState === 'success',
                 'bg-destructive hover:bg-destructive text-white border-transparent':
-                  syncFeedback.stateOf() === 'error',
+                  syncAllButtonState === 'error',
               }"
               @click="handleSyncAll"
             >
               <Loader2
-                v-if="syncFeedback.stateOf() === 'loading'"
+                v-if="syncAllButtonState === 'loading'"
                 class="h-4 w-4 mr-1.5 animate-spin"
               />
               <Check
-                v-else-if="syncFeedback.stateOf() === 'success'"
+                v-else-if="syncAllButtonState === 'success'"
                 class="h-4 w-4 mr-1.5"
               />
               <X
-                v-else-if="syncFeedback.stateOf() === 'error'"
+                v-else-if="syncAllButtonState === 'error'"
                 class="h-4 w-4 mr-1.5"
               />
               <RefreshCw v-else class="h-4 w-4 mr-1.5" />
               {{
                 { loading: '同步中', success: '已同步', error: '失败' }[
-                  syncFeedback.stateOf()
+                    syncAllButtonState
                 ] || '同步个人课表'
               }}
             </Button>
@@ -99,11 +99,17 @@
                 {{ item.sub.session_name }}
               </Badge>
               <span
-                v-if="item.sub.id in pendingRefresh"
+                v-if="syncErrorMessage(item.sub)"
+                class="text-xs text-destructive"
+              >
+                同步失败：{{ syncErrorMessage(item.sub) }}
+              </span>
+              <span
+                v-else-if="isSubSyncing(item.sub)"
                 class="text-xs text-muted-foreground inline-flex items-center gap-1"
               >
                 <Loader2 class="h-3 w-3 animate-spin" />
-                同步中...
+                {{ syncProgressLabel(item.sub) }}
               </span>
               <span v-else-if="item.sub.last_synced_at" class="text-xs text-muted-foreground">
                 同步于 {{ formatDate(item.sub.last_synced_at) }}
@@ -122,31 +128,31 @@
                 variant="outline"
                 size="sm"
                 class="cursor-pointer"
-                :disabled="refreshFeedback.stateOf(item.sub.id) === 'loading' || !canManualRefresh"
+                :disabled="refreshButtonState(item.sub) === 'loading' || !canManualRefresh"
                 :class="{
                   'bg-green-600 hover:bg-green-600 text-white border-transparent':
-                    refreshFeedback.stateOf(item.sub.id) === 'success',
+                    refreshButtonState(item.sub) === 'success',
                   'bg-destructive hover:bg-destructive text-white border-transparent':
-                    refreshFeedback.stateOf(item.sub.id) === 'error',
+                    refreshButtonState(item.sub) === 'error',
                 }"
                 @click="handleRefreshSub(item.sub.id)"
               >
                 <Loader2
-                  v-if="refreshFeedback.stateOf(item.sub.id) === 'loading'"
+                  v-if="refreshButtonState(item.sub) === 'loading'"
                   class="h-4 w-4 animate-spin mr-1.5"
                 />
                 <Check
-                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'success'"
+                  v-else-if="refreshButtonState(item.sub) === 'success'"
                   class="h-4 w-4 mr-1.5"
                 />
                 <X
-                  v-else-if="refreshFeedback.stateOf(item.sub.id) === 'error'"
+                  v-else-if="refreshButtonState(item.sub) === 'error'"
                   class="h-4 w-4 mr-1.5"
                 />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
                 {{
                   { loading: '同步中', success: '已刷新', error: '失败' }[
-                    refreshFeedback.stateOf(item.sub.id)
+                    refreshButtonState(item.sub)
                   ] || '同步'
                 }}
               </Button>
@@ -421,11 +427,12 @@ const activeShareSub = computed(() =>
 )
 
 /**
- * Maps sub.id → the last_synced_at value captured AT THE MOMENT of manual
- * refresh (may be null). A sub is "pending refresh" while it exists in this
- * map. Cleared when a poll sees a CHANGED last_synced_at, or on POLL_TIMEOUT.
+ * Tracks the exact backend run returned by POST /syncs. Keeping the run id
+ * prevents an older queue delivery from being mistaken for this refresh.
  */
-const pendingRefresh = reactive<Record<string, string | null>>({})
+interface PendingRefresh { runId: string | null; oldSyncedAt: string | null }
+const pendingRefresh = reactive<Record<string, PendingRefresh>>({})
+const localSyncErrors = reactive<Record<string, string>>({})
 
 const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
 
@@ -444,11 +451,38 @@ const personalSubs = computed(() => subStore.subscriptions.filter(s => s.is_pers
  */
 const canManualRefresh = computed(() => session.quota('manual_refresh') !== 0)
 
+function isSubSyncing(sub: Subscription): boolean {
+  return sub.id in pendingRefresh || sub.sync_status === 'queued' || sub.sync_status === 'running'
+}
+
+function syncErrorMessage(sub: Subscription): string | null {
+  if (sub.id in pendingRefresh) return null
+  return localSyncErrors[sub.id] ?? (sub.sync_status === 'error' ? sub.sync_error_message : null)
+}
+
+function syncProgressLabel(sub: Subscription): string {
+  return sub.sync_status === 'queued' && Boolean(sub.sync_error_code)
+    ? '同步遇到临时故障，正在自动重试...'
+    : '同步中...'
+}
+
 // ── Button feedback ───────────────────────────────────────────────────────────
 
 const refreshFeedback = useButtonFeedback()
 const syncFeedback = useButtonFeedback()
 const copyFeedback = useButtonFeedback()
+
+function refreshButtonState(sub: Subscription) {
+  if (syncErrorMessage(sub)) return 'error'
+  if (isSubSyncing(sub)) return 'loading'
+  return refreshFeedback.stateOf(sub.id)
+}
+
+const syncAllButtonState = computed(() => {
+  if (personalSubs.value.some(isSubSyncing)) return 'loading'
+  if (personalSubs.value.some(sub => Boolean(syncErrorMessage(sub)))) return 'error'
+  return syncFeedback.stateOf()
+})
 
 // ── Source type labels ────────────────────────────────────────────────────────
 
@@ -485,6 +519,7 @@ function formatDate(isoString: string): string {
 
 const POLL_INTERVAL = 2000
 const POLL_TIMEOUT = 30000
+const POLL_ACTIVE_TIMEOUT = 15 * 60_000
 
 function stopPolling() {
   if (pollTimer) {
@@ -497,10 +532,12 @@ function stopPolling() {
  * Clear all pending-refresh tracking (timeout guard so no sub is stuck
  * "同步中" forever).
  */
-function clearPendingRefresh() {
+function failPendingRefreshes(message: string) {
   for (const id of Object.keys(pendingRefresh)) {
+    localSyncErrors[id] = message
     delete pendingRefresh[id]
   }
+  toast.error(message)
 }
 
 function startSyncPolling() {
@@ -508,24 +545,42 @@ function startSyncPolling() {
   pollStartTime = Date.now()
 
   pollTimer = setInterval(async () => {
-    if (Date.now() - pollStartTime > POLL_TIMEOUT) {
+    await subStore.load(true).catch(() => {})
+
+    // A persisted queued/running state proves the backend still owns the job
+    // (including delayed retries), so allow the bounded server retry window.
+    // Keep a hard ceiling as a lost queue message must not leave the UI spinning
+    // forever.
+    const backendStillWorking = Object.entries(pendingRefresh).some(([id, pending]) => {
+      const sub = subStore.subscriptions.find(s => s.id === id)
+      return sub && (!pending.runId || sub.sync_run_id === pending.runId)
+        && (sub.sync_status === 'queued' || sub.sync_status === 'running')
+    })
+    const timeout = backendStillWorking ? POLL_ACTIVE_TIMEOUT : POLL_TIMEOUT
+    if (Date.now() - pollStartTime > timeout) {
       stopPolling()
-      clearPendingRefresh()
+      failPendingRefreshes('同步超时，请稍后重试')
       return
     }
 
-    await subStore.load(true).catch(() => {})
-
-    // For each tracked sub, check whether last_synced_at has changed.
-    for (const [id, oldSyncedAt] of Object.entries(pendingRefresh)) {
+    for (const [id, pending] of Object.entries(pendingRefresh)) {
       const sub = subStore.subscriptions.find(s => s.id === id)
       if (!sub) {
         // Sub no longer exists — remove from tracking
         delete pendingRefresh[id]
         continue
       }
-      if (sub.last_synced_at !== oldSyncedAt) {
-        // Timestamp changed (or first sync completed) — refresh done
+      const isSameRun = !pending.runId || sub.sync_run_id === pending.runId
+      if (isSameRun && sub.sync_status === 'error') {
+        const message = sub.sync_error_message || '同步失败，请稍后重试'
+        localSyncErrors[id] = message
+        toast.error(message)
+        delete pendingRefresh[id]
+        continue
+      }
+      if ((isSameRun && sub.sync_status === 'success') || sub.last_synced_at !== pending.oldSyncedAt) {
+        delete localSyncErrors[id]
+        toast.success('同步完成')
         delete pendingRefresh[id]
       }
     }
@@ -540,10 +595,11 @@ function startSyncPolling() {
  * Track a set of sub ids as pending-refresh. Captures their current
  * last_synced_at values and starts the poll if not already running.
  */
-function trackRefresh(ids: string[]) {
-  for (const id of ids) {
+function trackRefresh(runs: Array<{ id: string; runId: string | null }>) {
+  for (const { id, runId } of runs) {
     const sub = subStore.subscriptions.find(s => s.id === id)
-    pendingRefresh[id] = sub?.last_synced_at ?? null
+    delete localSyncErrors[id]
+    pendingRefresh[id] = { runId, oldSyncedAt: sub?.last_synced_at ?? null }
   }
   startSyncPolling()
 }
@@ -582,9 +638,9 @@ function openQrModal(item: EnrichedSub) {
 async function handleRefreshSub(sid: string) {
   try {
     await refreshFeedback.run(async () => {
-      await api.refreshSubscription(sid)
+      const result = await api.refreshSubscription(sid)
       toast.success('已加入刷新队列')
-      trackRefresh([sid])
+      trackRefresh([{ id: sid, runId: result.run_id }])
     }, sid)
   } catch (error) {
     toast.error(parseApiError(error, '刷新失败'))
@@ -609,13 +665,15 @@ async function handleSyncAll() {
       const results = await Promise.allSettled(
         personalSubs.value.map(sub => api.refreshSubscription(sub.id)),
       )
+      trackRefresh(results.flatMap((result, index) => result.status === 'fulfilled'
+        ? [{ id: personalSubs.value[index].id, runId: result.value.run_id }]
+        : []))
       const failures = results.filter(r => r.status === 'rejected')
       if (failures.length > 0) {
         throw failures.length === 1
           ? (failures[0] as PromiseRejectedResult).reason
           : new Error(`${failures.length} 个订阅同步失败`)
       }
-      trackRefresh(personalSubs.value.map(s => s.id))
       await subStore.load(true).catch(() => {})
     })
   } catch (error) {
@@ -628,6 +686,10 @@ async function handleSyncAll() {
 onMounted(async () => {
   try {
     await subStore.load()
+    const activeRuns = subStore.subscriptions
+      .filter(sub => sub.sync_status === 'queued' || sub.sync_status === 'running')
+      .map(sub => ({ id: sub.id, runId: sub.sync_run_id }))
+    if (activeRuns.length > 0) trackRefresh(activeRuns)
   } catch {
     toast.error('加载订阅列表失败')
   } finally {

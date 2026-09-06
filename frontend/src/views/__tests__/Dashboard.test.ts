@@ -68,7 +68,7 @@ describe('Dashboard view (v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
-    mockApi.refreshSubscription.mockResolvedValue(undefined)
+    mockApi.refreshSubscription.mockResolvedValue({ status: 'queued', run_id: 'run-1' })
     mockApi.deleteSubscription.mockResolvedValue(undefined)
   })
 
@@ -273,7 +273,83 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步于')
   })
 
-  it('clears "同步中..." state after POLL_TIMEOUT (no sub stuck forever)', async () => {
+  it('shows the persisted sync failure instead of silently ending the progress indicator', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-1',
+      sync_trigger: 'manual',
+      sync_requested_at: '2026-03-01T10:00:00Z',
+      sync_started_at: null,
+      sync_finished_at: null,
+      sync_error_code: null,
+      sync_error_message: null,
+    } as any)
+    const failed = {
+      ...queued,
+      sync_status: 'error',
+      sync_finished_at: '2026-03-01T10:01:00Z',
+      sync_error_code: 'CQU_WAF_BLOCKED',
+      sync_error_message: '学校系统暂时无法完成同步，请稍后重试',
+    }
+    mockApi.getSubscriptions.mockResolvedValueOnce(mockSubscriptionList([queued]))
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: { initialState: { session: DEFAULT_SESSION, config: { publicUrl: 'https://schedule.cqu.moe', loaded: true } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('同步中...')
+
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([failed] as any))
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('同步失败：学校系统暂时无法完成同步，请稍后重试')
+    expect(mockToast.error).toHaveBeenCalledWith('学校系统暂时无法完成同步，请稍后重试')
+  })
+
+  it('shows that a transient backend failure is being retried', async () => {
+    vi.useFakeTimers()
+    const retrying = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-retry',
+      sync_trigger: 'manual',
+      sync_error_code: 'ATRUST_TRANSIENT',
+      sync_error_message: '学校系统暂时无法完成同步，请稍后重试',
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([retrying]))
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: { initialState: { session: DEFAULT_SESSION, config: { publicUrl: 'https://schedule.cqu.moe', loaded: true } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('同步遇到临时故障，正在自动重试...')
+  })
+
+  it('stops a persisted queued run at the hard timeout instead of spinning forever', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-stuck',
+      sync_trigger: 'manual',
+      sync_requested_at: '2026-03-01T10:00:00Z',
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: { initialState: { session: DEFAULT_SESSION, config: { publicUrl: 'https://schedule.cqu.moe', loaded: true } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('同步中...')
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 2000)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('同步中...')
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+  })
+
+  it('shows an explicit failure after POLL_TIMEOUT (no silent progress completion)', async () => {
     vi.useFakeTimers()
     const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
     // Poll always returns same last_synced_at (sync never completes)
@@ -302,8 +378,10 @@ describe('Dashboard view (v2)', () => {
     await vi.advanceTimersByTimeAsync(32000)
     await flushPromises()
 
-    // After timeout, pendingRefresh cleared — shows 同步于 (the original synced date)
+    // After timeout, the progress indicator becomes a visible failure.
     expect(wrapper.text()).not.toContain('同步中...')
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+    expect(mockToast.error).toHaveBeenCalledWith('同步超时，请稍后重试')
   })
 
   it('shows toast error when refresh subscription fails', async () => {
@@ -343,12 +421,13 @@ describe('Dashboard view (v2)', () => {
     expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('e-sub-1')
   })
 
-  it('shows "已同步" after sync all succeeds', async () => {
+  it('keeps sync all in progress after requests are only accepted into the queue', async () => {
     const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('已同步')
+    expect(wrapper.text()).toContain('同步中')
+    expect(wrapper.text()).not.toContain('已同步')
   })
 
   it('"同步个人课表" button is disabled when there are no personal subscriptions (M1)', async () => {

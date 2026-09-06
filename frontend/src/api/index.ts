@@ -12,6 +12,7 @@ import type {
   AppConfig,
   HealthStatus,
   CalendarData,
+  SyncQueuedResponse,
 } from '@/types/api'
 import { authLoginUrl } from '@/config/auth'
 
@@ -123,8 +124,9 @@ export default {
   },
 
   /** POST /:sid/syncs — manual refresh (202 Accepted). */
-  async refreshSubscription(sid: string): Promise<void> {
-    await client.post(`/subscriptions/${sid}/syncs`, null)
+  async refreshSubscription(sid: string): Promise<SyncQueuedResponse> {
+    const response = await client.post<SyncQueuedResponse>(`/subscriptions/${sid}/syncs`, null)
+    return response.data
   },
 
   // ── Calendar links ────────────────────────────────────────────────────────

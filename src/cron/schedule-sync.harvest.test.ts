@@ -24,6 +24,9 @@ beforeAll(async () => {
       source_id text NOT NULL, source_name text NOT NULL, session_id text, session_name text,
       semester_start text, is_personal integer NOT NULL DEFAULT 0, is_active integer NOT NULL DEFAULT 1,
       ics_content text, courses_json text, exams_json text, last_synced_at text,
+      sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
+      sync_requested_at text, sync_started_at text, sync_finished_at text,
+      sync_error_code text, sync_error_message text,
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
@@ -46,8 +49,8 @@ async function insertSub(overrides: Partial<typeof subscriptions.$inferInsert> =
   return id;
 }
 
-function makeBatch(bodies: ScheduleSyncMessage[]) {
-  const messages = bodies.map((body) => ({ body, ack: vi.fn(), retry: vi.fn() }));
+function makeBatch(bodies: ScheduleSyncMessage[], attempts = 1) {
+  const messages = bodies.map((body) => ({ body, attempts, ack: vi.fn(), retry: vi.fn() }));
   return { batch: { queue: "schedule-sync", messages } as unknown as MessageBatch<ScheduleSyncMessage>, messages };
 }
 
@@ -73,13 +76,26 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(row.sessionName).toBe("2025秋");
   });
 
-  it("acks WITHOUT retry on a HarvestError (止血: WAF/会话失效/超时)", async () => {
+  it("retries a transient HarvestError with backoff", async () => {
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
+      new HarvestError("ATRUST_TRANSIENT"),
+    );
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
+    expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it("persists a safe error after transient HarvestError retries are exhausted", async () => {
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
       new HarvestError("CQU_WAF_BLOCKED"),
     );
 
-    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }], 4);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
     expect(messages[0].ack).toHaveBeenCalled();
@@ -87,6 +103,14 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.lastSyncedAt).toBeNull(); // not synced
+    const state = await env.DB.prepare(
+      "SELECT sync_status, sync_error_code, sync_error_message FROM subscriptions WHERE id = ?",
+    ).bind(sid).first<{ sync_status: string; sync_error_code: string; sync_error_message: string }>();
+    expect(state).toEqual({
+      sync_status: "error",
+      sync_error_code: "CQU_WAF_BLOCKED",
+      sync_error_message: "学校系统暂时无法完成同步，请稍后重试",
+    });
   });
 
   it("retries on a generic (non-harvest) error", async () => {
@@ -96,7 +120,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
-    expect(messages[0].retry).toHaveBeenCalled();
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(messages[0].ack).not.toHaveBeenCalled();
   });
 

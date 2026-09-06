@@ -57,9 +57,22 @@ export interface Subscription {
   semester_start: string | null
   is_personal: boolean
   last_synced_at: string | null
+  sync_status: 'idle' | 'queued' | 'running' | 'success' | 'error'
+  sync_run_id: string | null
+  sync_trigger: 'cron' | 'manual' | 'initial' | 'admin' | null
+  sync_requested_at: string | null
+  sync_started_at: string | null
+  sync_finished_at: string | null
+  sync_error_code: string | null
+  sync_error_message: string | null
   created_at: string
   updated_at: string
   links: CalendarLink[]
+}
+
+export interface SyncQueuedResponse {
+  status: 'queued'
+  run_id: string
 }
 
 export interface SubscriptionList {

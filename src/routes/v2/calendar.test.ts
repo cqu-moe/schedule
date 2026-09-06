@@ -129,6 +129,9 @@ beforeAll(async () => {
       courses_json text,
       exams_json text,
       last_synced_at text,
+      sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
+      sync_requested_at text, sync_started_at text, sync_finished_at text,
+      sync_error_code text, sync_error_message text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,

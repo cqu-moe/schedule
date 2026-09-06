@@ -234,11 +234,12 @@ describe('API module (v2)', () => {
 
   describe('refreshSubscription', () => {
     it('POST /subscriptions/:sid/syncs', async () => {
-      mockClient.post.mockResolvedValueOnce({})
+      mockClient.post.mockResolvedValueOnce({ data: { status: 'queued', run_id: 'run-1' } })
 
-      await api.refreshSubscription('sub-abc')
+      const result = await api.refreshSubscription('sub-abc')
 
       expect(mockClient.post).toHaveBeenCalledWith('/subscriptions/sub-abc/syncs', null)
+      expect(result).toEqual({ status: 'queued', run_id: 'run-1' })
     })
   })
 

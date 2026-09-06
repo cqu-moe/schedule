@@ -36,6 +36,9 @@ beforeAll(async () => {
       courses_json text,
       exams_json text,
       last_synced_at text,
+      sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
+      sync_requested_at text, sync_started_at text, sync_finished_at text,
+      sync_error_code text, sync_error_message text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -105,7 +108,12 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(batch).toHaveLength(1);
     // Cron-produced messages carry trigger:"cron" so the consumer can re-check
     // due-ness and drop the duplicates that the hourly+spread producer enqueues.
-    expect(batch[0].body).toEqual({ subscriptionId: sid, userId: "user-1", trigger: "cron" });
+    expect(batch[0].body).toEqual({
+      subscriptionId: sid,
+      userId: "user-1",
+      trigger: "cron",
+      runId: expect.any(String),
+    });
   });
 
   it("skips subscriptions synced within the default interval (1440 min)", async () => {
@@ -117,6 +125,21 @@ describe("enqueueScheduleSync (producer)", () => {
     const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it("does not supersede an active queued sync on the next hourly cron", async () => {
+    await insertSub({
+      lastSyncedAt: null,
+      syncStatus: "queued",
+      syncRunId: "existing-run",
+      syncRequestedAt: new Date().toISOString(),
+    });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
@@ -324,9 +347,10 @@ describe("enqueueScheduleSync (producer)", () => {
 // ════════════════════════════════════════════════════════════════════════════
 
 /** Build a fake MessageBatch over the given messages with ack/retry spies. */
-function makeBatch(bodies: ScheduleSyncMessage[]) {
+function makeBatch(bodies: ScheduleSyncMessage[], attempts = 1) {
   const messages = bodies.map((body) => ({
     body,
+    attempts,
     ack: vi.fn(),
     retry: vi.fn(),
   }));
@@ -474,7 +498,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(messages[0].retry).not.toHaveBeenCalled();
   });
 
-  it("acks WITHOUT retry on a HarvestError (止血: WAF/needs_reauth/timeout)", async () => {
+  it("retries a transient HarvestError with backoff", async () => {
     await env.CACHE.delete("session:current");
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("CQU_WAF_BLOCKED"));
@@ -482,8 +506,8 @@ describe("processScheduleSyncBatch (consumer)", () => {
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
-    expect(messages[0].ack).toHaveBeenCalled();
-    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
+    expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
   it("retries when harvest throws a generic (non-harvest) error", async () => {
@@ -493,7 +517,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
-    expect(messages[0].retry).toHaveBeenCalled();
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
