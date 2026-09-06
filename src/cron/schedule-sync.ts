@@ -271,6 +271,16 @@ export async function processScheduleSyncBatch(
   env: Env,
 ): Promise<void> {
   const db = drizzle(env.DB);
+  type PersonalHarvest = Awaited<ReturnType<typeof fetchPersonalHarvest>>;
+  const personalHarvestByUser = new Map<string, Promise<PersonalHarvest>>();
+
+  function fetchBatchPersonalHarvest(userId: string): Promise<PersonalHarvest> {
+    const existing = personalHarvestByUser.get(userId);
+    if (existing) return existing;
+    const pending = fetchPersonalHarvest(env, userId);
+    personalHarvestByUser.set(userId, pending);
+    return pending;
+  }
 
   await Promise.allSettled(
     batch.messages.map(async (message) => {
@@ -397,7 +407,7 @@ export async function processScheduleSyncBatch(
         // real已登录浏览器 via auth (the only过墙 path for the WRITE endpoint).
         // The student ID is the bearer-subject's own identity inside the harvest
         // browser — schedule never sees/needs the stored sourceId here.
-        const { ctx, data: personalData } = await fetchPersonalHarvest(env, userId);
+        const { ctx, data: personalData } = await fetchBatchPersonalHarvest(userId);
         // ICS UID namespace: the harvest path has no 学号, but sub.sourceId is
         // pinned to the auth user.id for personal subs (see routes/v2/subscriptions
         // "pin it to the trusted auth user.id"), so it is per-user-stable and

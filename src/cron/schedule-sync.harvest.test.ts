@@ -76,6 +76,27 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(row.sessionName).toBe("2025秋");
   });
 
+  it("harvests once for multiple personal subscriptions of the same user in one batch", async () => {
+    const allSid = await insertSub({ sourceType: "personal_all", sourceName: "全部" });
+    const coursesSid = await insertSub({ sourceType: "personal_courses", sourceName: "课程" });
+    const examsSid = await insertSub({ sourceType: "personal_exams", sourceName: "考试" });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
+      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
+    });
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: allSid, userId: "user-1" },
+      { subscriptionId: coursesSid, userId: "user-1" },
+      { subscriptionId: examsSid, userId: "user-1" },
+    ]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(harvest).toHaveBeenCalledTimes(1);
+    expect(messages.every(message => message.ack.mock.calls.length === 1)).toBe(true);
+    expect(messages.every(message => message.retry.mock.calls.length === 0)).toBe(true);
+  });
+
   it("retries a transient HarvestError with backoff", async () => {
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
