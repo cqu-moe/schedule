@@ -308,6 +308,87 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步中...')
   })
 
+  it('keeps active sync status checks within the shared authenticated rate-limit budget', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-rate-budget',
+      sync_trigger: 'manual',
+      sync_requested_at: '2026-09-08T00:00:00Z',
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
+
+    const { wrapper } = await mountDashboard([queued])
+    expect(mockApi.getSubscriptions).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+
+    // AUTH_LIMITER allows 40 requests/minute/IP. Three-second polling consumes
+    // at most 21 list requests including the initial dashboard load.
+    expect(mockApi.getSubscriptions.mock.calls.length).toBeLessThanOrEqual(21)
+    wrapper.unmount()
+  })
+
+  it('does not start another status check while the previous one is still pending', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-serial-poll',
+      sync_trigger: 'manual',
+      sync_requested_at: '2026-09-08T00:00:00Z',
+    })
+    let resolvePendingPoll!: (value: ReturnType<typeof mockSubscriptionList>) => void
+    mockApi.getSubscriptions
+      .mockResolvedValueOnce(mockSubscriptionList([queued]))
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePendingPoll = resolve }))
+
+    const { wrapper } = await mountDashboard([queued])
+    await vi.advanceTimersByTimeAsync(3000)
+    vi.advanceTimersByTime(30_000)
+
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+    resolvePendingPoll(mockSubscriptionList([queued]))
+    await flushPromises()
+  })
+
+  it('polls every five seconds for a minute after 429, then restores three-second polling', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({
+      sync_status: 'queued',
+      sync_run_id: 'run-rate-limited',
+      sync_trigger: 'manual',
+      sync_requested_at: '2026-09-08T00:00:00Z',
+    })
+    mockApi.getSubscriptions
+      .mockResolvedValueOnce(mockSubscriptionList([queued]))
+      .mockRejectedValueOnce({ response: { status: 429 } })
+      .mockResolvedValue(mockSubscriptionList([queued]))
+
+    const { wrapper } = await mountDashboard([queued])
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(3)
+
+    await vi.advanceTimersByTimeAsync(55_000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(14)
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(14)
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(15)
+    wrapper.unmount()
+  })
+
   it('clears "同步中..." when poll detects changed last_synced_at', async () => {
     vi.useFakeTimers()
     const oldSyncedAt = '2026-03-01T10:00:00Z'
@@ -340,7 +421,7 @@ describe('Dashboard view (v2)', () => {
       mockSubscriptionList([{ ...sub, last_synced_at: newSyncedAt }]),
     )
 
-    await vi.advanceTimersByTimeAsync(2000)
+    await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
 
     // 同步中... should be cleared, now shows 同步于
@@ -375,7 +456,7 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步中...')
 
     mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([failed] as any))
-    await vi.advanceTimersByTimeAsync(2000)
+    await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
 
     expect(wrapper.text()).toContain('同步失败：学校系统暂时无法完成同步，请稍后重试')
@@ -417,7 +498,7 @@ describe('Dashboard view (v2)', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('同步中...')
 
-    await vi.advanceTimersByTimeAsync(15 * 60_000 + 2000)
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 5000)
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('同步中...')
@@ -450,7 +531,7 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步中...')
 
     // Advance past POLL_TIMEOUT (30s)
-    await vi.advanceTimersByTimeAsync(32000)
+    await vi.advanceTimersByTimeAsync(34_000)
     await flushPromises()
 
     // After timeout, the progress indicator becomes a visible failure.
@@ -522,7 +603,7 @@ describe('Dashboard view (v2)', () => {
     const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
     await syncAllBtn!.trigger('click')
     await flushPromises()
-    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 3000)
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
@@ -580,7 +661,7 @@ describe('Dashboard view (v2)', () => {
     await vi.advanceTimersByTimeAsync(2 * 60_000)
 
     phase = 'missing'
-    await vi.advanceTimersByTimeAsync(2000)
+    await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
     expect(wrapper.text()).toContain('同步中...')
     expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
@@ -870,7 +951,7 @@ describe('Dashboard view (v2)', () => {
     await flushPromises()
 
     const callsBefore = mockApi.getSubscriptions.mock.calls.length
-    await vi.advanceTimersByTimeAsync(2000)
+    await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
     expect(mockApi.getSubscriptions.mock.calls.length).toBeGreaterThan(callsBefore)
   })

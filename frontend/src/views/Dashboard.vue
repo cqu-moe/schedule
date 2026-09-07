@@ -476,7 +476,9 @@ const cooldownClock = ref(Date.now())
 
 const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let pollingActive = false
+let rateLimitedUntil = 0
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 
 // ── Computed ──────────────────────────────────────────────────────────────────
@@ -588,15 +590,33 @@ function formatDate(isoString: string): string {
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL = 2000
+const POLL_INTERVAL = 3000
+const RATE_LIMIT_POLL_INTERVAL = 5000
+const RATE_LIMIT_BACKOFF_WINDOW = 60_000
 const POLL_TIMEOUT = 30000
 const POLL_ACTIVE_TIMEOUT = 15 * 60_000
 
 function stopPolling() {
+  pollingActive = false
+  rateLimitedUntil = 0
   if (pollTimer) {
-    clearInterval(pollTimer)
+    clearTimeout(pollTimer)
     pollTimer = null
   }
+}
+
+function scheduleNextPoll(delay?: number) {
+  if (!pollingActive || pollTimer) return
+  const nextDelay = delay
+    ?? (Date.now() < rateLimitedUntil ? RATE_LIMIT_POLL_INTERVAL : POLL_INTERVAL)
+  pollTimer = setTimeout(runSyncPoll, nextDelay)
+}
+
+function isRateLimitError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'response' in error
+    && (error as { response?: { status?: number } }).response?.status === 429
 }
 
 /**
@@ -611,11 +631,23 @@ function failPendingRefreshes(message: string, ids = Object.keys(pendingRefresh)
   if (ids.length > 0) toast.error(message)
 }
 
-function startSyncPolling() {
-  if (pollTimer) return // already running
+async function runSyncPoll() {
+  pollTimer = null
+  try {
+    await subStore.load(true)
+  } catch (error) {
+    if (pollingActive) {
+      const rateLimited = isRateLimitError(error)
+      if (rateLimited) {
+        rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_BACKOFF_WINDOW)
+      }
+      scheduleNextPoll(rateLimited ? undefined : RATE_LIMIT_POLL_INTERVAL)
+    }
+    return
+  }
 
-  pollTimer = setInterval(async () => {
-    await subStore.load(true).catch(() => {})
+  if (!pollingActive) return
+
     const now = Date.now()
     const timedOutIds: string[] = []
 
@@ -657,8 +689,16 @@ function startSyncPolling() {
 
     if (Object.keys(pendingRefresh).length === 0) {
       stopPolling()
+    } else {
+      scheduleNextPoll()
     }
-  }, POLL_INTERVAL)
+}
+
+function startSyncPolling() {
+  if (pollingActive) return
+  pollingActive = true
+  rateLimitedUntil = 0
+  scheduleNextPoll()
 }
 
 /**
