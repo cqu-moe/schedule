@@ -399,6 +399,31 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.icsContent).toContain("BEGIN:VCALENDAR");
   });
 
+  it("keeps a completed sync successful when notification processing fails", async () => {
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue(okHarvest());
+    await env.DB.prepare("DROP TABLE notification_state").run();
+
+    try {
+      const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
+      await processScheduleSyncBatch(batch, env as unknown as Env);
+
+      expect(messages[0].ack).toHaveBeenCalled();
+      expect(messages[0].retry).not.toHaveBeenCalled();
+      const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+      expect(row.lastSyncedAt).not.toBeNull();
+      expect(row.syncStatus).toBe("success");
+    } finally {
+      await env.DB.prepare(
+        `CREATE TABLE notification_state (
+          user_id text PRIMARY KEY NOT NULL, enabled integer NOT NULL DEFAULT 0,
+          snapshot_json text, snapshot_hash text,
+          created_at text NOT NULL, updated_at text NOT NULL
+        )`,
+      ).run();
+    }
+  });
+
   it("ICS UID namespace is the per-user sourceId, not the shared semester id (no cross-user UID collision)", async () => {
     // Two DIFFERENT users syncing the SAME semester (same ctx.semesterInfo.id).
     // The UID namespace must be per-user (sub.sourceId, pinned to user.id for

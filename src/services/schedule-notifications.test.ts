@@ -78,6 +78,66 @@ describe("diffFutureSchedule", () => {
     });
   });
 
+  it("detects a position-only course location change", () => {
+    const oldSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [course()],
+      exams: [],
+    });
+    const newSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [course({ position: "虎溪校区第二实验楼A101" })],
+      exams: [],
+    });
+
+    const diff = diffFutureSchedule(oldSnapshot, newSnapshot, new Date("2026-09-07T00:00:00.000Z"));
+
+    expect(diff.total).toBe(1);
+    expect(diff.courses[0]).toMatchObject({ kind: "changed", name: "高等数学" });
+  });
+
+  it("groups a recurring course adjustment and caps its concrete dates", () => {
+    const oldSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [course({ weeks: [1, 2, 3, 4, 5, 6, 7] })],
+      exams: [],
+    });
+    const newSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [course({ room: "A102", weeks: [1, 2, 3, 4, 5, 6, 7] })],
+      exams: [],
+    });
+
+    const diff = diffFutureSchedule(oldSnapshot, newSnapshot, new Date("2026-09-07T00:00:00.000Z"));
+
+    expect(diff.total).toBe(1);
+    expect(diff.courses[0].dates).toHaveLength(5);
+    expect(diff.courses[0].extraDates).toBe(2);
+  });
+
+  it("keeps exact same-name exams paired before classifying a removal", () => {
+    const laterExam = exam({
+      start_time: "2026-09-10T05:00:00.000Z",
+      end_time: "2026-09-10T07:00:00.000Z",
+      room: "D1237",
+    });
+    const oldSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [],
+      exams: [exam(), laterExam],
+    });
+    const newSnapshot = normalizeSchedule({
+      semesterStart: "2026-09-07",
+      courses: [],
+      exams: [laterExam],
+    });
+
+    const diff = diffFutureSchedule(oldSnapshot, newSnapshot, new Date("2026-09-07T00:00:00.000Z"));
+
+    expect(diff.total).toBe(1);
+    expect(diff.exams[0]).toMatchObject({ kind: "cancelled", name: "大学物理" });
+  });
+
   it("ignores occurrences that ended at or before the sync time", () => {
     const oldSnapshot = normalizeSchedule({
       semesterStart: "2026-09-07",

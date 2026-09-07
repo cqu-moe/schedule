@@ -58,8 +58,6 @@ export function parseScheduleSnapshot(value: string | null): ScheduleSnapshot | 
   }
 }
 
-const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-
 function clean(value: string | undefined): string {
   return (value ?? "").trim();
 }
@@ -111,6 +109,7 @@ interface Occurrence {
   end: Date;
   date: string;
   detail: string;
+  summary: string;
 }
 
 function formatDateTime(start: Date, end: Date): string {
@@ -135,6 +134,25 @@ function formatDateTime(start: Date, end: Date): string {
   return `${value("year")}年${Number(value("month"))}月${Number(value("day"))}日 ${value("weekday")} ${value("hour")}:${value("minute")}–${endTime}`;
 }
 
+function formatWeekdayTime(start: Date, end: Date): string {
+  const weekday = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    weekday: "long",
+  }).format(start);
+  const formatTime = (date: Date) => new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  return `${weekday} ${formatTime(start)}–${formatTime(end)}`;
+}
+
+function courseLocation(item: CourseEntry): string {
+  const values = [clean(item.position), clean(item.room)].filter(Boolean);
+  return [...new Set(values)].join(" · ") || "地点待定";
+}
+
 function courseOccurrences(snapshot: ScheduleSnapshot): Occurrence[] {
   const termStart = new Date(snapshot.semesterStart);
   if (Number.isNaN(termStart.getTime())) return [];
@@ -157,15 +175,17 @@ function courseOccurrences(snapshot: ScheduleSnapshot): Occurrence[] {
         item.day_of_week,
         TIME_SLOTS[item.end_session - 1][1],
       );
-      const location = item.room || item.position || "地点待定";
+      const location = courseLocation(item);
       const lecturer = item.lecturer || "教师待定";
+      const detail = `${location} · ${lecturer}${item.experiment_name ? ` · ${item.experiment_name}` : ""}`;
       out.push({
         name: item.name,
         groupKey: `${item.name}\u0000${item.experiment_name ?? ""}\u0000${week}`,
         start,
         end,
         date: formatDateTime(start, end),
-        detail: `${location} · ${lecturer}${item.experiment_name ? ` · ${item.experiment_name}` : ""}`,
+        detail,
+        summary: `${formatWeekdayTime(start, end)} · ${detail}`,
       });
     }
   }
@@ -177,13 +197,15 @@ function examOccurrences(snapshot: ScheduleSnapshot): Occurrence[] {
     const start = new Date(item.start_time);
     const end = new Date(item.end_time);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+    const detail = `${item.room || "地点待定"}${item.seat > 0 ? ` · 座位 ${item.seat}` : ""}`;
     return [{
       name: item.name,
       groupKey: item.name,
       start,
       end,
       date: formatDateTime(start, end),
-      detail: `${item.room || "地点待定"}${item.seat > 0 ? ` · 座位 ${item.seat}` : ""}`,
+      detail,
+      summary: `${formatWeekdayTime(start, end)} · ${detail}`,
     }];
   }).sort((a, b) => a.start.getTime() - b.start.getTime() || stableCompare(a, b));
 }
@@ -202,27 +224,62 @@ function pairOccurrences(oldItems: Occurrence[], newItems: Occurrence[], now: Da
   for (const key of groups) {
     const before = oldItems.filter((item) => item.groupKey === key);
     const after = newItems.filter((item) => item.groupKey === key);
-    const count = Math.max(before.length, after.length);
-    for (let index = 0; index < count; index += 1) {
-      const oldItem = before[index];
-      const newItem = after[index];
-      if (oldItem && newItem) {
-        const unchanged = oldItem.start.getTime() === newItem.start.getTime()
-          && oldItem.end.getTime() === newItem.end.getTime()
-          && oldItem.detail === newItem.detail;
-        if (!unchanged && (oldItem.end > now || newItem.end > now)) {
-          changes.push({
-            kind: "changed",
-            name: newItem.name,
-            date: newItem.end > now ? newItem.date : oldItem.date,
-            before: `${oldItem.date} · ${oldItem.detail}`,
-            after: `${newItem.date} · ${newItem.detail}`,
-          });
+    const unmatchedBefore = [...before];
+    const unmatchedAfter = [...after];
+
+    for (let oldIndex = unmatchedBefore.length - 1; oldIndex >= 0; oldIndex -= 1) {
+      const oldItem = unmatchedBefore[oldIndex];
+      const exactIndex = unmatchedAfter.findIndex((newItem) =>
+        oldItem.start.getTime() === newItem.start.getTime()
+        && oldItem.end.getTime() === newItem.end.getTime()
+        && oldItem.detail === newItem.detail);
+      if (exactIndex >= 0) {
+        unmatchedBefore.splice(oldIndex, 1);
+        unmatchedAfter.splice(exactIndex, 1);
+      }
+    }
+
+    while (unmatchedBefore.length > 0 && unmatchedAfter.length > 0) {
+      let bestOldIndex = 0;
+      let bestNewIndex = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let oldIndex = 0; oldIndex < unmatchedBefore.length; oldIndex += 1) {
+        for (let newIndex = 0; newIndex < unmatchedAfter.length; newIndex += 1) {
+          const distance = Math.abs(
+            unmatchedBefore[oldIndex].start.getTime() - unmatchedAfter[newIndex].start.getTime(),
+          );
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestOldIndex = oldIndex;
+            bestNewIndex = newIndex;
+          }
         }
-      } else if (newItem && newItem.end > now) {
-        changes.push({ kind: "added", name: newItem.name, date: newItem.date, after: newItem.detail });
-      } else if (oldItem && oldItem.end > now) {
-        changes.push({ kind: "cancelled", name: oldItem.name, date: oldItem.date, before: oldItem.detail });
+      }
+      const [oldItem] = unmatchedBefore.splice(bestOldIndex, 1);
+      const [newItem] = unmatchedAfter.splice(bestNewIndex, 1);
+      if (oldItem.end > now || newItem.end > now) {
+        const date = oldItem.start.getTime() === newItem.start.getTime()
+          && oldItem.end.getTime() === newItem.end.getTime()
+          ? newItem.date
+          : `${oldItem.date} → ${newItem.date}`;
+        changes.push({
+          kind: "changed",
+          name: newItem.name,
+          date,
+          before: oldItem.summary,
+          after: newItem.summary,
+        });
+      }
+    }
+
+    for (const newItem of unmatchedAfter) {
+      if (newItem.end > now) {
+        changes.push({ kind: "added", name: newItem.name, date: newItem.date, after: newItem.summary });
+      }
+    }
+    for (const oldItem of unmatchedBefore) {
+      if (oldItem.end > now) {
+        changes.push({ kind: "cancelled", name: oldItem.name, date: oldItem.date, before: oldItem.summary });
       }
     }
   }

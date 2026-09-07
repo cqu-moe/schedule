@@ -8,6 +8,7 @@ export const useSession = defineStore('session', () => {
   const caps = ref<CalendarCaps | null>(null)
   const loaded = ref(false)
   const loading = ref(false)
+  let loadPromise: Promise<void> | null = null
 
   // ── Getters ────────────────────────────────────────────────────────────────
 
@@ -25,20 +26,24 @@ export const useSession = defineStore('session', () => {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  async function load(): Promise<void> {
-    if (loading.value) return
+  function load(): Promise<void> {
+    if (loadPromise) return loadPromise
     loading.value = true
-    try {
-      const data = await api.getMe()
-      user.value = data.user
-      caps.value = data.caps.calendar
-      loaded.value = true
-    } finally {
-      loading.value = false
-    }
+    loadPromise = (async () => {
+      try {
+        const data = await api.getMe()
+        user.value = data.user
+        caps.value = data.caps.calendar
+        loaded.value = true
+      } finally {
+        loading.value = false
+        loadPromise = null
+      }
+    })()
     // On 401, the axios interceptor redirects to auth.cqu.moe/login — the
     // rejection propagates here. Callers may catch if they need to react;
     // but in most cases we just let it reject (page redirects away anyway).
+    return loadPromise
   }
 
   // Composition API stores don't auto-generate $reset() — implement manually.

@@ -117,6 +117,25 @@ describe('Dashboard view (v2)', () => {
     expect(mockApi.getNotificationSettings).toHaveBeenCalledOnce()
   })
 
+  it('loads the session before reading notification eligibility on a direct visit', async () => {
+    mockApi.getMe.mockResolvedValue({
+      user: DEFAULT_SESSION.user,
+      caps: { calendar: DEFAULT_SESSION.caps },
+    })
+    mockApi.getNotificationSettings.mockResolvedValue({ eligible: true, enabled: true })
+
+    const { wrapper } = await mountDashboard([], {
+      user: null,
+      caps: null,
+      loaded: false,
+      loading: false,
+    })
+
+    expect(mockApi.getMe).toHaveBeenCalledOnce()
+    expect(mockApi.getNotificationSettings).toHaveBeenCalledOnce()
+    expect(wrapper.get('[role="switch"][aria-label="课表变更通知"]').attributes('aria-checked')).toBe('true')
+  })
+
   it('hides the notification switch when the entitlement is absent', async () => {
     const { wrapper } = await mountDashboard([], {
       caps: { ...DEFAULT_SESSION.caps, change_notification: false },

@@ -781,6 +781,7 @@ onMounted(async () => {
     cooldownClock.value = Date.now()
   }, 1000)
   try {
+    if (!session.loaded) await session.load()
     await Promise.all([
       subStore.load(),
       ...(session.can('change_notification') ? [loadNotificationSettings()] : []),

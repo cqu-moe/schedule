@@ -470,7 +470,15 @@ export async function processScheduleSyncBatch(
           { sessionName: target.sessionName },
           target.syncRunId === runId ? runId : undefined,
         )));
-        await processBatchPersonalNotification(userId, personalData, caps);
+        try {
+          await processBatchPersonalNotification(userId, personalData, caps);
+        } catch {
+          console.error(JSON.stringify({
+            event: "queue.schedule_notification.processing_failed",
+            userId,
+            reason: "notification_processing_failed",
+          }));
+        }
 
         console.log(
           JSON.stringify({
@@ -621,12 +629,12 @@ async function processPersonalNotification(
       userId,
       changes: diff.total,
     }));
-  } catch (error) {
+  } catch {
     console.error(JSON.stringify({
       event: "queue.schedule_notification.enqueue_failed",
       notificationId,
       userId,
-      error: error instanceof Error ? error.message : String(error),
+      reason: "queue_send_failed",
     }));
   }
 }
