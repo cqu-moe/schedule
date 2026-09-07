@@ -459,6 +459,141 @@ describe('Dashboard view (v2)', () => {
     expect(mockToast.error).toHaveBeenCalledWith('同步超时，请稍后重试')
   })
 
+  it('accepts remaining personal subscription successes returned after more than 30 seconds', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-08T00:00:00Z'))
+
+    const oldSyncedAt = '2026-09-07T23:00:00Z'
+    const newSyncedAt = '2026-09-08T00:02:00Z'
+    const initial = [
+      mockSubscription({ id: 'personal-all', source_type: 'personal_all', source_name: '我的全部课表', last_synced_at: oldSyncedAt }),
+      mockSubscription({ id: 'personal-courses', source_type: 'personal_courses', source_name: '我的课程', last_synced_at: oldSyncedAt }),
+      mockSubscription({ id: 'personal-exams', source_type: 'personal_exams', source_name: '我的考试', last_synced_at: oldSyncedAt }),
+    ]
+    const queued = initial.map(sub => ({
+      ...sub,
+      sync_status: 'queued' as const,
+      sync_run_id: 'run-trio',
+      sync_trigger: 'manual' as const,
+      sync_requested_at: '2026-09-08T00:00:00Z',
+      sync_started_at: null,
+      sync_finished_at: null,
+      sync_error_code: null,
+      sync_error_message: null,
+    }))
+    const completed = queued.map(sub => ({
+      ...sub,
+      sync_status: 'success' as const,
+      last_synced_at: newSyncedAt,
+      sync_finished_at: newSyncedAt,
+    }))
+    const partiallyCompleted = queued.map(sub =>
+      sub.id === 'personal-exams' ? completed[2] : sub,
+    )
+
+    let refreshStartedAt: number | null = null
+    mockApi.refreshSubscription.mockImplementation(async () => {
+      refreshStartedAt = Date.now()
+      return {
+        status: 'queued',
+        run_id: 'run-trio',
+        affected_subscription_ids: initial.map(sub => sub.id),
+        cooldown_until: '2026-09-08T00:05:00Z',
+      }
+    })
+    mockApi.getSubscriptions.mockImplementation(async () => {
+      if (refreshStartedAt === null) return mockSubscriptionList(initial)
+      const elapsed = Date.now() - refreshStartedAt
+      if (elapsed >= 2 * 60_000) return mockSubscriptionList(completed)
+      if (elapsed >= 60_000) return mockSubscriptionList(partiallyCompleted)
+      return mockSubscriptionList(queued)
+    })
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
+    await syncAllBtn!.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
+    expect(wrapper.text()).not.toContain('同步中...')
+  })
+
+  it('starts a fresh 30-second grace period when an active run state disappears', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-08T00:00:00Z'))
+
+    const initial = mockSubscription({
+      id: 'personal-all',
+      last_synced_at: '2026-09-07T23:00:00Z',
+    })
+    const queued = {
+      ...initial,
+      sync_status: 'queued' as const,
+      sync_run_id: 'run-grace',
+      sync_trigger: 'manual' as const,
+      sync_requested_at: '2026-09-08T00:00:00Z',
+      sync_started_at: null,
+      sync_finished_at: null,
+      sync_error_code: null,
+      sync_error_message: null,
+    }
+    let phase: 'initial' | 'active' | 'missing' = 'initial'
+    mockApi.refreshSubscription.mockImplementation(async () => {
+      phase = 'active'
+      return {
+        status: 'queued',
+        run_id: 'run-grace',
+        affected_subscription_ids: [initial.id],
+        cooldown_until: '2026-09-08T00:05:00Z',
+      }
+    })
+    mockApi.getSubscriptions.mockImplementation(async () =>
+      mockSubscriptionList([phase === 'active' ? queued : initial]),
+    )
+
+    const { wrapper } = await mountWithContext(Dashboard, {
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+        },
+      },
+    })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find(
+      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
+    )
+    await syncBtn!.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
+
+    phase = 'missing'
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('同步中...')
+    expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
+
+    await vi.advanceTimersByTimeAsync(28_000)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
+
+    await vi.advanceTimersByTimeAsync(4000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+  })
+
   it('shows toast error when refresh subscription fails', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
     mockApi.refreshSubscription.mockRejectedValueOnce({

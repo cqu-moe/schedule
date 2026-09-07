@@ -463,7 +463,12 @@ const activeShareSub = computed(() =>
  * Tracks the exact backend run returned by POST /syncs. Keeping the run id
  * prevents an older queue delivery from being mistaken for this refresh.
  */
-interface PendingRefresh { runId: string | null; oldSyncedAt: string | null }
+interface PendingRefresh {
+  runId: string | null
+  oldSyncedAt: string | null
+  startedAt: number
+  unconfirmedSince: number | null
+}
 const pendingRefresh = reactive<Record<string, PendingRefresh>>({})
 const localSyncErrors = reactive<Record<string, string>>({})
 const localCooldownUntil = reactive<Record<string, number>>({})
@@ -473,7 +478,6 @@ const isPolling = computed(() => Object.keys(pendingRefresh).length > 0)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
-let pollStartTime = 0
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 
@@ -596,39 +600,24 @@ function stopPolling() {
 }
 
 /**
- * Clear all pending-refresh tracking (timeout guard so no sub is stuck
- * "同步中" forever).
+ * Fail selected pending refreshes so no subscription stays "同步中" forever.
+ * Defaults to all pending entries for callers that need a global abort.
  */
-function failPendingRefreshes(message: string) {
-  for (const id of Object.keys(pendingRefresh)) {
+function failPendingRefreshes(message: string, ids = Object.keys(pendingRefresh)) {
+  for (const id of ids) {
     localSyncErrors[id] = message
     delete pendingRefresh[id]
   }
-  toast.error(message)
+  if (ids.length > 0) toast.error(message)
 }
 
 function startSyncPolling() {
   if (pollTimer) return // already running
-  pollStartTime = Date.now()
 
   pollTimer = setInterval(async () => {
     await subStore.load(true).catch(() => {})
-
-    // A persisted queued/running state proves the backend still owns the job
-    // (including delayed retries), so allow the bounded server retry window.
-    // Keep a hard ceiling as a lost queue message must not leave the UI spinning
-    // forever.
-    const backendStillWorking = Object.entries(pendingRefresh).some(([id, pending]) => {
-      const sub = subStore.subscriptions.find(s => s.id === id)
-      return sub && (!pending.runId || sub.sync_run_id === pending.runId)
-        && (sub.sync_status === 'queued' || sub.sync_status === 'running')
-    })
-    const timeout = backendStillWorking ? POLL_ACTIVE_TIMEOUT : POLL_TIMEOUT
-    if (Date.now() - pollStartTime > timeout) {
-      stopPolling()
-      failPendingRefreshes('同步超时，请稍后重试')
-      return
-    }
+    const now = Date.now()
+    const timedOutIds: string[] = []
 
     for (const [id, pending] of Object.entries(pendingRefresh)) {
       const sub = subStore.subscriptions.find(s => s.id === id)
@@ -649,8 +638,22 @@ function startSyncPolling() {
         delete localSyncErrors[id]
         toast.success('同步完成')
         delete pendingRefresh[id]
+        continue
       }
+
+      const backendStillWorking = isSameRun
+        && (sub.sync_status === 'queued' || sub.sync_status === 'running')
+      if (backendStillWorking) {
+        pending.unconfirmedSince = null
+        if (now - pending.startedAt >= POLL_ACTIVE_TIMEOUT) timedOutIds.push(id)
+        continue
+      }
+
+      pending.unconfirmedSince ??= now
+      if (now - pending.unconfirmedSince >= POLL_TIMEOUT) timedOutIds.push(id)
     }
+
+    failPendingRefreshes('同步超时，请稍后重试', timedOutIds)
 
     if (Object.keys(pendingRefresh).length === 0) {
       stopPolling()
@@ -663,10 +666,16 @@ function startSyncPolling() {
  * last_synced_at values and starts the poll if not already running.
  */
 function trackRefresh(runs: Array<{ id: string; runId: string | null }>) {
+  const startedAt = Date.now()
   for (const { id, runId } of runs) {
     const sub = subStore.subscriptions.find(s => s.id === id)
     delete localSyncErrors[id]
-    pendingRefresh[id] = { runId, oldSyncedAt: sub?.last_synced_at ?? null }
+    pendingRefresh[id] = {
+      runId,
+      oldSyncedAt: sub?.last_synced_at ?? null,
+      startedAt,
+      unconfirmedSince: null,
+    }
   }
   startSyncPolling()
 }
