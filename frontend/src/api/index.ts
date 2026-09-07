@@ -13,6 +13,7 @@ import type {
   HealthStatus,
   CalendarData,
   SyncQueuedResponse,
+  NotificationSettings,
 } from '@/types/api'
 import { authLoginUrl } from '@/config/auth'
 
@@ -89,6 +90,16 @@ export default {
 
   async getMe(): Promise<MeResponse> {
     const response = await client.get<MeResponse>('/me', { suppressAuthRedirect: true })
+    return response.data
+  },
+
+  async getNotificationSettings(): Promise<NotificationSettings> {
+    const response = await client.get<NotificationSettings>('/notification-settings')
+    return response.data
+  },
+
+  async updateNotificationSettings(enabled: boolean): Promise<NotificationSettings> {
+    const response = await client.put<NotificationSettings>('/notification-settings', { enabled })
     return response.data
   },
 

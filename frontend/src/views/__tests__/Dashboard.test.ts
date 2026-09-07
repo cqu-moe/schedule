@@ -21,6 +21,8 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     getDepartments: vi.fn(),
     getViewData: vi.fn(),
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+    getNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: false }),
+    updateNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: true }),
   }
   return { mockApi, mockToast }
 })
@@ -39,6 +41,7 @@ const DEFAULT_SESSION = {
     sync: true,
     external: true,
     share: true,
+    change_notification: true,
     sub_limit: 5,
     share_limit: null,
     sync_interval: 60,
@@ -70,6 +73,8 @@ describe('Dashboard view (v2)', () => {
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
     mockApi.refreshSubscription.mockResolvedValue({ status: 'queued', run_id: 'run-1' })
     mockApi.deleteSubscription.mockResolvedValue(undefined)
+    mockApi.getNotificationSettings.mockResolvedValue({ eligible: true, enabled: false })
+    mockApi.updateNotificationSettings.mockResolvedValue({ eligible: true, enabled: true })
   })
 
   afterEach(() => {
@@ -102,6 +107,41 @@ describe('Dashboard view (v2)', () => {
     )
 
     expect(wrapper.text()).toContain('自动同步未开通')
+  })
+
+  it('shows and loads the compact change notification switch for eligible users', async () => {
+    const { wrapper } = await mountDashboard()
+    const toggle = wrapper.get('[role="switch"][aria-label="课表变更通知"]')
+    expect(wrapper.text()).toContain('课表变更通知')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(mockApi.getNotificationSettings).toHaveBeenCalledOnce()
+  })
+
+  it('hides the notification switch when the entitlement is absent', async () => {
+    const { wrapper } = await mountDashboard([], {
+      caps: { ...DEFAULT_SESSION.caps, change_notification: false },
+    })
+    expect(wrapper.find('[role="switch"][aria-label="课表变更通知"]').exists()).toBe(false)
+    expect(mockApi.getNotificationSettings).not.toHaveBeenCalled()
+  })
+
+  it('saves a notification preference and reflects the returned value', async () => {
+    const { wrapper } = await mountDashboard()
+    const toggle = wrapper.get('[role="switch"][aria-label="课表变更通知"]')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(mockApi.updateNotificationSettings).toHaveBeenCalledWith(true)
+    expect(toggle.attributes('aria-checked')).toBe('true')
+  })
+
+  it('keeps the previous value and reports a save failure', async () => {
+    mockApi.updateNotificationSettings.mockRejectedValue(new Error('network'))
+    const { wrapper } = await mountDashboard()
+    const toggle = wrapper.get('[role="switch"][aria-label="课表变更通知"]')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(mockToast.error).toHaveBeenCalledWith('保存通知设置失败')
   })
 
   it('shows count without limit denominator when sub_limit is null', async () => {

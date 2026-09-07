@@ -119,7 +119,7 @@ describe('session store', () => {
 
   describe('can()', () => {
     it('returns true when the flag is enabled', async () => {
-      mockApi.getMe.mockResolvedValue(mockMeResponse({ caps: mockCalendarCaps({ sync: true, external: true, share: true }) }))
+      mockApi.getMe.mockResolvedValue(mockMeResponse({ caps: mockCalendarCaps({ sync: true, external: true, share: true, change_notification: true }) }))
 
       const { useSession } = await import('@/stores/session')
       const store = useSession()
@@ -128,6 +128,7 @@ describe('session store', () => {
       expect(store.can('sync')).toBe(true)
       expect(store.can('external')).toBe(true)
       expect(store.can('share')).toBe(true)
+      expect(store.can('change_notification')).toBe(true)
     })
 
     it('returns false when the flag is disabled', async () => {

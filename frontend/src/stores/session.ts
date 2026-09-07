@@ -13,7 +13,7 @@ export const useSession = defineStore('session', () => {
 
   const isAuthenticated = computed(() => !!user.value)
 
-  function can(flag: 'sync' | 'external' | 'share'): boolean {
+  function can(flag: 'sync' | 'external' | 'share' | 'change_notification'): boolean {
     return !!caps.value?.[flag]
   }
 

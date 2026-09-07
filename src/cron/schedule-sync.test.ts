@@ -44,16 +44,26 @@ beforeAll(async () => {
       updated_at text NOT NULL
     )`,
   ).run();
+  await env.DB.prepare("DROP TABLE IF EXISTS notification_state").run();
+  await env.DB.prepare(
+    `CREATE TABLE notification_state (
+      user_id text PRIMARY KEY NOT NULL, enabled integer NOT NULL DEFAULT 0,
+      snapshot_json text, snapshot_hash text,
+      created_at text NOT NULL, updated_at text NOT NULL
+    )`,
+  ).run();
 });
 
 /** Full calendar caps (everything granted) for the default test user. */
 const FULL_CAPS = {
   sync: true, external: true, share: true,
+  change_notification: false,
   sub_limit: 10, share_limit: 20, sync_interval: 1440, manual_refresh: 20,
 };
 
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM subscriptions").run();
+  await env.DB.prepare("DELETE FROM notification_state").run();
   // Clear any cached student IDs so each test resolves from its own bearer.
   await env.CACHE.delete("student:user-1");
   await env.CACHE.delete("student:user-attacker");

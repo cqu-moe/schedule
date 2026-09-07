@@ -14,6 +14,7 @@ import meV2 from "./routes/v2/me";
 import subscriptionsV2 from "./routes/v2/subscriptions";
 import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
+import notificationSettingsV2 from "./routes/v2/notification-settings";
 
 export const app = new Hono<{ Bindings: Env }>();
 
@@ -55,7 +56,7 @@ app.use(
       return "";
     },
     allowHeaders: ["Authorization", "Content-Type"],
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
@@ -76,6 +77,9 @@ app.route("/api/v2/me", meV2);
 app.use("/api/v2/subscriptions/*", rateLimit("AUTH_LIMITER"), sessionMiddleware);
 app.use("/api/v2/subscriptions", rateLimit("AUTH_LIMITER"), sessionMiddleware);
 app.route("/api/v2/subscriptions", subscriptionsV2);
+
+app.use("/api/v2/notification-settings", rateLimit("AUTH_LIMITER"), sessionMiddleware);
+app.route("/api/v2/notification-settings", notificationSettingsV2);
 
 // EXTERNAL_LIMITER runs BEFORE sessionMiddleware so flood traffic is rejected
 // without spending an AUTH.verifySession RPC / caps KV write (stricter than

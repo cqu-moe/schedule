@@ -90,6 +90,19 @@ export const subscriptions = sqliteTable(
   ],
 );
 
+export const notificationState = sqliteTable("notification_state", {
+  userId: text("user_id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  snapshotJson: text("snapshot_json"),
+  snapshotHash: text("snapshot_hash"),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 // ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
 
 export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
@@ -158,5 +171,6 @@ export const EXTERNAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<ExternalSo
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
+export type NotificationState = typeof notificationState.$inferSelect;
 export type CalendarLink = typeof calendarLinks.$inferSelect;
 export type NewCalendarLink = typeof calendarLinks.$inferInsert;

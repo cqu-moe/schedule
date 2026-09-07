@@ -11,10 +11,16 @@ export interface CalendarCaps {
   sync: boolean
   external: boolean
   share: boolean
+  change_notification: boolean
   sub_limit: number | null
   share_limit: number | null
   sync_interval: number | null
   manual_refresh: number | null
+}
+
+export interface NotificationSettings {
+  eligible: boolean
+  enabled: boolean
 }
 
 export interface MeResponse {

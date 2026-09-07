@@ -209,4 +209,15 @@ describe("CORS preflight", () => {
     const allowMethods = res.headers.get("access-control-allow-methods") ?? "";
     expect(allowMethods).toContain("PATCH");
   });
+
+  it("OPTIONS to notification settings allows PUT", async () => {
+    const res = await request("/api/v2/notification-settings", fakeAuth("userA", FULL_CAPS), {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "PUT",
+      },
+    });
+    expect(res.headers.get("access-control-allow-methods") ?? "").toContain("PUT");
+  });
 });

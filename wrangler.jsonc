@@ -68,7 +68,8 @@
   // Queues
   "queues": {
     "producers": [
-      { "binding": "SCHEDULE_SYNC_QUEUE", "queue": "schedule-sync" }
+      { "binding": "SCHEDULE_SYNC_QUEUE", "queue": "schedule-sync" },
+      { "binding": "SCHEDULE_NOTIFICATION_QUEUE", "queue": "schedule-notifications" }
     ],
     "consumers": [
       {

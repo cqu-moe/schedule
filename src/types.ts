@@ -1,4 +1,5 @@
 import type { ScheduleSyncMessage } from "./cron/schedule-sync";
+import type { ScheduleNotificationMessageV1 } from "./services/schedule-notifications";
 
 export interface Env {
   // Static Assets
@@ -17,6 +18,7 @@ export interface Env {
 
   // Queues
   SCHEDULE_SYNC_QUEUE: Queue<ScheduleSyncMessage>;
+  SCHEDULE_NOTIFICATION_QUEUE: Queue<ScheduleNotificationMessageV1>;
 
   // Auth service (拓扑①: Service Binding RPC to cqu-moe-auth)
   AUTH: import("./services/auth-rpc").AuthService;

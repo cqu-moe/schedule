@@ -8,6 +8,7 @@ export interface CalendarCaps {
   sync: boolean;
   external: boolean;
   share: boolean;
+  change_notification: boolean;
   sub_limit: number | null; // null = 无限
   share_limit: number | null;
   sync_interval: number | null; // 分钟；自动同步由每小时 cron 驱动，故 1h 是有效下限，<60 实际等同每小时（非分钟级）
@@ -107,6 +108,7 @@ export const DENY_CAPS: CalendarCaps = {
   sync: false,
   external: false,
   share: false,
+  change_notification: false,
   sub_limit: 0,
   share_limit: 0,
   sync_interval: 1440,

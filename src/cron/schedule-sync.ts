@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray } from "drizzle-orm";
 import {
   subscriptions,
+  notificationState,
   PERSONAL_SOURCE_TYPES,
   EXTERNAL_SOURCE_TYPES,
   type SourceType,
@@ -24,6 +25,15 @@ import {
   queueSyncRun,
   isRetryableSyncFailure,
 } from "../services/sync-status";
+import type { PersonalScheduleData } from "../services/sync";
+import {
+  createNotificationId,
+  diffFutureSchedule,
+  hashSchedule,
+  normalizeSchedule,
+  parseScheduleSnapshot,
+  renderScheduleChangeEmail,
+} from "../services/schedule-notifications";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
@@ -273,12 +283,25 @@ export async function processScheduleSyncBatch(
   const db = drizzle(env.DB);
   type PersonalHarvest = Awaited<ReturnType<typeof fetchPersonalHarvest>>;
   const personalHarvestByUser = new Map<string, Promise<PersonalHarvest>>();
+  const personalNotificationByUser = new Map<string, Promise<void>>();
 
   function fetchBatchPersonalHarvest(userId: string): Promise<PersonalHarvest> {
     const existing = personalHarvestByUser.get(userId);
     if (existing) return existing;
     const pending = fetchPersonalHarvest(env, userId);
     personalHarvestByUser.set(userId, pending);
+    return pending;
+  }
+
+  function processBatchPersonalNotification(
+    userId: string,
+    data: PersonalScheduleData,
+    caps: CalendarCaps | null,
+  ): Promise<void> {
+    const existing = personalNotificationByUser.get(userId);
+    if (existing) return existing;
+    const pending = processPersonalNotification(db, env, userId, data, caps);
+    personalNotificationByUser.set(userId, pending);
     return pending;
   }
 
@@ -447,6 +470,7 @@ export async function processScheduleSyncBatch(
           { sessionName: target.sessionName },
           target.syncRunId === runId ? runId : undefined,
         )));
+        await processBatchPersonalNotification(userId, personalData, caps);
 
         console.log(
           JSON.stringify({
@@ -523,4 +547,86 @@ export async function processScheduleSyncBatch(
       }
     }),
   );
+}
+
+async function processPersonalNotification(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  userId: string,
+  data: PersonalScheduleData,
+  caps: CalendarCaps | null,
+): Promise<void> {
+  const now = new Date();
+  const snapshot = normalizeSchedule(data);
+  const snapshotJson = JSON.stringify(snapshot);
+  const snapshotHash = await hashSchedule(snapshot);
+  const state = await db
+    .select()
+    .from(notificationState)
+    .where(eq(notificationState.userId, userId))
+    .get();
+
+  const advanceBaseline = async () => {
+    const timestamp = now.toISOString();
+    await db
+      .insert(notificationState)
+      .values({
+        userId,
+        enabled: state?.enabled ?? false,
+        snapshotJson,
+        snapshotHash,
+        createdAt: state?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: notificationState.userId,
+        set: { snapshotJson, snapshotHash, updatedAt: timestamp },
+      });
+  };
+
+  const previous = parseScheduleSnapshot(state?.snapshotJson ?? null);
+  if (!previous || !state?.snapshotHash) {
+    await advanceBaseline();
+    return;
+  }
+  if (state.snapshotHash === snapshotHash) {
+    await advanceBaseline();
+    return;
+  }
+  if (!state.enabled || caps?.change_notification !== true) {
+    await advanceBaseline();
+    return;
+  }
+
+  const diff = diffFutureSchedule(previous, snapshot, now);
+  if (diff.total === 0) {
+    await advanceBaseline();
+    return;
+  }
+
+  const rendered = renderScheduleChangeEmail(diff);
+  const notificationId = await createNotificationId(userId, state.snapshotHash, snapshotHash);
+  try {
+    await env.SCHEDULE_NOTIFICATION_QUEUE.send({
+      version: 1,
+      notificationId,
+      userId,
+      ...rendered,
+      createdAt: now.toISOString(),
+    });
+    await advanceBaseline();
+    console.log(JSON.stringify({
+      event: "queue.schedule_notification.enqueued",
+      notificationId,
+      userId,
+      changes: diff.total,
+    }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "queue.schedule_notification.enqueue_failed",
+      notificationId,
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
 }

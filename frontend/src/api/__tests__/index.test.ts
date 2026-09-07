@@ -5,6 +5,7 @@ const { mockClient } = vi.hoisted(() => {
   const mockClient = {
     get: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
     patch: vi.fn(),
     delete: vi.fn(),
     interceptors: {
@@ -35,6 +36,7 @@ describe('API module (v2)', () => {
   beforeEach(() => {
     mockClient.get.mockReset()
     mockClient.post.mockReset()
+    mockClient.put.mockReset()
     mockClient.patch.mockReset()
     mockClient.delete.mockReset()
   })
@@ -192,6 +194,19 @@ describe('API module (v2)', () => {
 
       expect(mockClient.get).toHaveBeenCalledWith('/me', { suppressAuthRedirect: true })
       expect(result).toEqual(me)
+    })
+  })
+
+  describe('notification settings', () => {
+    it('loads and updates the current user preference', async () => {
+      mockClient.get.mockResolvedValueOnce({ data: { eligible: true, enabled: false } })
+      mockClient.put.mockResolvedValueOnce({ data: { eligible: true, enabled: true } })
+
+      await expect(api.getNotificationSettings()).resolves.toEqual({ eligible: true, enabled: false })
+      await expect(api.updateNotificationSettings(true)).resolves.toEqual({ eligible: true, enabled: true })
+
+      expect(mockClient.get).toHaveBeenCalledWith('/notification-settings')
+      expect(mockClient.put).toHaveBeenCalledWith('/notification-settings', { enabled: true })
     })
   })
 

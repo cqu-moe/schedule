@@ -15,6 +15,7 @@ export function createMockAuth(): AuthService {
         sync: true,
         external: true,
         share: true,
+        change_notification: true,
         sub_limit: 10,
         share_limit: 20,
         sync_interval: 60,

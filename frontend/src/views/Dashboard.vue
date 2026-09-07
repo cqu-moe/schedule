@@ -27,6 +27,30 @@
               />
               {{ session.can('sync') ? '自动同步已开启' : '自动同步未开通' }}
             </p>
+            <div
+              v-if="session.can('change_notification')"
+              id="notification-settings"
+              class="mt-2 flex items-center gap-2"
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-label="课表变更通知"
+                :aria-checked="notificationEnabled"
+                :disabled="notificationLoading"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
+                :class="notificationEnabled ? 'bg-foreground' : 'bg-muted-foreground/35'"
+                @click="toggleNotification"
+              >
+                <span
+                  aria-hidden="true"
+                  class="block h-4 w-4 rounded-full bg-background shadow-sm transition-transform"
+                  :class="notificationEnabled ? 'translate-x-4' : 'translate-x-0.5'"
+                />
+              </button>
+              <span class="text-sm text-foreground">课表变更通知</span>
+              <span class="text-xs text-muted-foreground">有变化时发邮件</span>
+            </div>
             <p
               v-if="subStore.atLimit"
               class="text-xs text-amber-600 dark:text-amber-400 mt-0.5"
@@ -415,6 +439,8 @@ const enrichedSubs = computed<EnrichedSub[]>(() =>
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const loading = ref(true)
+const notificationEnabled = ref(false)
+const notificationLoading = ref(false)
 const deleteSubDialog = ref<{ id: string; name: string } | null>(null)
 const qrModal = ref<{ open: boolean; url: string }>({ open: false, url: '' })
 const shareLinksDialog = reactive<{ open: boolean; subId: string | null }>({
@@ -724,6 +750,30 @@ async function handleSyncAll() {
   }
 }
 
+async function loadNotificationSettings() {
+  notificationLoading.value = true
+  try {
+    const settings = await api.getNotificationSettings()
+    notificationEnabled.value = settings.enabled
+  } finally {
+    notificationLoading.value = false
+  }
+}
+
+async function toggleNotification() {
+  if (notificationLoading.value) return
+  const next = !notificationEnabled.value
+  notificationLoading.value = true
+  try {
+    const settings = await api.updateNotificationSettings(next)
+    notificationEnabled.value = settings.enabled
+  } catch {
+    toast.error('保存通知设置失败')
+  } finally {
+    notificationLoading.value = false
+  }
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
@@ -731,7 +781,10 @@ onMounted(async () => {
     cooldownClock.value = Date.now()
   }, 1000)
   try {
-    await subStore.load()
+    await Promise.all([
+      subStore.load(),
+      ...(session.can('change_notification') ? [loadNotificationSettings()] : []),
+    ])
     const activeRuns = subStore.subscriptions
       .filter(sub => sub.sync_status === 'queued' || sub.sync_status === 'running')
       .map(sub => ({ id: sub.id, runId: sub.sync_run_id }))
