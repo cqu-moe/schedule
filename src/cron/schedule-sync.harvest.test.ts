@@ -121,7 +121,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
       version: 1,
       userId: "user-1",
       subject: "课表与考试安排有更新（2项）",
-      html: expect.stringContaining("2026年9月8日"),
+      html: expect.stringContaining("9 月 8 日"),
       text: expect.stringContaining("考试安排"),
     }));
     expect(send.mock.calls[0][0]).not.toHaveProperty("email");

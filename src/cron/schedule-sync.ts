@@ -612,7 +612,7 @@ async function processPersonalNotification(
     return;
   }
 
-  const rendered = renderScheduleChangeEmail(diff);
+  const rendered = renderScheduleChangeEmail(diff, now);
   const notificationId = await createNotificationId(userId, state.snapshotHash, snapshotHash);
   try {
     await env.SCHEDULE_NOTIFICATION_QUEUE.send({

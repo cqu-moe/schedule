@@ -174,11 +174,33 @@ describe("renderScheduleChangeEmail", () => {
       new Date("2026-09-07T00:00:00.000Z"),
     );
 
-    const rendered = renderScheduleChangeEmail(diff);
+    const rendered = renderScheduleChangeEmail(diff, new Date("2026-09-07T13:36:00.000Z"));
     expect(rendered.subject).toBe("课表与考试安排有更新（2项）");
-    expect(rendered.html).toContain("课程表");
-    expect(rendered.html).toContain("考试安排");
-    expect(rendered.html).toContain("2026年9月8日");
+    expect(rendered.html).toContain('<meta name="color-scheme" content="light dark">');
+    expect(rendered.html).toContain('<meta name="supported-color-schemes" content="light dark">');
+    expect(rendered.html).toContain("color-scheme:light dark");
+    expect(rendered.html).toContain("@media(prefers-color-scheme:dark)");
+    expect(rendered.html).toContain(".email-body,.email-page{background:#15191c!important}");
+    expect(rendered.html).toContain(".email-card,.email-surface{background:#1d2226!important}");
+    expect(rendered.html).toContain(".email-primary{color:#edf2f5!important}");
+    expect(rendered.html).toContain(".email-button{background:#2b75a8!important;color:#fff!important}");
+    expect(rendered.html).toContain('bgcolor="#f3f5f6"');
+    expect(rendered.html).toContain('bgcolor="#ffffff"');
+    expect(rendered.html).toContain("CQU.MOE");
+    expect(rendered.html).toContain("重庆大学课表");
+    expect(rendered.html).toContain("课表与考试安排有更新");
+    expect(rendered.html).toContain("本次同步发现 2 处未来安排发生变化，具体如下。");
+    expect(rendered.html).toContain("课程表 <span");
+    expect(rendered.html).toContain("1 处变化</span>");
+    expect(rendered.html).toContain("考试安排 <span");
+    expect(rendered.html).toContain('class="date-col email-row" width="104"');
+    expect(rendered.html).toContain("9 月 8 日");
+    expect(rendered.html).toContain("2026 年 · 周二");
+    expect(rendered.html).toContain("地点调整");
+    expect(rendered.html).toContain("同步时间：2026 年 9 月 7 日 21:36");
+    expect(rendered.html).toContain("你已开启课表变更通知。");
+    expect(rendered.html).toContain("CQU.MOE 是学生维护的非官方服务");
+    expect(rendered.html).toContain("background:#174f78");
     expect(rendered.html).toContain("数学 &lt;实验&gt;");
     expect(rendered.html).not.toContain("数学 <实验>");
     expect(rendered.text).toContain("课程表");
