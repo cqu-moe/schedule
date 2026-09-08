@@ -103,12 +103,30 @@ export function isRetryableSyncFailure(error: unknown): boolean {
   return !/NEEDS_REAUTH|SESSION_INACTIVE|FEATURE_NOT_ENABLED|INVALID_HARVEST_URL/i.test(error.message);
 }
 
+/**
+ * User-facing text while a sync run WAITS for browser capacity. Only ever
+ * written via markSyncRetrying inside the bounded capacity branch — once the
+ * wait ends (success, or terminal failure via {@link publicSyncFailure}) the
+ * row no longer shows "排队中".
+ */
+export const CAPACITY_WAIT_MESSAGE = "同步任务排队中，稍后自动重试";
+
+/** Public failure shown during the bounded capacity wait (stable code preserved). */
+export function capacityWaitFailure(error: unknown): PublicSyncFailure {
+  return { code: publicSyncFailure(error).code, message: CAPACITY_WAIT_MESSAGE };
+}
+
 export function publicSyncFailure(error: unknown): PublicSyncFailure {
   if (error instanceof HarvestError) {
     if (/NEEDS_REAUTH|SESSION_INACTIVE/i.test(error.message)) {
       return { code: "NEEDS_REAUTH", message: "登录状态已失效，请到账号设置重新绑定" };
     }
     const stableCode = /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : "HARVEST_FAILED";
+    if (stableCode === "BROWSER_DEADLINE" || stableCode === "BROWSER_INSTANCE_REPLACED") {
+      // Controlled transient infrastructure failure — the message must never
+      // read like a password/account problem to the user.
+      return { code: stableCode, message: "同步服务暂时繁忙，请稍后重试" };
+    }
     return {
       code: stableCode,
       message: "学校系统暂时无法完成同步，请稍后重试",

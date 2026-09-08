@@ -391,7 +391,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(messages[0].ack).toHaveBeenCalled();
     expect(messages[0].retry).not.toHaveBeenCalled();
     // Harvest is keyed by the auth userId only — the stored sourceId is never used.
-    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1", { deadlineAt: expect.any(Number) });
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.lastSyncedAt).not.toBeNull();
@@ -463,7 +463,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
     expect(messages[0].ack).toHaveBeenCalled();
-    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1", { deadlineAt: expect.any(Number) });
     // The forged sourceId never reaches harvest.
     expect(harvest).not.toHaveBeenCalledWith(expect.anything(), "20219999");
   });
@@ -581,7 +581,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
     expect(messages[0].ack).toHaveBeenCalled();
-    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1", { deadlineAt: expect.any(Number) });
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.lastSyncedAt).not.toBe(recent);
   });

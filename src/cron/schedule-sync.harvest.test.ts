@@ -164,7 +164,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
     await processScheduleSyncBatch(batch, env as unknown as Env);
 
-    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1", { deadlineAt: expect.any(Number) });
     expect(messages[0].ack).toHaveBeenCalled();
     expect(messages[0].retry).not.toHaveBeenCalled();
 
@@ -276,5 +276,170 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.lastSyncedAt).toBeNull(); // frozen, not synced, not deleted
+  });
+});
+
+describe("processScheduleSyncBatch — shared batch deadline", () => {
+  it("shares ONE absolute harvest deadline across every user of the same batch", async () => {
+    const sid1 = await insertSub({ userId: "user-1", sourceId: "user-1" });
+    const sid2 = await insertSub({ userId: "user-2", sourceId: "user-2" });
+    await env.CACHE.put("caps:user-2", JSON.stringify(FULL_CAPS));
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
+      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
+    });
+
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid1, userId: "user-1" },
+      { subscriptionId: sid2, userId: "user-2" },
+    ]);
+    await processScheduleSyncBatch(batch, testEnv());
+
+    expect(harvest).toHaveBeenCalledTimes(2);
+    expect(messages.every(message => message.ack.mock.calls.length === 1)).toBe(true);
+    const deadlines = harvest.mock.calls.map(call => (call[2] as { deadlineAt?: number } | undefined)?.deadlineAt);
+    expect(typeof deadlines[0]).toBe("number");
+    expect(deadlines[1]).toBe(deadlines[0]);
+    // 13-minute batch budget, created once at batch start.
+    expect(deadlines[0]!).toBeGreaterThan(Date.now());
+    expect(deadlines[0]!).toBeLessThanOrEqual(Date.now() + 13 * 60_000);
+  });
+});
+
+describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY / ATRUST_LOGIN_IN_FLIGHT)", () => {
+  async function insertQueuedRunSub(overrides: Partial<typeof subscriptions.$inferInsert> = {}) {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      syncStatus: "queued",
+      syncRunId: runId,
+      syncRequestedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      ...overrides,
+    });
+    return { sid, runId };
+  }
+
+  it("retries BROWSER_BUSY with a bounded 60-90s delay, shows 排队中, and touches no data", async () => {
+    const { sid, runId } = await insertQueuedRunSub({
+      lastSyncedAt: "2026-09-01T00:00:00.000Z",
+      coursesJson: "[{\"name\":\"高等数学\"}]",
+    });
+    const send = vi.fn();
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("BROWSER_BUSY"));
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1", runId }], 2);
+    await processScheduleSyncBatch(batch, testEnv(send));
+
+    expect(messages[0].retry).toHaveBeenCalledOnce();
+    const { delaySeconds } = messages[0].retry.mock.calls[0][0] as { delaySeconds: number };
+    expect(delaySeconds).toBeGreaterThanOrEqual(60);
+    expect(delaySeconds).toBeLessThanOrEqual(90);
+    expect(messages[0].ack).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStatus).toBe("queued");
+    expect(row?.syncErrorCode).toBe("BROWSER_BUSY");
+    expect(row?.syncErrorMessage).toBe("同步任务排队中，稍后自动重试");
+    expect(row?.lastSyncedAt).toBe("2026-09-01T00:00:00.000Z"); // untouched
+    expect(row?.coursesJson).toBe("[{\"name\":\"高等数学\"}]"); // untouched
+  });
+
+  it("fails the run (ack, no retry) once the capacity wait exceeds 45 minutes, keeping old data", async () => {
+    const { sid, runId } = await insertQueuedRunSub({
+      syncRequestedAt: new Date(Date.now() - 46 * 60_000).toISOString(),
+      lastSyncedAt: "2026-09-01T00:00:00.000Z",
+      coursesJson: "[{\"name\":\"高等数学\"}]",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("BROWSER_BUSY"));
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1", runId }], 10);
+    await processScheduleSyncBatch(batch, testEnv());
+
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStatus).toBe("error");
+    expect(row?.syncErrorCode).toBe("BROWSER_BUSY");
+    expect(row?.syncErrorMessage).not.toContain("排队"); // terminal: no queueing text
+    expect(row?.lastSyncedAt).toBe("2026-09-01T00:00:00.000Z"); // preserved
+    expect(row?.coursesJson).toBe("[{\"name\":\"高等数学\"}]"); // preserved
+  });
+
+  it("still waits on the 44th attempt but fails the run on the 45th", async () => {
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
+      new HarvestError("ATRUST_LOGIN_IN_FLIGHT"),
+    );
+
+    const run44 = await insertQueuedRunSub({
+      syncRequestedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    const first = makeBatch(
+      [{ subscriptionId: run44.sid, userId: "user-1", runId: run44.runId }],
+      44,
+    );
+    await processScheduleSyncBatch(first.batch, testEnv());
+    expect(first.messages[0].retry).toHaveBeenCalledOnce();
+    const { delaySeconds } = first.messages[0].retry.mock.calls[0][0] as { delaySeconds: number };
+    expect(delaySeconds).toBeGreaterThanOrEqual(60);
+    expect(delaySeconds).toBeLessThanOrEqual(90);
+    expect(first.messages[0].ack).not.toHaveBeenCalled();
+
+    const run45 = await insertQueuedRunSub({
+      syncRequestedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    const second = makeBatch(
+      [{ subscriptionId: run45.sid, userId: "user-1", runId: run45.runId }],
+      45,
+    );
+    await processScheduleSyncBatch(second.batch, testEnv());
+    expect(second.messages[0].retry).not.toHaveBeenCalled();
+    expect(second.messages[0].ack).toHaveBeenCalledOnce();
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, run45.sid)).get();
+    expect(row?.syncStatus).toBe("error");
+    expect(row?.syncErrorCode).toBe("ATRUST_LOGIN_IN_FLIGHT");
+    expect(row?.syncErrorMessage).not.toContain("排队");
+  });
+
+  it("falls back to the original finite retry when the run has no syncRequestedAt", async () => {
+    const { sid, runId } = await insertQueuedRunSub({ syncRequestedAt: null });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("BROWSER_BUSY"));
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1", runId }], 1);
+    await processScheduleSyncBatch(batch, testEnv());
+
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
+    expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the original finite retry when syncRequestedAt is unparseable", async () => {
+    const { sid, runId } = await insertQueuedRunSub({ syncRequestedAt: "not-a-date" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("BROWSER_BUSY"));
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1", runId }], 1);
+    await processScheduleSyncBatch(batch, testEnv());
+
+    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
+    expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it("acks a stale message without touching the newer run or harvesting", async () => {
+    const sid = await insertSub({
+      syncStatus: "running",
+      syncRunId: "newer-run",
+      syncRequestedAt: new Date().toISOString(),
+    });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
+
+    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1", runId: "older-run" }]);
+    await processScheduleSyncBatch(batch, testEnv());
+
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(harvest).not.toHaveBeenCalled();
+
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStatus).toBe("running");
+    expect(row?.syncRunId).toBe("newer-run");
   });
 });

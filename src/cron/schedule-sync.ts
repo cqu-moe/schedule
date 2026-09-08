@@ -11,12 +11,14 @@ import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
 import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
+import { capacityRetryDelay, CAPACITY_RETRY_CODES } from "../services/sync-retry-policy";
 import {
   buildPersonalSyncResult,
   applySyncResult,
   preGenerateIcs,
 } from "../services/sync";
 import {
+  capacityWaitFailure,
   markSyncError,
   markSyncRetrying,
   markSyncRunning,
@@ -281,6 +283,10 @@ export async function processScheduleSyncBatch(
   env: Env,
 ): Promise<void> {
   const db = drizzle(env.DB);
+  // One absolute harvest deadline for the whole batch invocation: every
+  // message and every harvest phase shares it (auth clamps each operation
+  // against it). Never add 13 minutes again per user or per phase.
+  const deadlineAt = Date.now() + 13 * 60_000;
   type PersonalHarvest = Awaited<ReturnType<typeof fetchPersonalHarvest>>;
   const personalHarvestByUser = new Map<string, Promise<PersonalHarvest>>();
   const personalNotificationByUser = new Map<string, Promise<void>>();
@@ -288,7 +294,7 @@ export async function processScheduleSyncBatch(
   function fetchBatchPersonalHarvest(userId: string): Promise<PersonalHarvest> {
     const existing = personalHarvestByUser.get(userId);
     if (existing) return existing;
-    const pending = fetchPersonalHarvest(env, userId);
+    const pending = fetchPersonalHarvest(env, userId, { deadlineAt });
     personalHarvestByUser.set(userId, pending);
     return pending;
   }
@@ -310,6 +316,9 @@ export async function processScheduleSyncBatch(
       const { subscriptionId, userId, trigger } = message.body;
       let runId = message.body.runId;
       let syncTargetIds = [subscriptionId];
+      // First request time of THIS sync run (ms epoch), used to bound the
+      // capacity wait. NaN when unavailable → the finite retry path is used.
+      let runFirstRequestedAt = Number.NaN;
       try {
         const [sub] = await db
           .select({
@@ -321,6 +330,7 @@ export async function processScheduleSyncBatch(
             sessionName: subscriptions.sessionName,
             lastSyncedAt: subscriptions.lastSyncedAt,
             syncRunId: subscriptions.syncRunId,
+            syncRequestedAt: subscriptions.syncRequestedAt,
           })
           .from(subscriptions)
           .where(eq(subscriptions.id, subscriptionId))
@@ -343,6 +353,16 @@ export async function processScheduleSyncBatch(
         }
         if (!runId) {
           runId = await queueSyncRun(db, subscriptionId, trigger ?? "admin");
+          // queueSyncRun just stamped syncRequestedAt for this new run.
+          runFirstRequestedAt = Date.now();
+        } else {
+          // Bound the capacity wait by the run's FIRST queue time from D1 —
+          // never by this message's (re-)delivery time, which would reset the
+          // 45-minute budget on every retry. Unparseable/missing → NaN → the
+          // original finite retry is used instead of an unbounded wait.
+          runFirstRequestedAt = sub.syncRequestedAt
+            ? Date.parse(sub.syncRequestedAt)
+            : Number.NaN;
         }
         if (!(await markSyncRunning(db, subscriptionId, runId))) {
           message.ack();
@@ -494,6 +514,62 @@ export async function processScheduleSyncBatch(
         if (e instanceof HarvestError) {
           const attempt = message.attempts ?? 1;
           const failure = publicSyncFailure(e);
+          // Capacity-wait branch, checked BEFORE the generic transient retry:
+          // a busy browser pool or an in-flight aTrust login is a capacity
+          // signal, so the run waits with its own bounded 60-90s backoff
+          // (platform max_retries=45 gives it room; ordinary failures still
+          // stop after the 3 code-level delays below). The wait is bounded by
+          // the run's FIRST request time (45 min) AND the attempt count, so
+          // every message has a definite end. The stable code (not any
+          // English error text) decides the branch.
+          if (runId && CAPACITY_RETRY_CODES.has(failure.code)) {
+            const now = Date.now();
+            const delaySeconds = capacityRetryDelay(
+              failure.code,
+              runFirstRequestedAt,
+              now,
+              attempt,
+              Math.random() * 30,
+            );
+            if (delaySeconds !== null) {
+              const waitFailure = capacityWaitFailure(e);
+              await Promise.all(syncTargetIds.map(targetId =>
+                markSyncRetrying(db, targetId, runId!, waitFailure)));
+              console.warn(JSON.stringify({
+                event: "queue.schedule_sync.capacity_retry",
+                subscriptionId,
+                attempt,
+                delaySeconds,
+                error: e.message,
+                message: "Browser capacity full; scheduling bounded retry",
+              }));
+              message.retry({ delaySeconds });
+              return;
+            }
+            const capacityInputsValid = Number.isFinite(runFirstRequestedAt)
+              && now >= runFirstRequestedAt
+              && Number.isInteger(attempt)
+              && attempt >= 1;
+            if (capacityInputsValid) {
+              // Window/attempt budget exhausted: fail THIS run terminally and
+              // ack — the row stops showing "排队中", the existing calendar is
+              // kept, and the run never falls into another (unbounded) retry
+              // branch. The next cron run or a manual refresh starts fresh.
+              await Promise.all(syncTargetIds.map(targetId =>
+                markSyncError(db, targetId, runId!, failure)));
+              console.warn(JSON.stringify({
+                event: "queue.schedule_sync.capacity_exhausted",
+                subscriptionId,
+                attempt,
+                error: e.message,
+                message: "Capacity wait budget exhausted; failing this sync run",
+              }));
+              message.ack();
+              return;
+            }
+            // Missing/invalid run start time: fall through to the original
+            // finite retry below instead of waiting without a bound.
+          }
           if (runId && isRetryableSyncFailure(e) && attempt <= SYNC_RETRY_DELAYS_SECONDS.length) {
             const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[attempt - 1];
             await Promise.all(syncTargetIds.map(targetId =>
