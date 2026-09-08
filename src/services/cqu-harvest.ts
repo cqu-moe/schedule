@@ -91,6 +91,15 @@ function findEntry(entries: HarvestEntry[], needle: string): HarvestEntry | unde
   return entries.find((e) => e.url.includes(needle));
 }
 
+/** 两阶段 RPC 共用同一个绝对 deadline:第二阶段绝不重新生成截止时间。 */
+function withDeadline(
+  args: CquHarvestArgs,
+  options?: { deadlineAt?: number },
+): CquHarvestArgs {
+  if (options?.deadlineAt === undefined) return args;
+  return { ...args, deadlineAt: options.deadlineAt };
+}
+
 /** True for any non-2xx HTTP status (the harvest captured an error/challenge body). */
 function isNon2xx(status: number): boolean {
   return status < 200 || status >= 300;
@@ -279,6 +288,7 @@ export function mapHarvestToPersonalData(
 export async function fetchPersonalHarvest(
   env: Env,
   userId: string,
+  options?: { deadlineAt?: number },
 ): Promise<{ ctx: SessionContext; data: PersonalScheduleData }> {
   if (!env.AUTH?.cquHarvest) {
     throw new HarvestError("AUTH.cquHarvest unavailable");
@@ -293,7 +303,7 @@ export async function fetchPersonalHarvest(
 
   // Phase 1: navigate + capture 课表/session-list + fetch exam list.
   const recipe = buildPersonalHarvestArgs(env, userId);
-  const r1 = await env.AUTH.cquHarvest(recipe);
+  const r1 = await env.AUTH.cquHarvest(withDeadline(recipe, options));
   if ("error" in r1) throw new HarvestError(r1.error);
 
   const ctxPartial = mapHarvestToSessionContext(r1.captures, r1.fetches);
@@ -302,14 +312,14 @@ export async function fetchPersonalHarvest(
   // (read豁免 GET) in a second harvest call so begin_date is populated.
   let ctx = ctxPartial;
   if (ctxPartial.sessionId && ctxPartial.semesterInfo.begin_date === null) {
-    const r2 = await env.AUTH.cquHarvest({
+    const r2 = await env.AUTH.cquHarvest(withDeadline({
       clientId: env.CALENDAR_CLIENT_ID,
       clientSecret: env.CALENDAR_CLIENT_SECRET,
       userId,
       navUrl: NAV_URL,
       capture: [CAPTURE_SESSION_LIST],
       fetch: [{ method: "GET", url: `${SESSION_INFO_URL}${ctxPartial.sessionId}` }],
-    });
+    }, options));
     if (!("error" in r2)) {
       ctx = mapHarvestToSessionContext(r1.captures, [...r1.fetches, ...r2.fetches]);
     }

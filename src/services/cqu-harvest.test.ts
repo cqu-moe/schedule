@@ -482,4 +482,46 @@ describe("fetchPersonalHarvest", () => {
     // A get failure means a cache miss → the harvest ran.
     expect(cquHarvest).toHaveBeenCalledTimes(2);
   });
+
+  it("passes the SAME absolute deadline to both phases and never regenerates it", async () => {
+    const cquHarvest = happyHarvestMock();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
+    const deadlineAt = Date.now() + 10 * 60_000;
+
+    await fetchPersonalHarvest(env, "user-1", { deadlineAt });
+
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    const [phase1Args, phase2Args] = cquHarvest.mock.calls.map(
+      ([args]) => args as { deadlineAt?: number },
+    );
+    expect(phase1Args.deadlineAt).toBe(deadlineAt);
+    expect(phase2Args.deadlineAt).toBe(deadlineAt);
+  });
+
+  it("keeps old callers compatible: without options no deadline field is sent", async () => {
+    const cquHarvest = happyHarvestMock();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
+
+    await fetchPersonalHarvest(env, "user-1");
+
+    for (const [args] of cquHarvest.mock.calls) {
+      expect((args as { deadlineAt?: number }).deadlineAt).toBeUndefined();
+    }
+  });
+
+  it("a cache hit does not start a browser harvest even with a deadline", async () => {
+    const cquHarvest = happyHarvestMock();
+    const cache = mockCache();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
+
+    await fetchPersonalHarvest(env, "user-1", {
+      deadlineAt: Date.now() + 60_000,
+    });
+    const second = await fetchPersonalHarvest(env, "user-1", {
+      deadlineAt: Date.now() + 30_000,
+    });
+
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    expect(second.ctx.semesterInfo.begin_date).toBe("2025-09-01");
+  });
 });

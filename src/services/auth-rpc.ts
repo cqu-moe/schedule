@@ -71,6 +71,11 @@ export interface CquHarvestArgs {
   capture: string[];
   /** In-page GETs to run in the same已过瑞数 context after navigation settles. */
   fetch: HarvestFetchSpec[];
+  /**
+   * Optional absolute deadline (ms epoch) shared by every phase of one logical
+   * harvest. Auth clamps it to now+13min; omitting it lets auth apply its own cap.
+   */
+  deadlineAt?: number;
 }
 
 /** One captured/fetched response body. `body` is the raw text (caller JSON.parses). */
