@@ -338,7 +338,7 @@ const KIND_LABEL: Record<ScheduleChangeKind, string> = {
 };
 
 const EMAIL_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif";
-const EMAIL_DARK_CSS = "@media(prefers-color-scheme:dark){.email-body,.email-page{background:#15191c!important}.email-card,.email-surface{background:#1d2226!important}.email-footer{background:#192025!important}.email-primary{color:#edf2f5!important}.email-secondary{color:#bac4ca!important}.email-muted{color:#93a0a9!important}.email-brand,.email-accent{color:#77b4df!important}.email-section{color:#dfe8ed!important;border-color:#7f949f!important}.email-row,.email-header,.email-footer{border-color:#364149!important}.email-button{background:#2b75a8!important;color:#fff!important}.email-danger{color:#e29a91!important}.email-success{color:#8fc2a7!important}.email-strike{color:#8c989f!important}}[data-ogsc] .email-page{background:#15191c!important}[data-ogsc] .email-card,[data-ogsc] .email-surface{background:#1d2226!important}[data-ogsc] .email-footer{background:#192025!important}[data-ogsc] .email-primary{color:#edf2f5!important}[data-ogsc] .email-secondary{color:#bac4ca!important}[data-ogsc] .email-muted{color:#93a0a9!important}[data-ogsc] .email-brand,[data-ogsc] .email-accent{color:#77b4df!important}[data-ogsc] .email-section{color:#dfe8ed!important;border-color:#7f949f!important}[data-ogsc] .email-row,[data-ogsc] .email-header,[data-ogsc] .email-footer{border-color:#364149!important}[data-ogsc] .email-button{background:#2b75a8!important;color:#fff!important}[data-ogsc] .email-danger{color:#e29a91!important}[data-ogsc] .email-success{color:#8fc2a7!important}[data-ogsc] .email-strike{color:#8c989f!important}";
+const EMAIL_DARK_CSS = "@media(prefers-color-scheme:dark){.email-body,.email-page,.email-card,.email-surface{background:#1c1c1c!important}.email-primary{color:#eeeeec!important}.email-secondary,.email-accent{color:#c9c9c5!important}.email-muted{color:#a3a39e!important}.email-row,.email-footer{border-color:#3b3b38!important}.email-diff-add{background:#163522!important;color:#aff5b4!important}.email-diff-remove{background:#3d2024!important;color:#ffdcd7!important}}[data-ogsc] .email-page,[data-ogsc] .email-card,[data-ogsc] .email-surface{background:#1c1c1c!important}[data-ogsc] .email-primary{color:#eeeeec!important}[data-ogsc] .email-secondary,[data-ogsc] .email-accent{color:#c9c9c5!important}[data-ogsc] .email-muted{color:#a3a39e!important}[data-ogsc] .email-row,[data-ogsc] .email-footer{border-color:#3b3b38!important}[data-ogsc] .email-diff-add{background:#163522!important;color:#aff5b4!important}[data-ogsc] .email-diff-remove{background:#3d2024!important;color:#ffdcd7!important}";
 
 interface EmailDate {
   monthDay: string;
@@ -374,20 +374,17 @@ function changeLabel(section: "course" | "exam", change: ScheduleChange): string
   return "信息调整";
 }
 
-function compactAffectedDates(change: ScheduleChange): string {
-  if (change.dates.length <= 1 && change.extraDates === 0) return "";
-  const dates = change.dates.map((date) => emailDate(date).monthDay).join("、");
-  const extra = change.extraDates > 0 ? `，另有 ${change.extraDates} 个日期` : "";
-  return `<div class="email-muted" style="margin-top:5px;font-family:${EMAIL_FONT};font-size:13px;line-height:19px;color:#64727c;">影响日期：${escapeHtml(dates)}${extra}</div>`;
-}
-
-function renderChangeDetails(change: ScheduleChange, date: EmailDate): string {
-  if (change.kind === "changed") {
-    return `<div class="email-strike" style="margin-top:6px;font-family:${EMAIL_FONT};font-size:15px;line-height:22px;color:#6c7982;text-decoration:line-through;">原：${escapeHtml(change.before ?? "")}</div><div class="email-secondary" style="font-family:${EMAIL_FONT};font-size:15px;line-height:22px;color:#273844;">现：${escapeHtml(change.after ?? "")}</div>${compactAffectedDates(change)}`;
-  }
-  const detail = change.after ?? change.before ?? "";
-  const value = detail || date.time;
-  return `<div class="email-secondary" style="margin-top:6px;font-family:${EMAIL_FONT};font-size:15px;line-height:22px;color:#273844;">${escapeHtml(value)}</div>${compactAffectedDates(change)}`;
+function renderChangeDetails(change: ScheduleChange): string {
+  const row = (value: string, added: boolean): string => {
+    const color = added ? "#1a5930" : "#842b2e";
+    const background = added ? "#dafbe1" : "#ffebe9";
+    const className = added ? "email-diff-add" : "email-diff-remove";
+    return `<tr><td class="${className}" width="28" valign="top" bgcolor="${background}" style="width:28px;padding:7px 0 7px 10px;background:${background};color:${color};font-family:Consolas,Menlo,monospace;font-size:15px;line-height:22px;">${added ? "+" : "−"}</td><td class="${className}" bgcolor="${background}" style="padding:7px 12px 7px 0;background:${background};color:${color};font-family:${EMAIL_FONT};font-size:15px;line-height:22px;overflow-wrap:anywhere;word-break:break-word;"><span style="font-size:13px;">${added ? "现" : "原"}：</span>${escapeHtml(value)}</td></tr>`;
+  };
+  const rows = change.kind === "changed"
+    ? row(change.before ?? "", false) + row(change.after ?? "", true)
+    : row(change.after ?? change.before ?? "", change.kind === "added");
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:12px;width:100%;table-layout:fixed;">${rows}</table>`;
 }
 
 function renderHtmlSection(
@@ -397,22 +394,16 @@ function renderHtmlSection(
   topPadding: number,
 ): string {
   if (changes.length === 0) return "";
-  const rows = changes.map((change, index) => {
-    const date = emailDate(change.dates[0] ?? "日期待定");
-    const border = index === changes.length - 1 ? "" : "border-bottom:1px solid #e7eaed;";
-    const labelColor = change.kind === "cancelled"
-      ? "#9a443c"
-      : change.kind === "added"
-        ? "#3f715c"
-        : "#174f78";
-    const labelClass = change.kind === "cancelled"
-      ? "email-danger"
-      : change.kind === "added"
-        ? "email-success"
-        : "email-accent";
-    return `<tr><td class="date-col email-row" width="104" valign="top" style="width:104px;padding:13px 14px 13px 0;${border}"><div class="email-primary" style="font-family:${EMAIL_FONT};font-size:16px;line-height:22px;font-weight:700;color:#1d252c;">${escapeHtml(date.monthDay)}</div>${date.yearWeekday ? `<div class="email-muted" style="margin-top:2px;font-family:${EMAIL_FONT};font-size:13px;line-height:19px;color:#64727c;">${escapeHtml(date.yearWeekday)}</div>` : ""}</td><td class="detail-col email-row" valign="top" style="padding:13px 0;${border}"><div class="email-primary" style="font-family:${EMAIL_FONT};font-size:16px;line-height:23px;font-weight:700;color:#1d252c;">${escapeHtml(change.name)}</div><div class="${labelClass}" style="margin-top:2px;font-family:${EMAIL_FONT};font-size:13px;line-height:19px;color:${labelColor};">${changeLabel(section, change)}</div>${renderChangeDetails(change, date)}</td></tr>`;
+  const rows = changes.map((change) => {
+    const dates = change.dates.map((value) => {
+      if (value.includes(" → ")) return escapeHtml(value);
+      const date = emailDate(value);
+      return escapeHtml(date.yearWeekday ? `${date.monthDay} · ${date.yearWeekday}` : value);
+    }).join("<br>");
+    const extra = change.extraDates > 0 ? `<br>另有 ${change.extraDates} 个日期` : "";
+    return `<tr><td class="email-row" style="padding:16px 0 20px;overflow-wrap:anywhere;word-break:break-word;"><h3 class="email-primary" style="margin:0;font-family:${EMAIL_FONT};font-size:17px;line-height:26px;font-weight:600;color:#242421;">${escapeHtml(change.name)}<span class="email-secondary" style="font-size:14px;font-weight:400;color:#50504b;"> · ${changeLabel(section, change)}</span></h3><p class="email-muted" style="margin:5px 0 0;font-family:${EMAIL_FONT};font-size:14px;line-height:23px;color:#71716b;">${dates || "日期待定"}${extra}</p>${renderChangeDetails(change)}</td></tr>`;
   }).join("");
-  return `<tr><td class="pad email-surface" bgcolor="#ffffff" style="padding:${topPadding}px 32px 0;background:#ffffff;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td class="email-section" style="padding:0 0 7px;border-bottom:2px solid #273844;font-family:${EMAIL_FONT};font-size:16px;line-height:23px;font-weight:700;color:#273844;">${title} <span class="email-muted" style="font-size:13px;font-weight:400;color:#67757f;">${changes.length} 处变化</span></td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${rows}</table></td></tr>`;
+  return `<tr><td class="pad email-surface" bgcolor="#ffffff" style="padding:${topPadding}px 32px 0;background:#ffffff;"><h2 class="email-secondary" style="margin:0;font-family:${EMAIL_FONT};font-size:14px;line-height:22px;font-weight:400;color:#50504b;">${title} · ${changes.length} 项</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="table-layout:fixed;width:100%;">${rows}</table></td></tr>`;
 }
 
 function renderTextSection(title: string, changes: ScheduleChange[]): string {
@@ -447,7 +438,28 @@ function formatSyncTime(date: Date): string {
 export function renderScheduleChangeEmail(diff: ScheduleDiff, syncedAt = new Date()): RenderedScheduleEmail {
   const subject = `课表与考试安排有更新（${diff.total}项）`;
   const preheader = `课程表 ${diff.courses.length} 处、考试安排 ${diff.exams.length} 处，均为未来时间的变化。`;
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><style>:root{color-scheme:light dark;supported-color-schemes:light dark}${EMAIL_DARK_CSS}@media only screen and (max-width:640px){.email{width:100%!important}.pad{padding-left:20px!important;padding-right:20px!important}.date-col{display:block!important;width:100%!important;padding:0 0 10px!important}.detail-col{display:block!important;width:100%!important}.button{display:block!important;text-align:center!important}}</style></head><body class="email-body" bgcolor="#f3f5f6" style="margin:0;padding:0;background:#f3f5f6;color:#1d252c;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-synthesis:none;font-variant-numeric:tabular-nums;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${preheader}</div><table class="email-page" role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f5f6" style="width:100%;background:#f3f5f6;"><tr><td class="email-page" align="center" bgcolor="#f3f5f6" style="padding:24px 12px 32px;background:#f3f5f6;"><!--[if mso]><table role="presentation" width="620" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]--><table class="email email-card" role="presentation" width="620" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:620px;max-width:620px;background:#ffffff;border-top:5px solid #174f78;box-shadow:0 0 0 1px rgba(20,40,55,.07);"><tr><td class="pad email-surface email-header" bgcolor="#ffffff" style="padding:18px 32px 16px;background:#ffffff;border-bottom:1px solid #e5e9ec;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td class="email-brand" style="font-family:${EMAIL_FONT};font-size:16px;line-height:23px;font-weight:700;color:#174f78;">CQU.MOE</td><td class="email-muted" align="right" style="font-family:${EMAIL_FONT};font-size:13px;line-height:19px;color:#64727c;">重庆大学课表</td></tr></table></td></tr><tr><td class="pad email-surface" bgcolor="#ffffff" style="padding:22px 32px 18px;background:#ffffff;"><h1 class="email-primary" style="margin:0;font-family:${EMAIL_FONT};font-size:24px;line-height:33px;font-weight:700;letter-spacing:-.01em;color:#1d252c;">课表与考试安排有更新</h1><p class="email-secondary" style="margin:7px 0 0;font-family:${EMAIL_FONT};font-size:15px;line-height:23px;color:#4f5e68;">本次同步发现 ${diff.total} 处未来安排发生变化，具体如下。</p></td></tr>${renderHtmlSection("课程表", "course", diff.courses, 0)}${renderHtmlSection("考试安排", "exam", diff.exams, diff.courses.length > 0 ? 18 : 0)}<tr><td class="pad email-surface" bgcolor="#ffffff" style="padding:22px 32px 24px;background:#ffffff;"><a class="button email-button" href="https://schedule.cqu.moe" style="display:inline-block;padding:11px 18px;background:#174f78;border-radius:5px;font-family:${EMAIL_FONT};font-size:15px;line-height:21px;font-weight:700;color:#ffffff;text-decoration:none;">查看最新课表</a></td></tr><tr><td class="pad email-footer" bgcolor="#f8f9fa" style="padding:15px 32px 18px;background:#f8f9fa;border-top:1px solid #e5e9ec;"><p class="email-muted" style="margin:0;font-family:${EMAIL_FONT};font-size:13px;line-height:20px;color:#64727c;">同步时间：${formatSyncTime(syncedAt)}</p><p class="email-muted" style="margin:4px 0 0;font-family:${EMAIL_FONT};font-size:13px;line-height:20px;color:#64727c;">你已开启课表变更通知。<a class="email-accent" href="https://schedule.cqu.moe/#notification-settings" style="color:#174f78;text-decoration-thickness:from-font;text-underline-position:from-font;">管理通知设置</a></p><p class="email-muted" style="margin:10px 0 0;font-family:${EMAIL_FONT};font-size:12px;line-height:18px;color:#7f8b93;">CQU.MOE 是学生维护的非官方服务，请以学校系统中的最新信息为准。</p></td></tr></table><!--[if mso]></td></tr></table><![endif]--></td></tr></table></body></html>`;
+  const html = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><style>:root{color-scheme:light dark;supported-color-schemes:light dark}${EMAIL_DARK_CSS}@media only screen and (max-width:640px){.pad{padding-left:24px!important;padding-right:24px!important}.email-top{padding-top:28px!important}}</style></head>
+<body class="email-body" bgcolor="#ffffff" style="margin:0;padding:0;background:#ffffff;color:#242421;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;mso-hide:all;">${preheader}</div>
+<table class="email-page" role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff"><tr><td align="center">
+<!--[if mso]><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
+<table class="email-card" role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:600px;background:#ffffff;">
+<tr><td class="pad email-surface email-top" style="padding:48px 32px 30px;">
+<p class="email-muted" style="margin:0 0 24px;font-family:${EMAIL_FONT};font-size:13px;line-height:21px;color:#71716b;">CQU.MOE / 重庆大学课表</p>
+<h1 class="email-primary" style="margin:0;font-family:${EMAIL_FONT};font-size:26px;line-height:36px;font-weight:600;color:#242421;">课表有更新</h1>
+<p class="email-secondary" style="margin:10px 0 0;font-family:${EMAIL_FONT};font-size:15px;line-height:25px;color:#50504b;">有 ${diff.total} 项安排变更，请留意上课或考试时间与地点。</p>
+</td></tr>
+${renderHtmlSection("课程表", "course", diff.courses, 0)}
+${renderHtmlSection("考试安排", "exam", diff.exams, diff.courses.length > 0 ? 28 : 0)}
+<tr><td class="pad email-surface" style="padding:24px 32px 28px;"><a class="email-accent" href="https://schedule.cqu.moe/" style="display:inline-block;padding:10px 0;font-family:${EMAIL_FONT};font-size:15px;line-height:24px;font-weight:500;color:#242421;text-decoration:underline;text-underline-offset:4px;">查看最新课表</a></td></tr>
+<tr><td class="pad email-surface" style="padding:0 32px 40px;">
+<p class="email-muted" style="margin:0;font-family:${EMAIL_FONT};font-size:12px;line-height:21px;color:#71716b;">同步于 ${formatSyncTime(syncedAt)}（北京时间）</p>
+<p class="email-muted" style="margin:4px 0 0;font-family:${EMAIL_FONT};font-size:12px;line-height:21px;color:#71716b;">你已开启课表变更通知 · <a class="email-muted" href="https://schedule.cqu.moe/#notification-settings" style="display:inline-block;padding:5px 0;color:#71716b;text-decoration:underline;">管理通知设置</a></p>
+<p class="email-muted" style="margin:10px 0 0;font-family:${EMAIL_FONT};font-size:12px;line-height:21px;color:#71716b;">CQU.MOE 是学生维护的非官方服务。安排请以学校系统为准。</p>
+</td></tr></table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr></table></body></html>`;
   const text = [
     "课表有更新",
     `本次同步发现 ${diff.total} 项未来安排变化。`,
