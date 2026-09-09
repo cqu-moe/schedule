@@ -16,9 +16,14 @@
           <router-link v-if="session.isAuthenticated" to="/dashboard">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
-          <a v-else :href="loginHref" class="inline-block">
-            <Button size="lg" class="cursor-pointer">开始使用</Button>
-          </a>
+          <template v-else>
+            <a :href="loginHref" class="inline-block">
+              <Button size="lg" class="cursor-pointer">登录 / 注册</Button>
+            </a>
+            <p class="text-xs text-muted-foreground mt-3">
+              将前往统一认证中心 auth.cqu.moe，完成后自动返回本站
+            </p>
+          </template>
         </div>
       </div>
     </section>

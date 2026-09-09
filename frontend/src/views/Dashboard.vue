@@ -113,6 +113,26 @@
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
 
+        <!-- Binding guidance — shown only when auth explicitly reports a
+             non-active binding. Absent cquBindStatus (older auth deploy) is
+             "unknown" and must NOT trigger this card. -->
+        <Card v-if="!loading && session.isCquUnbound" class="mb-4">
+          <CardContent class="pt-4">
+            <p class="text-sm font-medium">尚未绑定重庆大学统一身份认证</p>
+            <p class="text-sm text-muted-foreground mt-1">
+              个人课表同步依赖你的统一身份认证。绑定在账号设置中完成，之后回到这里添加订阅即可。
+            </p>
+            <a
+              :href="authSettingsUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-block mt-3"
+            >
+              <Button variant="outline" size="sm" class="cursor-pointer">前往账号设置绑定</Button>
+            </a>
+          </CardContent>
+        </Card>
+
         <!-- M4: Iterate enriched list — each card derives its defaultLink once -->
         <Card v-for="item in enrichedSubs" :key="item.sub.id" class="mb-4">
           <CardHeader>
@@ -138,6 +158,13 @@
                 class="text-xs text-destructive"
               >
                 同步失败：{{ syncErrorMessage(item.sub) }}
+                <a
+                  v-if="item.sub.sync_error_code === 'NEEDS_REAUTH'"
+                  :href="authSettingsUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="underline underline-offset-2"
+                >前往账号设置</a>
               </span>
               <span
                 v-else-if="isSubSyncing(item.sub)"
@@ -317,7 +344,8 @@
           v-if="!loading && subStore.subscriptions.length === 0"
           class="text-center py-8 text-muted-foreground"
         >
-          <p class="text-sm mb-3">暂无订阅</p>
+          <p class="text-sm mb-1">还没有订阅</p>
+          <p class="text-xs mb-3">添加课表订阅后，课表会自动同步到你的日历应用</p>
           <router-link to="/add">
             <Button variant="outline" size="sm" class="cursor-pointer">添加新订阅</Button>
           </router-link>
@@ -389,6 +417,7 @@ import type { SourceType, Subscription, CalendarLink } from '@/types/api'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import { buildLinkUrl } from '@/utils/links'
+import { AUTH_BASE_URL } from '@/config/auth'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import ShareLinksDialog from '@/components/ShareLinksDialog.vue'
@@ -417,6 +446,9 @@ import {
 const subStore = useSubscriptionsStore()
 const session = useSession()
 const configStore = useConfigStore()
+
+/** auth.cqu.moe account settings — where users bind their CQU identity. */
+const authSettingsUrl = `${AUTH_BASE_URL}/settings`
 
 // ── M4: Enriched subscription list ────────────────────────────────────────────
 

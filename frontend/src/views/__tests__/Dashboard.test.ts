@@ -109,6 +109,51 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('自动同步未开通')
   })
 
+  it('shows a binding card when auth reports the user is unbound', async () => {
+    const { wrapper } = await mountDashboard([], { cquBindStatus: 'unbound' })
+
+    expect(wrapper.text()).toContain('尚未绑定重庆大学统一身份认证')
+    const link = wrapper.find('a[href="https://auth.cqu.moe/settings"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('前往账号设置绑定')
+  })
+
+  it('does not show the binding card when bound', async () => {
+    const { wrapper } = await mountDashboard([], { cquBindStatus: 'active' })
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+  })
+
+  it('does not show the binding card when bind status is unknown (older auth)', async () => {
+    const { wrapper } = await mountDashboard()
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+  })
+
+  it('turns a NEEDS_REAUTH sync failure into an actionable link', async () => {
+    const sub = mockSubscription({
+      sync_status: 'error',
+      sync_error_code: 'NEEDS_REAUTH',
+      sync_error_message: '登录状态已失效，请到账号设置重新绑定',
+    })
+    const { wrapper } = await mountDashboard([sub])
+
+    expect(wrapper.text()).toContain('同步失败')
+    const link = wrapper.find('a[href="https://auth.cqu.moe/settings"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('前往账号设置')
+  })
+
+  it('does not linkify non-reauth sync failures', async () => {
+    const sub = mockSubscription({
+      sync_status: 'error',
+      sync_error_code: 'HARVEST_FAILED',
+      sync_error_message: '学校系统暂时无法完成同步，请稍后重试',
+    })
+    const { wrapper } = await mountDashboard([sub])
+
+    expect(wrapper.text()).toContain('同步失败')
+    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(false)
+  })
+
   it('shows and loads the compact change notification switch for eligible users', async () => {
     const { wrapper } = await mountDashboard()
     const toggle = wrapper.get('[role="switch"][aria-label="课表变更通知"]')
@@ -173,9 +218,10 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).not.toContain('/null')
   })
 
-  it('shows "暂无订阅" when no subscriptions', async () => {
+  it('shows the empty state with a next step when no subscriptions', async () => {
     const { wrapper } = await mountDashboard([])
-    expect(wrapper.text()).toContain('暂无订阅')
+    expect(wrapper.text()).toContain('还没有订阅')
+    expect(wrapper.text()).toContain('添加课表订阅后，课表会自动同步到你的日历应用')
   })
 
   it('shows source type badge "全部" for personal_all', async () => {

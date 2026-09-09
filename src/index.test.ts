@@ -20,10 +20,15 @@ const FULL_CAPS: CalendarCaps = {
 };
 
 /** AUTH binding whose verifySession returns a fixed session. */
-function fakeAuth(userId: string, caps: CalendarCaps): AuthService {
+function fakeAuth(
+  userId: string,
+  caps: CalendarCaps,
+  cquBindStatus?: VerifiedSession["cquBindStatus"],
+): AuthService {
   const session: VerifiedSession = {
     user: { id: userId, name: "测试", email: `${userId}@cqu.moe`, role: "user" },
     caps: { calendar: caps },
+    cquBindStatus,
   };
   return {
     async verifySession() {
@@ -97,6 +102,20 @@ describe("GET /api/v2/me", () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("passes through cquBindStatus when the auth RPC supplies it", async () => {
+    const res = await request("/api/v2/me", fakeAuth("userA", FULL_CAPS, "active"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cquBindStatus?: string };
+    expect(body.cquBindStatus).toBe("active");
+  });
+
+  it("omits cquBindStatus for older auth deploys that do not supply it", async () => {
+    const res = await request("/api/v2/me", fakeAuth("userA", FULL_CAPS));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect("cquBindStatus" in body).toBe(false);
   });
 });
 

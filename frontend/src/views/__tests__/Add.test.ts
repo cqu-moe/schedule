@@ -79,6 +79,7 @@ const CAPS_NO_SYNC = { ...CAPS_FULL, sync: false }
 async function mountAdd(
   existingSubs: any[] = [],
   capsOverrides?: Partial<typeof CAPS_FULL>,
+  sessionExtras?: Record<string, unknown>,
 ) {
   mockApi.getSubscriptions.mockResolvedValue({
     subscriptions: existingSubs,
@@ -93,6 +94,7 @@ async function mountAdd(
           caps,
           loaded: true,
           loading: false,
+          ...sessionExtras,
         },
         config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
       },
@@ -134,6 +136,28 @@ describe('Add view (v2)', () => {
   it('hides personal section when !can("sync")', async () => {
     const { wrapper } = await mountAdd([], CAPS_NO_SYNC)
     expect(wrapper.text()).not.toContain('我的全部课表')
+    // …but shows guidance instead of leaving a blank page
+    expect(wrapper.text()).toContain('个人课表订阅需要开通')
+  })
+
+  it('shows a binding hint in the personal section when bind status is unknown', async () => {
+    const { wrapper } = await mountAdd()
+    expect(wrapper.text()).toContain('绑定重庆大学统一身份认证')
+    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(true)
+  })
+
+  it('replaces personal options with a binding prompt when known-unbound', async () => {
+    const { wrapper } = await mountAdd([], undefined, { cquBindStatus: 'unbound' })
+    expect(wrapper.text()).not.toContain('我的全部课表')
+    expect(wrapper.text()).toContain('尚未绑定重庆大学统一身份认证')
+    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(true)
+  })
+
+  it('shows personal options without the hint when bound', async () => {
+    const { wrapper } = await mountAdd([], undefined, { cquBindStatus: 'active' })
+    expect(wrapper.text()).toContain('我的全部课表')
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+    expect(wrapper.text()).not.toContain('首次使用')
   })
 
   it.skip('renders 5 external source type tabs when can("external")', async () => {

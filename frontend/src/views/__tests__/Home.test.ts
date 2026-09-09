@@ -23,8 +23,15 @@ describe('Home view', () => {
 
     const link = wrapper.find('a[href*="/login?redirect="]')
     expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('开始使用')
+    expect(link.text()).toContain('登录 / 注册')
   })
+
+  it('sets expectations about the auth.cqu.moe jump when not authenticated', async () => {
+    const { wrapper } = await mountWithContext(Home)
+    expect(wrapper.text()).toContain('auth.cqu.moe')
+    expect(wrapper.text()).toContain('自动返回本站')
+  })
+
 
   it('links to /dashboard when authenticated', async () => {
     const { wrapper } = await mountWithContext(Home, {

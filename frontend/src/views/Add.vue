@@ -6,11 +6,35 @@
       <h1 class="text-2xl font-heading font-semibold mb-6">添加新订阅</h1>
 
       <!-- ── Personal subscriptions ─────────────────────────────────────────── -->
-      <section v-if="session.can('sync')" class="mb-6">
+      <section class="mb-6">
         <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           个人课表
         </h2>
-        <Card>
+        <!-- No sync entitlement: explain instead of hiding the section outright,
+             so an authenticated-but-unprovisioned user is not left with an empty page. -->
+        <div
+          v-if="!session.can('sync')"
+          class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
+        >
+          个人课表订阅需要开通「日历同步」权限（内测阶段由管理员开通）。
+        </div>
+        <!-- Known-unbound: subscribing now would only fail at sync time, so
+             point at the binding step first. Unknown (older auth) falls through
+             to the normal options below. -->
+        <div
+          v-else-if="session.isCquUnbound"
+          class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
+        >
+          尚未绑定重庆大学统一身份认证，绑定后即可订阅并自动同步个人课表。请先在
+          <a
+            :href="`${AUTH_BASE_URL}/settings`"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-foreground underline underline-offset-2"
+          >账号设置</a>
+          完成绑定。
+        </div>
+        <Card v-else>
           <CardContent class="pt-4 space-y-2">
             <div
               v-for="opt in personalOptions"
@@ -69,6 +93,17 @@
 
             <p v-if="subStore.atLimit" class="text-xs text-amber-600 dark:text-amber-400 pt-1">
               已达订阅上限，请先删除不需要的订阅
+            </p>
+
+            <p v-if="session.cquBindStatus === undefined" class="text-xs text-muted-foreground pt-1">
+              首次使用？请先在
+              <a
+                :href="`${AUTH_BASE_URL}/settings`"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline underline-offset-2"
+              >账号设置</a>
+              绑定重庆大学统一身份认证，否则课表无法同步。
             </p>
           </CardContent>
         </Card>

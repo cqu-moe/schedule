@@ -28,7 +28,14 @@ export interface MeResponse {
   caps: {
     calendar: CalendarCaps
   }
+  /**
+   * CQU identity binding status, supplied by newer auth deploys.
+   * Absent (undefined) means "unknown" — never treat it as unbound.
+   */
+  cquBindStatus?: CquBindStatus
 }
+
+export type CquBindStatus = 'pending' | 'active' | 'revoked' | 'unbound'
 
 // ── v2 link / subscription types ─────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
 import { errorResponse } from "../utils/error";
 import type { Env } from "../types";
-import type { SessionUser, CalendarCaps } from "../services/auth-rpc";
+import type { SessionUser, CalendarCaps, CquBindStatus } from "../services/auth-rpc";
 
 /**
  * Hono env for routes guarded by {@link sessionMiddleware}.
@@ -12,7 +12,12 @@ import type { SessionUser, CalendarCaps } from "../services/auth-rpc";
  */
 export type SessionEnv = {
   Bindings: Env;
-  Variables: { user: SessionUser; caps: { calendar: CalendarCaps } };
+  Variables: {
+    user: SessionUser;
+    caps: { calendar: CalendarCaps };
+    /** 可选：旧版 auth 不下发该字段，消费方须把 undefined 当「未知」。 */
+    cquBindStatus?: CquBindStatus;
+  };
 };
 
 /** TTL (seconds) for the caps:<userId> KV cache. */
@@ -36,6 +41,7 @@ export async function sessionMiddleware(c: Context<SessionEnv>, next: Next) {
 
   c.set("user", sess.user);
   c.set("caps", sess.caps);
+  c.set("cquBindStatus", sess.cquBindStatus);
 
   // Cache caps for offline (cron) reads; best-effort — must NOT block the request
   // (this runs on every protected request, incl. dashboard polling). Schedule it

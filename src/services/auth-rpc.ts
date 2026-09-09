@@ -22,9 +22,18 @@ export interface SessionUser {
   role: string;
 }
 
+/** CQU 统一身份认证绑定状态（auth 侧 cqu_bind_addresses.status；无绑定行 = "unbound"）。 */
+export type CquBindStatus = "pending" | "active" | "revoked" | "unbound";
+
 export interface VerifiedSession {
   user: SessionUser;
   caps: { calendar: CalendarCaps };
+  /**
+   * 用户的 CQU 绑定状态。Optional so older auth deploys typecheck —
+   * 消费方必须把 undefined 当「未知」处理（不显示绑定引导），
+   * 只有明确的非 active 值才能触发「请先绑定」UI。
+   */
+  cquBindStatus?: CquBindStatus;
 }
 
 export interface GetCquTicketArgs {

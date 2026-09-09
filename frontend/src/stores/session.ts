@@ -1,11 +1,13 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import api from '@/api'
-import type { SessionUser, CalendarCaps } from '@/types/api'
+import type { SessionUser, CalendarCaps, CquBindStatus } from '@/types/api'
 
 export const useSession = defineStore('session', () => {
   const user = ref<SessionUser | null>(null)
   const caps = ref<CalendarCaps | null>(null)
+  /** undefined = 旧版 auth 未下发（未知）；只有明确的非 active 值才能触发绑定引导。 */
+  const cquBindStatus = ref<CquBindStatus | undefined>(undefined)
   const loaded = ref(false)
   const loading = ref(false)
   let loadPromise: Promise<void> | null = null
@@ -13,6 +15,13 @@ export const useSession = defineStore('session', () => {
   // ── Getters ────────────────────────────────────────────────────────────────
 
   const isAuthenticated = computed(() => !!user.value)
+
+  /** True 仅在明确知道用户已绑定时；未知（undefined）按未绑定处理会误伤旧 auth。 */
+  const isCquBound = computed(() => cquBindStatus.value === 'active')
+  /** True 仅在明确知道用户未绑定时（pending/revoked/unbound）；未知不算。 */
+  const isCquUnbound = computed(
+    () => cquBindStatus.value !== undefined && cquBindStatus.value !== 'active',
+  )
 
   function can(flag: 'sync' | 'external' | 'share' | 'change_notification'): boolean {
     return !!caps.value?.[flag]
@@ -34,6 +43,7 @@ export const useSession = defineStore('session', () => {
         const data = await api.getMe()
         user.value = data.user
         caps.value = data.caps.calendar
+        cquBindStatus.value = data.cquBindStatus
         loaded.value = true
       } finally {
         loading.value = false
@@ -50,6 +60,7 @@ export const useSession = defineStore('session', () => {
   function $reset(): void {
     user.value = null
     caps.value = null
+    cquBindStatus.value = undefined
     loaded.value = false
     loading.value = false
   }
@@ -57,6 +68,9 @@ export const useSession = defineStore('session', () => {
   return {
     user,
     caps,
+    cquBindStatus,
+    isCquBound,
+    isCquUnbound,
     loaded,
     loading,
     isAuthenticated,
