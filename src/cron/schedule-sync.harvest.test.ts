@@ -70,6 +70,58 @@ function testEnv(send = vi.fn().mockResolvedValue(undefined)): Env {
   return { ...env, SCHEDULE_NOTIFICATION_QUEUE: { send } } as unknown as Env;
 }
 
+// ── 未来时间锚定 ────────────────────────────────────────────────────────────
+// 通知邮件只包含「未来时间的变化」——固定日期的测试数据会随真实日期推移变成
+// 过去时而被过滤(2026-09-09 起硬编码的 "9 月 8 日" 即失效)。这里把课程/考试
+// 时间锚定到「今天 + N 天」,保证测试在任何日期运行语义一致。
+
+const CHINA_TZ = "Asia/Shanghai";
+const DAY_MS = 24 * 3600_000;
+
+/** 中国时区下某时刻的年/月/日/星期(1=周一 … 7=周日)。 */
+function chinaDateParts(date: Date): { year: number; month: number; day: number; dayOfWeek: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CHINA_TZ,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const weekdays: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    dayOfWeek: weekdays[get("weekday")],
+  };
+}
+
+/**
+ * 课程锚定在中国时区「今天 + daysAhead」:semesterStart 取该日所在周的周一,
+ * day_of_week 即该日的星期,weeks=[1] 使课程恰好落在该日(必为未来)。
+ */
+function futureCourseFixture(daysAhead = 3) {
+  const targetMs = Date.now() + daysAhead * DAY_MS;
+  const target = chinaDateParts(new Date(targetMs));
+  const monday = chinaDateParts(new Date(targetMs - (target.dayOfWeek - 1) * DAY_MS));
+  const iso = (p: { year: number; month: number; day: number }) =>
+    `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+  return {
+    semesterStart: iso(monday),
+    dayOfWeek: target.dayOfWeek,
+    /** 与邮件渲染相同的「M 月 D 日」标签,用于断言。 */
+    dateLabel: `${target.month} 月 ${target.day} 日`,
+  };
+}
+
+/** 未来某天的考试起止时刻(09:00–11:00 中国时区 = 01:00–03:00 UTC)。 */
+function futureExamTimes(daysAhead = 4) {
+  const day = chinaDateParts(new Date(Date.now() + daysAhead * DAY_MS));
+  const iso = `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
+  return { start_time: `${iso}T01:00:00.000Z`, end_time: `${iso}T03:00:00.000Z` };
+}
+
 describe("processScheduleSyncBatch — organic harvest personal path", () => {
   it("stores the first successful harvest as a baseline without sending", async () => {
     const sid = await insertSub();
@@ -91,7 +143,8 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     const allSid = await insertSub({ sourceType: "personal_all", sourceName: "全部" });
     const coursesSid = await insertSub({ sourceType: "personal_courses", sourceName: "课程" });
     const examsSid = await insertSub({ sourceType: "personal_exams", sourceName: "考试" });
-    const oldData = { courses: [{ name: "高等数学", lecturer: "张老师", room: "A101", position: "A101", day_of_week: 2, start_session: 1, end_session: 2, weeks: [1] }], exams: [{ name: "大学物理", room: "D1137", seat: 18, start_time: "2026-09-10T01:00:00.000Z", end_time: "2026-09-10T03:00:00.000Z" }], semesterStart: "2026-09-07" };
+    const fixture = futureCourseFixture();
+    const oldData = { courses: [{ name: "高等数学", lecturer: "张老师", room: "A101", position: "A101", day_of_week: fixture.dayOfWeek, start_session: 1, end_session: 2, weeks: [1] }], exams: [{ name: "大学物理", room: "D1137", seat: 18, ...futureExamTimes() }], semesterStart: fixture.semesterStart };
     const oldSnapshot = normalizeSchedule(oldData);
     const oldHash = await hashSchedule(oldSnapshot);
     await db.insert(notificationState).values({
@@ -121,7 +174,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
       version: 1,
       userId: "user-1",
       subject: "课表与考试安排有更新（2项）",
-      html: expect.stringContaining("9 月 8 日"),
+      html: expect.stringContaining(fixture.dateLabel),
       text: expect.stringContaining("考试安排"),
     }));
     expect(send.mock.calls[0][0]).not.toHaveProperty("email");
@@ -131,7 +184,8 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
 
   it("keeps the old baseline when notification enqueue fails while the sync still succeeds", async () => {
     const sid = await insertSub();
-    const oldData = { courses: [{ name: "高等数学", lecturer: "张老师", room: "A101", position: "A101", day_of_week: 2, start_session: 1, end_session: 2, weeks: [1] }], exams: [], semesterStart: "2026-09-07" };
+    const fixture = futureCourseFixture();
+    const oldData = { courses: [{ name: "高等数学", lecturer: "张老师", room: "A101", position: "A101", day_of_week: fixture.dayOfWeek, start_session: 1, end_session: 2, weeks: [1] }], exams: [], semesterStart: fixture.semesterStart };
     const oldSnapshot = normalizeSchedule(oldData);
     const oldHash = await hashSchedule(oldSnapshot);
     await db.insert(notificationState).values({
