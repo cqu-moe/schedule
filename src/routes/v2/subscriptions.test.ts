@@ -382,6 +382,21 @@ describe("POST /api/v2/subscriptions/defaults", () => {
     expect((await db.select().from(calendarLinks)).map((link) => link.token).sort()).toEqual(tokens);
   });
 
+  it("persists setup idempotency across a new route client instance", async () => {
+    const firstApp = buildApp("userA");
+    const first = await firstApp.request("/defaults", { method: "POST" });
+    expect(first.status).toBe(201);
+    const tokens = (await db.select().from(calendarLinks)).map((link) => link.token).sort();
+
+    const reloadedApp = buildApp("userA");
+    const resumed = await reloadedApp.request("/defaults", { method: "POST" });
+    expect(resumed.status).toBe(200);
+    expect((await resumed.json() as DefaultSubscriptionsResponse).status).toBe("resumed");
+    expect(reloadedApp.send).not.toHaveBeenCalled();
+    expect(await db.select().from(subscriptions)).toHaveLength(3);
+    expect((await db.select().from(calendarLinks)).map((link) => link.token).sort()).toEqual(tokens);
+  });
+
   it("returns failed dispatch with all created rows when Queue send fails", async () => {
     const app = buildApp("userA");
     app.send.mockRejectedValueOnce(new Error("queue unavailable"));
