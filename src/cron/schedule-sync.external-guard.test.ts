@@ -29,6 +29,7 @@ const FULL_CAPS = {
 };
 
 beforeAll(async () => {
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
   await env.DB.prepare(
@@ -44,9 +45,18 @@ beforeAll(async () => {
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('created','existing')),
+    subscription_ids TEXT NOT NULL DEFAULT '[]', run_id TEXT,
+    dispatch_status TEXT NOT NULL CHECK (dispatch_status IN ('pending','sending','sent','failed')),
+    lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
 });
 
 beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
   await env.CACHE.put("caps:user-1", JSON.stringify(FULL_CAPS));
 });

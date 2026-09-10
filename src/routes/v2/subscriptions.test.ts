@@ -3,13 +3,20 @@ import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { subscriptions, calendarLinks, LINK_FORMATS } from "../../db/schema";
+import {
+  subscriptions,
+  calendarLinks,
+  personalSubscriptionSetup,
+  LINK_FORMATS,
+} from "../../db/schema";
 import { sessionMiddleware, type SessionEnv } from "../../middleware/session";
 import type {
   AuthService,
   CalendarCaps,
+  CquBindStatus,
   VerifiedSession,
 } from "../../services/auth-rpc";
+import type { DefaultSubscriptionsResponse } from "../../services/personal-subscription-setup";
 import subscriptionsV2 from "./subscriptions";
 
 // ── caps presets ─────────────────────────────────────────────────────────────
@@ -18,6 +25,7 @@ const FULL_CAPS: CalendarCaps = {
   sync: true,
   external: true,
   share: true,
+  change_notification: true,
   sub_limit: 10,
   share_limit: 20,
   sync_interval: 60,
@@ -29,10 +37,15 @@ function capsWith(overrides: Partial<CalendarCaps>): CalendarCaps {
 }
 
 /** Build a fake AUTH binding whose verifySession returns a session for `userId`/`caps`. */
-function fakeAuth(userId: string, caps: CalendarCaps): AuthService {
+function fakeAuth(
+  userId: string,
+  caps: CalendarCaps,
+  cquBindStatus: CquBindStatus | undefined,
+): AuthService {
   const session: VerifiedSession = {
     user: { id: userId, name: "测试", email: `${userId}@cqu.moe`, role: "user" },
     caps: { calendar: caps },
+    cquBindStatus,
   };
   return {
     async verifySession() {
@@ -45,12 +58,22 @@ function fakeAuth(userId: string, caps: CalendarCaps): AuthService {
 }
 
 /** Build a Hono app: sessionMiddleware (with the given AUTH) → v2 subscriptions. */
-function buildApp(userId: string, caps: CalendarCaps = FULL_CAPS) {
+function buildApp(
+  userId: string,
+  caps: CalendarCaps = FULL_CAPS,
+  cquBindStatus: CquBindStatus | null = "active",
+  database: D1Database = env.DB,
+) {
   const send = vi.fn().mockResolvedValue(undefined);
   const app = new Hono<SessionEnv>();
   app.use("*", sessionMiddleware);
   app.route("/", subscriptionsV2);
-  const testEnv = { ...env, AUTH: fakeAuth(userId, caps), SCHEDULE_SYNC_QUEUE: { send } };
+  const testEnv = {
+    ...env,
+    DB: database,
+    AUTH: fakeAuth(userId, caps, cquBindStatus ?? undefined),
+    SCHEDULE_SYNC_QUEUE: { send },
+  };
   return {
     send,
     request(path: string, init?: RequestInit) {
@@ -79,6 +102,7 @@ const db = drizzle(env.DB);
 
 beforeAll(async () => {
   // Drop legacy tables (other test files create `users`/old subscriptions).
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
 
@@ -142,9 +166,18 @@ beforeAll(async () => {
   await env.DB.prepare(
     `CREATE INDEX idx_calendar_links_subscription_id ON calendar_links (subscription_id)`,
   ).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('created','existing')),
+    subscription_ids TEXT NOT NULL DEFAULT '[]', run_id TEXT,
+    dispatch_status TEXT NOT NULL CHECK (dispatch_status IN ('pending','sending','sent','failed')),
+    lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
 });
 
 beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
   await env.DB.prepare("DELETE FROM calendar_links").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
 });
@@ -203,6 +236,7 @@ describe("GET /api/v2/subscriptions", () => {
     expect(body.count).toBe(1);
     expect(body.subscriptions[0].id).toBe(mine);
     expect(body.subscriptions[0].user_id).toBe("userA");
+    expect((body as typeof body & { personal_setup: unknown }).personal_setup).toBeNull();
   });
 
   it("includes link summaries for each subscription", async () => {
@@ -227,6 +261,168 @@ describe("GET /api/v2/subscriptions", () => {
     expect(links[0].token).toBe("tok-default");
     expect(links[0].is_default).toBe(true);
     expect(links[0].formats).toEqual([...LINK_FORMATS]);
+  });
+
+  it("returns setup metadata without creating rows", async () => {
+    const app = buildApp("userA");
+    const response = await app.request("/");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      subscriptions: [],
+      count: 0,
+      personal_setup: null,
+    });
+    expect(await db.select().from(personalSubscriptionSetup)).toHaveLength(0);
+  });
+});
+
+// ── POST /defaults ──────────────────────────────────────────────────────────
+
+describe("POST /api/v2/subscriptions/defaults", () => {
+  it("initializes defaults through the authenticated route", async () => {
+    const app = buildApp("userA");
+    const response = await app.request("/defaults", { method: "POST" });
+    expect(response.status).toBe(201);
+    const body = await response.json() as DefaultSubscriptionsResponse;
+    expect(body.subscription_ids).toHaveLength(3);
+    expect(body.dispatch_status).toBe("sent");
+    expect(app.send).toHaveBeenCalledTimes(1);
+
+    const listResponse = await app.request("/");
+    const list = await listResponse.json() as {
+      subscriptions: { user_id: string }[];
+      personal_setup: { status: string; dispatch_status: string };
+    };
+    expect(list.subscriptions).toHaveLength(3);
+    expect(list.subscriptions.every((row) => row.user_id === "userA")).toBe(true);
+    expect(list.personal_setup).toMatchObject({ status: "created", dispatch_status: "sent" });
+  });
+
+  it("requires an authenticated session", async () => {
+    const app = new Hono<SessionEnv>();
+    app.use("*", sessionMiddleware);
+    app.route("/", subscriptionsV2);
+    const response = await app.request("/defaults", { method: "POST" }, {
+      ...env,
+      AUTH: { verifySession: async () => null },
+    } as unknown as Env);
+    expect(response.status).toBe(401);
+  });
+
+  it("skips without sync capability before considering binding status", async () => {
+    const app = buildApp("userA", capsWith({ sync: false }), "revoked");
+    const response = await app.request("/defaults", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: "skipped",
+      subscription_ids: [],
+      run_id: null,
+      dispatch_status: "none",
+    });
+    expect(app.send).not.toHaveBeenCalled();
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    expect(await db.select().from(personalSubscriptionSetup)).toHaveLength(0);
+  });
+
+  it.each(["pending", "revoked", "unbound"] as const)(
+    "rejects an explicitly %s CQU binding",
+    async (cquBindStatus) => {
+      const response = await buildApp("userA", FULL_CAPS, cquBindStatus)
+        .request("/defaults", { method: "POST" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        detail: { error: { code: "CQU_BINDING_REQUIRED" } },
+      });
+      expect(await db.select().from(subscriptions)).toHaveLength(0);
+    },
+  );
+
+  it("fails closed when an older Auth does not report binding status", async () => {
+    const response = await buildApp("userA", FULL_CAPS, null)
+      .request("/defaults", { method: "POST" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      detail: { error: { code: "CQU_BINDING_STATUS_UNKNOWN" } },
+    });
+  });
+
+  it("ignores injected identity and subscription fields", async () => {
+    const app = buildApp("userA");
+    const response = await app.request(
+      "/defaults?userId=userB&sourceId=userB",
+      jsonBody({ userId: "userB", sourceId: "userB", sourceTypes: ["instructor"] }),
+    );
+    expect(response.status).toBe(201);
+    const rows = await db.select().from(subscriptions);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.userId === "userA" && row.sourceId === "userA")).toBe(true);
+  });
+
+  it("returns the existing quota error without partial setup", async () => {
+    const response = await buildApp("userA", capsWith({ sub_limit: 2 }))
+      .request("/defaults", { method: "POST" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      detail: { error: { code: "QUOTA_EXCEEDED" } },
+    });
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    expect(await db.select().from(personalSubscriptionSetup)).toHaveLength(0);
+  });
+
+  it("does not rotate links or enqueue again after a sent setup", async () => {
+    const app = buildApp("userA");
+    const first = await app.request("/defaults", { method: "POST" });
+    expect(first.status).toBe(201);
+    const tokens = (await db.select().from(calendarLinks)).map((link) => link.token).sort();
+
+    const second = await app.request("/defaults", { method: "POST" });
+    expect(second.status).toBe(200);
+    expect((await second.json() as DefaultSubscriptionsResponse).status).toBe("resumed");
+    expect(app.send).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(calendarLinks)).map((link) => link.token).sort()).toEqual(tokens);
+  });
+
+  it("returns failed dispatch with all created rows when Queue send fails", async () => {
+    const app = buildApp("userA");
+    app.send.mockRejectedValueOnce(new Error("queue unavailable"));
+    const response = await app.request("/defaults", { method: "POST" });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      status: "created",
+      subscription_ids: expect.arrayContaining([expect.any(String)]),
+      dispatch_status: "failed",
+    });
+    expect(await db.select().from(subscriptions)).toHaveLength(3);
+    expect(await db.select().from(calendarLinks)).toHaveLength(3);
+  });
+
+  it("maps an unrecoverable database failure to DEFAULT_SUBSCRIPTIONS_FAILED", async () => {
+    const failingDb = {
+      prepare: env.DB.prepare.bind(env.DB),
+      batch: vi.fn(async () => { throw new Error("forced batch failure"); }),
+    } as unknown as D1Database;
+    const response = await buildApp("userA", FULL_CAPS, "active", failingDb)
+      .request("/defaults", { method: "POST" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      detail: { error: {
+        code: "DEFAULT_SUBSCRIPTIONS_FAILED",
+        message: "订阅准备未完成，请重试。",
+      } },
+    });
+  });
+
+  it("does not restore the last deleted legacy subscription", async () => {
+    const legacyId = await insertSub("userA");
+    const app = buildApp("userA");
+    const deleted = await app.request(`/${legacyId}`, { method: "DELETE" });
+    expect(deleted.status).toBe(204);
+
+    const response = await app.request("/defaults", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect((await response.json() as DefaultSubscriptionsResponse).status).toBe("existing");
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    expect(app.send).not.toHaveBeenCalled();
   });
 });
 

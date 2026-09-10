@@ -20,6 +20,13 @@ import { parseFormats, buildCalendarUrl } from "../../services/links";
 import { CHINA_TZ_OFFSET_MS } from "../../utils/time";
 import type { ScheduleSyncMessage } from "../../cron/schedule-sync";
 import { markSyncError, queueSyncRuns } from "../../services/sync-status";
+import {
+  getPersonalSetup,
+  prepareDefaultSubscriptions,
+  summarizePersonalSetup,
+  type DefaultSubscriptionsResponse,
+} from "../../services/personal-subscription-setup";
+import { dispatchPersonalSetup } from "../../services/personal-setup-dispatch";
 
 const app = new Hono<SessionEnv>();
 
@@ -88,13 +95,103 @@ app.get("/", async (c) => {
     }
   }
 
+  const setup = await getPersonalSetup(c.env.DB, user.id);
   return c.json({
     subscriptions: subs.map((sub) => ({
       ...serializeSubscription(sub),
       links: linksBySub.get(sub.id) ?? [],
     })),
     count: subs.length,
+    personal_setup: setup ? summarizePersonalSetup(setup) : null,
   });
+});
+
+// ── POST /defaults — initialize the fixed personal trio for this session ───
+app.post("/defaults", async (c) => {
+  const user = c.get("user");
+  const caps = c.get("caps").calendar;
+
+  if (!caps.sync) {
+    return c.json({
+      status: "skipped",
+      subscription_ids: [],
+      run_id: null,
+      dispatch_status: "none",
+    } satisfies DefaultSubscriptionsResponse);
+  }
+
+  const cquBindStatus = c.get("cquBindStatus");
+  if (cquBindStatus === undefined) {
+    return errorResponse(
+      "CQU_BINDING_STATUS_UNKNOWN",
+      "暂时无法确认统一认证绑定状态",
+      503,
+    );
+  }
+  if (cquBindStatus !== "active") {
+    return errorResponse(
+      "CQU_BINDING_REQUIRED",
+      "请先绑定重庆大学统一认证账号",
+      409,
+    );
+  }
+
+  let result: DefaultSubscriptionsResponse;
+  try {
+    result = await prepareDefaultSubscriptions(c.env, user.id, caps);
+  } catch (error) {
+    if (error instanceof EntitlementError) return entitlementError(error);
+    console.error(JSON.stringify({
+      event: "subscription.defaults.prepare_failed",
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+      message: "Failed to prepare default personal subscriptions",
+    }));
+    return errorResponse(
+      "DEFAULT_SUBSCRIPTIONS_FAILED",
+      "订阅准备未完成，请重试。",
+      503,
+    );
+  }
+
+  if (result.status === "created" || result.status === "resumed") {
+    try {
+      await dispatchPersonalSetup(c.env, user.id);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "subscription.defaults.dispatch_failed",
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+        message: "Default subscriptions created but initial dispatch failed",
+      }));
+    }
+
+    try {
+      const setup = await getPersonalSetup(c.env.DB, user.id);
+      if (!setup) throw new Error("PERSONAL_SETUP_WRITE_FAILED");
+      const latest = summarizePersonalSetup(setup);
+      result = {
+        status: result.status,
+        subscription_ids: latest.subscription_ids,
+        run_id: latest.run_id,
+        dispatch_status: latest.dispatch_status,
+      };
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "subscription.defaults.readback_failed",
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+        message: "Failed to read default subscription setup after dispatch",
+      }));
+      return errorResponse(
+        "DEFAULT_SUBSCRIPTIONS_FAILED",
+        "订阅准备未完成，请重试。",
+        503,
+      );
+    }
+  }
+
+  return c.json(result, result.status === "created" ? 201 : 200);
 });
 
 // ── GET /:sid — single subscription (404 if not owned by current user) ───────
@@ -375,7 +472,15 @@ app.delete("/:sid", async (c) => {
 
   if (!sub) return errorResponse("NOT_FOUND", "订阅不存在", 404);
 
-  await db.delete(subscriptions).where(eq(subscriptions.id, sub.id));
+  const now = new Date().toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO personal_subscription_setup
+      (user_id,status,subscription_ids,dispatch_status,created_at,updated_at)
+      VALUES (?,'existing','[]','sent',?,?) ON CONFLICT(user_id) DO NOTHING`)
+      .bind(user.id, now, now),
+    c.env.DB.prepare("DELETE FROM subscriptions WHERE id=? AND user_id=?")
+      .bind(sub.id, user.id),
+  ]);
 
   console.log(
     JSON.stringify({
