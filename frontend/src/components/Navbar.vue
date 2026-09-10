@@ -8,7 +8,7 @@
         </router-link>
 
         <!-- Nav Links + Theme Toggle -->
-        <nav class="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-6">
+        <nav class="flex w-full flex-wrap items-center justify-start gap-2 sm:ml-auto sm:w-auto sm:justify-end sm:gap-6">
           <!-- Authenticated: Dashboard + Add + Account/Logout (via auth.cqu.moe) -->
           <template v-if="session.isAuthenticated">
             <router-link

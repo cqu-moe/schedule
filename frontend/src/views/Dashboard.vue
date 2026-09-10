@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-background">
     <Navbar />
 
-    <div class="max-w-2xl mx-auto px-4 pt-28 sm:pt-24 pb-12">
+    <div class="max-w-2xl mx-auto px-4 pt-36 sm:pt-24 pb-12">
       <!-- Header: title + usage + add button -->
       <section class="mb-6">
         <div class="flex items-center justify-between mb-3">
@@ -208,7 +208,7 @@
                   'bg-green-600 hover:bg-green-600 text-white border-transparent':
                     refreshButtonState(item.sub) === 'success',
                   'bg-destructive hover:bg-destructive text-white border-transparent':
-                    refreshButtonState(item.sub) === 'error',
+                    refreshButtonState(item.sub) === 'error' && !isFirstSyncCard(item.sub),
                 }"
                 @click="handleRefreshSub(item.sub.id)"
               >
@@ -221,7 +221,7 @@
                   class="h-4 w-4 mr-1.5"
                 />
                 <X
-                  v-else-if="refreshButtonState(item.sub) === 'error'"
+                  v-else-if="refreshButtonState(item.sub) === 'error' && !isFirstSyncCard(item.sub)"
                   class="h-4 w-4 mr-1.5"
                 />
                 <RefreshCw v-else class="h-4 w-4 mr-1.5" />
@@ -628,7 +628,7 @@ function refreshButtonLabel(sub: Subscription): string {
   const state = refreshButtonState(sub)
   if (state === 'loading') return '同步中'
   if (state === 'success') return '已刷新'
-  if (state === 'error') return '失败'
+  if (state === 'error') return isFirstSyncCard(sub) ? '重试同步' : '失败'
   const remaining = refreshCooldownSeconds(sub)
   return remaining > 0 ? cooldownLabel(remaining) : '同步'
 }
@@ -639,6 +639,7 @@ const syncAllCooldownSeconds = computed(() =>
 
 const syncAllButtonState = computed(() => {
   if (personalSubs.value.some(isSubSyncing)) return 'loading'
+  if (firstSyncContext.value && firstSyncPhase.value === 'error') return syncFeedback.stateOf()
   if (personalSubs.value.some(sub => Boolean(syncErrorMessage(sub)))) return 'error'
   return syncFeedback.stateOf()
 })

@@ -316,6 +316,10 @@ describe('Dashboard view (v2)', () => {
       })
       const { wrapper } = await mountDashboard(subscriptions, undefined, { personalSetup: setup })
       expect(wrapper.text()).toContain('暂时无法同步')
+      expect(wrapper.text()).toContain('重试同步')
+      expect(wrapper.text()).toContain('同步个人课表')
+      expect(wrapper.findAll('button').filter((button) => button.text().trim() === '失败'))
+        .toHaveLength(0)
 
       await wrapper.find('[role="status"] button').trigger('click')
       await flushPromises()
@@ -381,7 +385,7 @@ describe('Dashboard view (v2)', () => {
   it('keeps the desktop container while adding only mobile navigation clearance', async () => {
     const { wrapper } = await mountDashboard()
     const container = wrapper.find('.max-w-2xl')
-    expect(container.classes()).toContain('pt-28')
+    expect(container.classes()).toContain('pt-36')
     expect(container.classes()).toContain('sm:pt-24')
   })
 

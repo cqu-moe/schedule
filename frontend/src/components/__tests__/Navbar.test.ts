@@ -123,6 +123,10 @@ describe('Navbar', () => {
     expect(wrapper.find('header > div > div').classes()).toContain('flex-wrap')
     const nav = wrapper.find('nav')
     expect(nav.classes()).toContain('flex-wrap')
+    expect(nav.classes()).toContain('w-full')
+    expect(nav.classes()).toContain('sm:w-auto')
+    expect(nav.classes()).toContain('justify-start')
+    expect(nav.classes()).toContain('sm:justify-end')
     expect(nav.classes()).toContain('sm:gap-6')
   })
 
