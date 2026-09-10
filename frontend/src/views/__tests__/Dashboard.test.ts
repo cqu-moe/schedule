@@ -54,6 +54,7 @@ const DEFAULT_SESSION = {
 async function mountDashboard(subs = [mockSubscription()], sessionOverrides?: object) {
   mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList(subs))
   const result = await mountWithContext(Dashboard, {
+    initialRoute: '/dashboard',
     pinia: {
       initialState: {
         session: { ...DEFAULT_SESSION, ...sessionOverrides },
@@ -112,20 +113,21 @@ describe('Dashboard view (v2)', () => {
   it('shows a binding card when auth reports the user is unbound', async () => {
     const { wrapper } = await mountDashboard([], { cquBindStatus: 'unbound' })
 
-    expect(wrapper.text()).toContain('尚未绑定重庆大学统一身份认证')
-    const link = wrapper.find('a[href="https://auth.cqu.moe/settings"]')
+    expect(wrapper.text()).toContain('尚未绑定重庆大学统一认证账号')
+    const link = wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]')
     expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('前往账号设置绑定')
+    expect(link.text()).toContain('绑定重庆大学统一认证账号')
+    expect(link.attributes('target')).toBeUndefined()
   })
 
   it('does not show the binding card when bound', async () => {
     const { wrapper } = await mountDashboard([], { cquBindStatus: 'active' })
-    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一认证账号')
   })
 
   it('does not show the binding card when bind status is unknown (older auth)', async () => {
     const { wrapper } = await mountDashboard()
-    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一认证账号')
   })
 
   it('turns a NEEDS_REAUTH sync failure into an actionable link', async () => {
@@ -137,9 +139,11 @@ describe('Dashboard view (v2)', () => {
     const { wrapper } = await mountDashboard([sub])
 
     expect(wrapper.text()).toContain('同步失败')
-    const link = wrapper.find('a[href="https://auth.cqu.moe/settings"]')
+    const link = wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]')
     expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('前往账号设置')
+    expect(link.text()).toContain('重新绑定重庆大学统一认证账号')
+    expect(new URL(link.attributes('href')).searchParams.get('repair')).toBe('1')
+    expect(link.attributes('target')).toBeUndefined()
   })
 
   it('does not linkify non-reauth sync failures', async () => {
@@ -151,7 +155,7 @@ describe('Dashboard view (v2)', () => {
     const { wrapper } = await mountDashboard([sub])
 
     expect(wrapper.text()).toContain('同步失败')
-    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(false)
+    expect(wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]').exists()).toBe(false)
   })
 
   it('shows and loads the compact change notification switch for eligible users', async () => {

@@ -91,9 +91,26 @@ export interface SyncQueuedResponse {
   cooldown_until: string
 }
 
+export type PersonalSetupDispatchStatus = 'pending' | 'sending' | 'sent' | 'failed'
+
+export interface PersonalSetupSummary {
+  status: 'created' | 'existing'
+  subscription_ids: string[]
+  run_id: string | null
+  dispatch_status: PersonalSetupDispatchStatus
+}
+
+export interface DefaultSubscriptionsResponse {
+  status: 'created' | 'resumed' | 'existing' | 'skipped'
+  subscription_ids: string[]
+  run_id: string | null
+  dispatch_status: PersonalSetupDispatchStatus | 'none'
+}
+
 export interface SubscriptionList {
   subscriptions: Subscription[]
   count: number
+  personal_setup?: PersonalSetupSummary | null
 }
 
 // ── v2 search / department types ─────────────────────────────────────────────

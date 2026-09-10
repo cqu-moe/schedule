@@ -53,7 +53,7 @@ describe('session store', () => {
 
   describe('load()', () => {
     it('populates user and caps on success', async () => {
-      const me = mockMeResponse()
+      const me = { ...mockMeResponse(), cquBindStatus: 'active' as const }
       mockApi.getMe.mockResolvedValue(me)
 
       const { useSession } = await import('@/stores/session')
@@ -65,6 +65,8 @@ describe('session store', () => {
       expect(store.caps).toEqual(me.caps.calendar)
       expect(store.loaded).toBe(true)
       expect(store.isAuthenticated).toBe(true)
+      expect(store.cquBindStatus).toBe('active')
+      expect(store.isCquBound).toBe(true)
     })
 
     it('rejects and leaves store unloaded on API error', async () => {
@@ -211,6 +213,7 @@ describe('session store', () => {
 
       expect(store.user).toBeNull()
       expect(store.caps).toBeNull()
+      expect(store.cquBindStatus).toBeUndefined()
       expect(store.loaded).toBe(false)
       expect(store.loading).toBe(false)
       expect(store.isAuthenticated).toBe(false)

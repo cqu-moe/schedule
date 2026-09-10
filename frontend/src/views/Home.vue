@@ -12,13 +12,12 @@
           自动同步课表到你的日历应用，随时随地查看课程安排
         </p>
         <div class="mt-8">
-          <!-- Authenticated: internal router link. Not authenticated: external auth link. -->
-          <router-link v-if="session.isAuthenticated" to="/dashboard">
+          <router-link v-if="session.isAuthenticated && session.isCquBound" to="/dashboard?setup=1">
             <Button size="lg" class="cursor-pointer">开始使用</Button>
           </router-link>
           <template v-else>
-            <a :href="loginHref" class="inline-block">
-              <Button size="lg" class="cursor-pointer">登录 / 注册</Button>
+            <a :href="bindHref" class="inline-block">
+              <Button size="lg" class="cursor-pointer">开始使用</Button>
             </a>
             <p class="text-xs text-muted-foreground mt-3">
               将前往统一认证中心 auth.cqu.moe，完成后自动返回本站
@@ -70,11 +69,11 @@ import { RefreshCw, Calendar as CalendarIcon, Lock } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
-import { authLoginUrl } from '@/config/auth'
+import { authCquBindUrl } from '@/config/auth'
 
 const session = useSession()
 const route = useRoute()
-const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
+const bindHref = computed(() => authCquBindUrl(window.location.origin + route.fullPath))
 
 const appVersion = __APP_VERSION__
 </script>

@@ -14,8 +14,9 @@ import type {
   CalendarData,
   SyncQueuedResponse,
   NotificationSettings,
+  DefaultSubscriptionsResponse,
 } from '@/types/api'
-import { authLoginUrl } from '@/config/auth'
+import { authCquBindUrl } from '@/config/auth'
 
 // Augment axios config to support per-request auth-redirect suppression.
 declare module 'axios' {
@@ -69,7 +70,7 @@ client.interceptors.response.use(undefined, (error: AxiosError) => {
       !isUpstreamTokenExpired &&
       !(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect
     ) {
-      redirect.fn(authLoginUrl(window.location.href))
+      redirect.fn(authCquBindUrl(window.location.href))
     }
     return Promise.reject(error)
   }
@@ -109,6 +110,11 @@ export default {
     const headers: Record<string, string> = {}
     if (noCache) headers['Cache-Control'] = 'no-cache'
     const response = await client.get<SubscriptionList>('/subscriptions', { headers })
+    return response.data
+  },
+
+  async ensureDefaultSubscriptions(): Promise<DefaultSubscriptionsResponse> {
+    const response = await client.post<DefaultSubscriptionsResponse>('/subscriptions/defaults')
     return response.data
   },
 
@@ -199,6 +205,7 @@ export default {
   async getViewData(token: string): Promise<CalendarData> {
     const response = await client.get<CalendarData>(
       `/calendar/${encodeURIComponent(token)}/view.json`,
+      { suppressAuthRedirect: true },
     )
     return response.data
   },

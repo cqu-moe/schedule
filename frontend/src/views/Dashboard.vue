@@ -118,17 +118,15 @@
              "unknown" and must NOT trigger this card. -->
         <Card v-if="!loading && session.isCquUnbound" class="mb-4">
           <CardContent class="pt-4">
-            <p class="text-sm font-medium">尚未绑定重庆大学统一身份认证</p>
+            <p class="text-sm font-medium">尚未绑定重庆大学统一认证账号</p>
             <p class="text-sm text-muted-foreground mt-1">
-              个人课表同步依赖你的统一身份认证。绑定在账号设置中完成，之后回到这里添加订阅即可。
+              个人课表同步依赖你的统一认证账号，绑定后即可继续。
             </p>
             <a
-              :href="authSettingsUrl"
-              target="_blank"
-              rel="noopener noreferrer"
+              :href="bindHref"
               class="inline-block mt-3"
             >
-              <Button variant="outline" size="sm" class="cursor-pointer">前往账号设置绑定</Button>
+              <Button variant="outline" size="sm" class="cursor-pointer">绑定重庆大学统一认证账号</Button>
             </a>
           </CardContent>
         </Card>
@@ -160,11 +158,9 @@
                 同步失败：{{ syncErrorMessage(item.sub) }}
                 <a
                   v-if="item.sub.sync_error_code === 'NEEDS_REAUTH'"
-                  :href="authSettingsUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  :href="repairBindHref"
                   class="underline underline-offset-2"
-                >前往账号设置</a>
+                >重新绑定重庆大学统一认证账号</a>
               </span>
               <span
                 v-else-if="isSubSyncing(item.sub)"
@@ -395,6 +391,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, reactive } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   RefreshCw,
   Loader2,
@@ -417,7 +414,7 @@ import type { SourceType, Subscription, CalendarLink } from '@/types/api'
 import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import { buildLinkUrl } from '@/utils/links'
-import { AUTH_BASE_URL } from '@/config/auth'
+import { authCquBindUrl } from '@/config/auth'
 import Navbar from '@/components/Navbar.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import ShareLinksDialog from '@/components/ShareLinksDialog.vue'
@@ -446,9 +443,12 @@ import {
 const subStore = useSubscriptionsStore()
 const session = useSession()
 const configStore = useConfigStore()
-
-/** auth.cqu.moe account settings — where users bind their CQU identity. */
-const authSettingsUrl = `${AUTH_BASE_URL}/settings`
+const route = useRoute()
+const bindHref = computed(() => authCquBindUrl(window.location.origin + route.fullPath))
+const repairBindHref = computed(() => authCquBindUrl(
+  window.location.origin + route.fullPath,
+  { repair: true },
+))
 
 // ── M4: Enriched subscription list ────────────────────────────────────────────
 

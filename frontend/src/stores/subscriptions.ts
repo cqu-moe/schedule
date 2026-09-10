@@ -1,11 +1,12 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import api from '@/api'
-import type { Subscription, CalendarLink } from '@/types/api'
+import type { Subscription, CalendarLink, PersonalSetupSummary } from '@/types/api'
 import { useSession } from '@/stores/session'
 
 export const useSubscriptionsStore = defineStore('subscriptions', () => {
   const subscriptions = ref<Subscription[]>([])
+  const personalSetup = ref<PersonalSetupSummary | null>(null)
 
   // ── Getters ────────────────────────────────────────────────────────────────
 
@@ -59,11 +60,23 @@ export const useSubscriptionsStore = defineStore('subscriptions', () => {
   async function load(noCache = false) {
     const data = await api.getSubscriptions(noCache)
     subscriptions.value = data.subscriptions
+    personalSetup.value = data.personal_setup ?? null
   }
 
   function $reset() {
     subscriptions.value = []
+    personalSetup.value = null
   }
 
-  return { subscriptions, count, atLimit, shareLinkCount, atShareLimit, defaultLink, load, $reset }
+  return {
+    subscriptions,
+    personalSetup,
+    count,
+    atLimit,
+    shareLinkCount,
+    atShareLimit,
+    defaultLink,
+    load,
+    $reset,
+  }
 })

@@ -78,11 +78,11 @@ import { useColorMode } from '@vueuse/core'
 import { Monitor, Sun, Moon } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/stores/session'
-import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
+import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 
 const session = useSession()
 const route = useRoute()
-const loginHref = computed(() => authLoginUrl(window.location.origin + route.fullPath))
+const loginHref = computed(() => authCquBindUrl(window.location.origin + route.fullPath))
 const colorMode = useColorMode()
 const storedMode = colorMode.store
 

@@ -60,16 +60,15 @@ describe('Navbar', () => {
   }
 
   describe('unauthenticated state', () => {
-    it('login link href includes /login?redirect= (not bare /login)', () => {
+    it('login link enters Auth binding with a setup return target', () => {
       const wrapper = mountNavbar(false)
 
-      // The href must carry a redirect param so the user returns after login.
-      const bareLoginLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
-      expect(bareLoginLink.exists()).toBe(false)
-
-      const loginLink = wrapper.find('a[href*="/login?redirect="]')
+      const loginLink = wrapper.find('a[href*="/cqu/bind?"]')
       expect(loginLink.exists()).toBe(true)
       expect(loginLink.text()).toContain('登录')
+      expect(new URL(loginLink.attributes('href')).searchParams.get('redirect')).toBe(
+        'http://localhost:3000/dashboard?setup=1',
+      )
     })
 
     it('does not show dashboard, add subscription links when not authenticated', () => {

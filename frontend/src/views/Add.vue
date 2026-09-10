@@ -5,8 +5,22 @@
     <div class="max-w-2xl mx-auto px-4 pt-28 pb-12">
       <h1 class="text-2xl font-heading font-semibold mb-6">添加新订阅</h1>
 
+      <div
+        v-if="setupPreparing || session.loading"
+        class="mb-4 flex items-center gap-2 text-sm text-muted-foreground"
+      >
+        <Loader2 class="h-4 w-4 animate-spin" />
+        正在准备订阅…
+      </div>
+      <Alert v-else-if="setupError" variant="destructive" class="mb-4">
+        <AlertDescription class="flex flex-wrap items-center justify-between gap-2">
+          <span>{{ setupError }}</span>
+          <Button variant="outline" size="sm" @click="beginPersonalSetup">重试</Button>
+        </AlertDescription>
+      </Alert>
+
       <!-- ── Personal subscriptions ─────────────────────────────────────────── -->
-      <section class="mb-6">
+      <section v-if="!setupPreparing && !session.loading" class="mb-6">
         <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           个人课表
         </h2>
@@ -25,13 +39,11 @@
           v-else-if="session.isCquUnbound"
           class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
         >
-          尚未绑定重庆大学统一身份认证，绑定后即可订阅并自动同步个人课表。请先在
+          尚未绑定重庆大学统一认证账号，绑定后即可订阅并自动同步个人课表。请先
           <a
-            :href="`${AUTH_BASE_URL}/settings`"
-            target="_blank"
-            rel="noopener noreferrer"
+            :href="bindHref"
             class="text-foreground underline underline-offset-2"
-          >账号设置</a>
+          >绑定重庆大学统一认证账号</a>
           完成绑定。
         </div>
         <Card v-else>
@@ -98,12 +110,10 @@
             <p v-if="session.cquBindStatus === undefined" class="text-xs text-muted-foreground pt-1">
               首次使用？请先在
               <a
-                :href="`${AUTH_BASE_URL}/settings`"
-                target="_blank"
-                rel="noopener noreferrer"
+                :href="bindHref"
                 class="underline underline-offset-2"
-              >账号设置</a>
-              绑定重庆大学统一身份认证，否则课表无法同步。
+              >绑定重庆大学统一认证账号</a>
+              ，否则课表无法同步。
             </p>
           </CardContent>
         </Card>
@@ -301,6 +311,11 @@
         <Alert variant="destructive">
           <AlertDescription>
             {{ errorMessage }}
+            <a
+              v-if="needsRepair"
+              :href="repairBindHref"
+              class="ml-1 underline underline-offset-2"
+            >重新绑定重庆大学统一认证账号</a>
           </AlertDescription>
         </Alert>
       </div>
@@ -310,16 +325,17 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Search, Plus, Check, X, Loader2 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { usePersonalSetup } from '@/composables/usePersonalSetup'
 import { toast } from 'vue-sonner'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { useSession } from '@/stores/session'
 import api from '@/api'
 import type { SearchResult, SourceType, DepartmentNode } from '@/types/api'
 import { parseApiError, apiErrorCode } from '@/utils/error'
-import { AUTH_BASE_URL } from '@/config/auth'
+import { authCquBindUrl } from '@/config/auth'
 
 // 外部课表软禁用(可逆):瑞数化后外部课表无法获取,前端隐藏入口标"暂不可用"。
 // 恢复只需把 EXTERNAL_DISABLED 改回 false。绝不在 UI 暴露瑞数/WAF/风控原因。
@@ -346,6 +362,19 @@ import DepartmentTreeSelect from '@/components/DepartmentTreeSelect.vue'
 const subStore = useSubscriptionsStore()
 const session = useSession()
 const router = useRouter()
+const route = useRoute()
+const {
+  preparing: setupPreparing,
+  error: setupError,
+  startedThisVisit: setupStartedThisVisit,
+  begin: beginPersonalSetup,
+} = usePersonalSetup()
+const setupPromise = beginPersonalSetup()
+const bindHref = computed(() => authCquBindUrl(window.location.origin + route.fullPath))
+const repairBindHref = computed(() => authCquBindUrl(
+  window.location.origin + route.fullPath,
+  { repair: true },
+))
 
 // ── Personal subscription options ─────────────────────────────────────────────
 
@@ -417,6 +446,7 @@ const searching = ref(false)
 const searched = ref(false)
 const subscribeFeedback = useButtonFeedback()
 const errorMessage = ref('')
+const needsRepair = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let searchSeq = 0
@@ -445,6 +475,7 @@ function isExternalSubscribed(sourceId: string): boolean {
 
 function clearError() {
   errorMessage.value = ''
+  needsRepair.value = false
 }
 
 function handleTypeChange() {
@@ -516,7 +547,8 @@ async function doSearch() {
     if (seq !== searchSeq) return // superseded — do not clobber live UI state
     const code = apiErrorCode(err)
     if (code === 'CQU_SESSION_INACTIVE') {
-      errorMessage.value = `您的重庆大学账号尚未绑定或已失效，请前往 ${AUTH_BASE_URL} 重新绑定后再使用外部订阅功能。`
+      errorMessage.value = '重庆大学统一认证登录状态已失效。'
+      needsRepair.value = true
     } else if (code === 'FEATURE_NOT_ENABLED') {
       errorMessage.value = '外部订阅功能未开通'
     } else {
@@ -550,6 +582,8 @@ async function handleExternalSubscribe(item: SearchResult) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  await setupPromise
+  if (setupStartedThisVisit.value || session.isCquUnbound || setupError.value) return
   try {
     await subStore.load()
   } catch {

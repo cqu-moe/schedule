@@ -24,7 +24,7 @@ vi.mock('axios', () => ({
 // Import after mock is set up — this triggers axios.create() and interceptors.response.use()
 import axios from 'axios'
 import api, { redirect } from '../index'
-import { authLoginUrl } from '@/config/auth'
+import { authCquBindUrl } from '@/config/auth'
 
 // Capture setup-time calls before any test's beforeEach can clear them
 const createCallArgs = (axios.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
@@ -70,8 +70,7 @@ describe('API module (v2)', () => {
 
       // Assert the exact URL passed to redirect.fn by the interceptor.
       // jsdom's window.location.href defaults to 'http://localhost:3000/'.
-      const expectedUrl = authLoginUrl(window.location.href)
-      // expectedUrl === 'https://auth.cqu.moe/login?redirect=http%3A%2F%2Flocalhost%3A3000%2F'
+      const expectedUrl = authCquBindUrl(window.location.href)
       expect(redirectSpy).toHaveBeenCalledOnce()
       expect(redirectSpy).toHaveBeenCalledWith(expectedUrl)
 
@@ -233,6 +232,21 @@ describe('API module (v2)', () => {
     })
   })
 
+  describe('ensureDefaultSubscriptions', () => {
+    it('POSTs to /subscriptions/defaults without identity or subscription data', async () => {
+      const setup = {
+        status: 'created',
+        subscription_ids: ['a', 'b', 'c'],
+        run_id: 'run-1',
+        dispatch_status: 'sent',
+      }
+      mockClient.post.mockResolvedValueOnce({ data: setup })
+
+      await expect(api.ensureDefaultSubscriptions()).resolves.toEqual(setup)
+      expect(mockClient.post).toHaveBeenCalledWith('/subscriptions/defaults')
+    })
+  })
+
   // ── deleteSubscription ──
 
   describe('deleteSubscription', () => {
@@ -360,7 +374,9 @@ describe('API module (v2)', () => {
 
       const result = await api.getViewData('abc123')
 
-      expect(mockClient.get).toHaveBeenCalledWith('/calendar/abc123/view.json')
+      expect(mockClient.get).toHaveBeenCalledWith('/calendar/abc123/view.json', {
+        suppressAuthRedirect: true,
+      })
       expect(result).toEqual(data)
     })
   })

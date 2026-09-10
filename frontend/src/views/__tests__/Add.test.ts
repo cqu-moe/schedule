@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountWithContext, mockSubscription } from '@/test-utils'
 
-const { mockApi, mockToast } = vi.hoisted(() => {
+const { mockApi, mockToast, mockRedirect } = vi.hoisted(() => {
   const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     getMe: vi.fn(),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
     getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], count: 0 }),
+    ensureDefaultSubscriptions: vi.fn(),
     getSubscription: vi.fn(),
     createSubscription: vi.fn(),
     deleteSubscription: vi.fn(),
@@ -22,11 +23,12 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     getViewData: vi.fn(),
     getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
   }
-  return { mockApi, mockToast }
+  const mockRedirect = { fn: vi.fn() }
+  return { mockApi, mockToast, mockRedirect }
 })
 
-vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index', () => ({ default: mockApi }))
+vi.mock('@/api', () => ({ default: mockApi, redirect: mockRedirect }))
+vi.mock('@/api/index', () => ({ default: mockApi, redirect: mockRedirect }))
 vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Add } = await import('@/views/Add.vue')
@@ -67,6 +69,7 @@ const CAPS_FULL = {
   sync: true,
   external: true,
   share: true,
+  change_notification: true,
   sub_limit: 5,
   share_limit: null,
   sync_interval: 60,
@@ -80,6 +83,7 @@ async function mountAdd(
   existingSubs: any[] = [],
   capsOverrides?: Partial<typeof CAPS_FULL>,
   sessionExtras?: Record<string, unknown>,
+  initialRoute = '/add',
 ) {
   mockApi.getSubscriptions.mockResolvedValue({
     subscriptions: existingSubs,
@@ -100,6 +104,7 @@ async function mountAdd(
       },
     },
     global: { stubs: componentStubs },
+    initialRoute,
   })
   await flushPromises()
   return result
@@ -111,6 +116,17 @@ describe('Add view (v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
+    mockApi.getMe.mockResolvedValue({
+      user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
+      caps: { calendar: CAPS_FULL },
+      cquBindStatus: 'active',
+    })
+    mockApi.ensureDefaultSubscriptions.mockResolvedValue({
+      status: 'created',
+      subscription_ids: ['a', 'b', 'c'],
+      run_id: 'run-1',
+      dispatch_status: 'sent',
+    })
     mockApi.getDepartments.mockResolvedValue({ departments: [] })
   })
 
@@ -142,21 +158,47 @@ describe('Add view (v2)', () => {
 
   it('shows a binding hint in the personal section when bind status is unknown', async () => {
     const { wrapper } = await mountAdd()
-    expect(wrapper.text()).toContain('绑定重庆大学统一身份认证')
-    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('绑定重庆大学统一认证账号')
+    const link = wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('target')).toBeUndefined()
   })
 
   it('replaces personal options with a binding prompt when known-unbound', async () => {
     const { wrapper } = await mountAdd([], undefined, { cquBindStatus: 'unbound' })
     expect(wrapper.text()).not.toContain('我的全部课表')
-    expect(wrapper.text()).toContain('尚未绑定重庆大学统一身份认证')
-    expect(wrapper.find('a[href="https://auth.cqu.moe/settings"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('尚未绑定重庆大学统一认证账号')
+    const link = wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('target')).toBeUndefined()
+  })
+
+  it('runs automatic setup on Add and sends a created account to Dashboard', async () => {
+    const { router } = await mountAdd([], undefined, { cquBindStatus: 'active' }, '/add?setup=1&from=menu')
+    await flushPromises()
+
+    expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(1)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledWith(true)
+    expect(router.currentRoute.value.fullPath).toBe('/dashboard?from=menu')
+  })
+
+  it('keeps an existing account on Add after removing setup', async () => {
+    mockApi.ensureDefaultSubscriptions.mockResolvedValueOnce({
+      status: 'existing',
+      subscription_ids: [],
+      run_id: null,
+      dispatch_status: 'sent',
+    })
+    const { router } = await mountAdd([], undefined, { cquBindStatus: 'active' }, '/add?setup=1&from=menu')
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/add?from=menu')
   })
 
   it('shows personal options without the hint when bound', async () => {
     const { wrapper } = await mountAdd([], undefined, { cquBindStatus: 'active' })
     expect(wrapper.text()).toContain('我的全部课表')
-    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一身份认证')
+    expect(wrapper.text()).not.toContain('尚未绑定重庆大学统一认证账号')
     expect(wrapper.text()).not.toContain('首次使用')
   })
 

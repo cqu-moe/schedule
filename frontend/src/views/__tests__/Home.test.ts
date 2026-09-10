@@ -15,15 +15,13 @@ describe('Home view', () => {
     expect(wrapper.text()).toContain('重庆大学课表日历订阅')
   })
 
-  it('links to auth.cqu.moe/login with redirect param when not authenticated', async () => {
+  it('starts unauthenticated visitors at Auth binding with a setup return', async () => {
     const { wrapper } = await mountWithContext(Home)
-    // Must carry ?redirect= so the user returns to current page after login.
-    const bareLink = wrapper.find('a[href="https://auth.cqu.moe/login"]')
-    expect(bareLink.exists()).toBe(false)
-
-    const link = wrapper.find('a[href*="/login?redirect="]')
+    const link = wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]')
     expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('登录 / 注册')
+    expect(link.text()).toContain('开始使用')
+    const destination = new URL(link.attributes('href')).searchParams.get('redirect')
+    expect(destination).toBe('http://localhost:3000/dashboard?setup=1')
   })
 
   it('sets expectations about the auth.cqu.moe jump when not authenticated', async () => {
@@ -33,22 +31,41 @@ describe('Home view', () => {
   })
 
 
-  it('links to /dashboard when authenticated', async () => {
+  it('links active authenticated users to dashboard setup', async () => {
     const { wrapper } = await mountWithContext(Home, {
       pinia: {
         initialState: {
           session: {
             user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
             caps: {},
+            cquBindStatus: 'active',
             loaded: true,
             loading: false,
           },
         },
       },
     })
-    const link = wrapper.find('a[href="/dashboard"]')
+    const link = wrapper.find('a[href="/dashboard?setup=1"]')
     expect(link.exists()).toBe(true)
     expect(link.text()).toContain('开始使用')
+  })
+
+  it('sends an authenticated user with unknown binding state through Auth binding', async () => {
+    const { wrapper } = await mountWithContext(Home, {
+      pinia: {
+        initialState: {
+          session: {
+            user: { id: 'u1', name: '张三', email: 'z@cqu.edu.cn', role: 'student' },
+            caps: { sync: true },
+            cquBindStatus: undefined,
+            loaded: true,
+            loading: false,
+          },
+        },
+      },
+    })
+    expect(wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/dashboard?setup=1"]').exists()).toBe(false)
   })
 
   it('shows version in footer linking to changelog', async () => {
