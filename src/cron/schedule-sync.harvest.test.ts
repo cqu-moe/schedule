@@ -270,6 +270,92 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(rows.every(row => row.icsContent?.includes("BEGIN:VCALENDAR"))).toBe(true);
   });
 
+  it("uses one initial message to finish all surviving views in the shared run", async () => {
+    const runId = crypto.randomUUID();
+    const requestedAt = new Date().toISOString();
+    const shared = {
+      syncStatus: "queued" as const,
+      syncRunId: runId,
+      syncTrigger: "initial" as const,
+      syncRequestedAt: requestedAt,
+    };
+    const allSid = await insertSub({ ...shared, sourceType: "personal_all", sourceName: "全部" });
+    await insertSub({ ...shared, sourceType: "personal_courses", sourceName: "课程" });
+    await insertSub({ ...shared, sourceType: "personal_exams", sourceName: "考试" });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
+      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
+    });
+
+    const { batch, messages } = makeBatch([{
+      subscriptionId: allSid,
+      userId: "user-1",
+      trigger: "initial",
+      runId,
+    }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    expect(harvest).toHaveBeenCalledTimes(1);
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    const rows = await db.select().from(subscriptions);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.syncStatus === "success")).toBe(true);
+    expect(rows.every((row) => row.syncRunId === runId)).toBe(true);
+  });
+
+  it.each(["success", "error"] as const)(
+    "acks a duplicate message for a terminal %s run without harvesting",
+    async (syncStatus) => {
+      const runId = crypto.randomUUID();
+      const sid = await insertSub({
+        sourceType: "personal_all",
+        sourceId: "user-1",
+        syncStatus,
+        syncRunId: runId,
+        syncTrigger: "initial",
+        syncRequestedAt: new Date().toISOString(),
+      });
+      const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
+      const { batch, messages } = makeBatch([{
+        subscriptionId: sid,
+        userId: "user-1",
+        trigger: "initial",
+        runId,
+      }]);
+
+      await processScheduleSyncBatch(batch, env as unknown as Env);
+
+      expect(messages[0].ack).toHaveBeenCalledOnce();
+      expect(messages[0].retry).not.toHaveBeenCalled();
+      expect(harvest).not.toHaveBeenCalled();
+      const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+      expect(row?.syncStatus).toBe(syncStatus);
+    },
+  );
+
+  it("does not restore a deleted view while completing the shared run", async () => {
+    const runId = crypto.randomUUID();
+    const shared = {
+      syncStatus: "queued" as const,
+      syncRunId: runId,
+      syncTrigger: "initial" as const,
+      syncRequestedAt: new Date().toISOString(),
+    };
+    const allSid = await insertSub({ ...shared, sourceType: "personal_all" });
+    await insertSub({ ...shared, sourceType: "personal_courses" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
+      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
+    });
+
+    const { batch } = makeBatch([{ subscriptionId: allSid, userId: "user-1", trigger: "initial", runId }]);
+    await processScheduleSyncBatch(batch, env as unknown as Env);
+
+    const rows = await db.select().from(subscriptions);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.syncStatus === "success")).toBe(true);
+  });
+
   it("retries a transient HarvestError with backoff", async () => {
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(

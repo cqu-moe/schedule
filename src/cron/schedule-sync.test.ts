@@ -18,6 +18,7 @@ const db = drizzle(env.DB);
 // ── DB setup (real D1 from cloudflare:test) ──────────────────────────────────
 
 beforeAll(async () => {
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
   await env.DB.prepare(
@@ -52,6 +53,14 @@ beforeAll(async () => {
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('created','existing')),
+    subscription_ids TEXT NOT NULL DEFAULT '[]', run_id TEXT,
+    dispatch_status TEXT NOT NULL CHECK (dispatch_status IN ('pending','sending','sent','failed')),
+    lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
 });
 
 /** Full calendar caps (everything granted) for the default test user. */
@@ -62,6 +71,7 @@ const FULL_CAPS = {
 };
 
 beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
   await env.DB.prepare("DELETE FROM notification_state").run();
   // Clear any cached student IDs so each test resolves from its own bearer.
@@ -100,6 +110,39 @@ async function insertSub(
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("enqueueScheduleSync (producer)", () => {
+  it("recovers one pending personal setup message before selecting cron work", async () => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal_all",
+      sourceId: "user-1",
+      syncStatus: "queued",
+      syncRunId: runId,
+      syncTrigger: "initial",
+      syncRequestedAt: new Date().toISOString(),
+    });
+    const now = new Date().toISOString();
+    await env.DB.prepare(`INSERT INTO personal_subscription_setup
+      (user_id,status,subscription_ids,run_id,dispatch_status,created_at,updated_at)
+      VALUES (?,'created',?,?,'pending',?,?)`)
+      .bind("user-1", JSON.stringify([sid]), runId, now, now)
+      .run();
+    const send = vi.fn(async () => undefined);
+    const sendBatch = vi.fn(async () => undefined);
+
+    await enqueueScheduleSync({
+      ...env,
+      SCHEDULE_SYNC_QUEUE: { send, sendBatch },
+    } as unknown as Env);
+
+    expect(send).toHaveBeenCalledWith({
+      subscriptionId: sid,
+      userId: "user-1",
+      trigger: "initial",
+      runId,
+    });
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
   it("does not call sendBatch when there are no subscriptions", async () => {
     const sendBatch = vi.fn();
     const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;

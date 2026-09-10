@@ -36,6 +36,7 @@ import {
   parseScheduleSnapshot,
   renderScheduleChangeEmail,
 } from "../services/schedule-notifications";
+import { dispatchPendingPersonalSetups } from "../services/personal-setup-dispatch";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
@@ -87,6 +88,7 @@ const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
  * refresh. Genuine sub-hourly refresh would require a higher-frequency cron.
  */
 export async function enqueueScheduleSync(env: Env): Promise<void> {
+  await dispatchPendingPersonalSetups(env);
   console.log(
     JSON.stringify({ event: "cron.schedule_sync.start", message: "Selecting due subscriptions" }),
   );
@@ -329,6 +331,7 @@ export async function processScheduleSyncBatch(
             sessionId: subscriptions.sessionId,
             sessionName: subscriptions.sessionName,
             lastSyncedAt: subscriptions.lastSyncedAt,
+            syncStatus: subscriptions.syncStatus,
             syncRunId: subscriptions.syncRunId,
             syncRequestedAt: subscriptions.syncRequestedAt,
           })
@@ -347,6 +350,16 @@ export async function processScheduleSyncBatch(
             event: "queue.schedule_sync.skip_stale",
             subscriptionId,
             message: "A newer sync run superseded this queue message",
+          }));
+          message.ack();
+          return;
+        }
+        if (runId && (sub.syncStatus === "success" || sub.syncStatus === "error")) {
+          console.log(JSON.stringify({
+            event: "queue.schedule_sync.skip_terminal_duplicate",
+            subscriptionId,
+            syncStatus: sub.syncStatus,
+            message: "This sync run already reached a terminal state",
           }));
           message.ack();
           return;
