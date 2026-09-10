@@ -118,6 +118,14 @@ describe('Navbar', () => {
     expect(themeButton.exists()).toBe(true)
   })
 
+  it('wraps navigation on narrow screens without changing the desktop gap', () => {
+    const wrapper = mountNavbar(true)
+    expect(wrapper.find('header > div > div').classes()).toContain('flex-wrap')
+    const nav = wrapper.find('nav')
+    expect(nav.classes()).toContain('flex-wrap')
+    expect(nav.classes()).toContain('sm:gap-6')
+  })
+
   it('renders logo link to home', async () => {
     await flushPromises()
     const wrapper = mountNavbar(false)

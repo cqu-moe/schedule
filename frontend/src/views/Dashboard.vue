@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-background">
     <Navbar />
 
-    <div class="max-w-2xl mx-auto px-4 pt-24 pb-12">
+    <div class="max-w-2xl mx-auto px-4 pt-28 sm:pt-24 pb-12">
       <!-- Header: title + usage + add button -->
       <section class="mb-6">
         <div class="flex items-center justify-between mb-3">
@@ -113,6 +113,17 @@
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
 
+        <FirstSyncNotice
+          v-if="showFirstSyncNotice && firstSyncPhase"
+          :phase="firstSyncPhase"
+          :preparation-failed="Boolean(preparationError)"
+          :error-message="preparationError ?? ''"
+          :retry-disabled="firstSyncRetryDisabled"
+          :retry-hint="firstSyncRetryHint"
+          @retry="retryFirstSync"
+          @dismiss="dismissFirstSync"
+        />
+
         <!-- Binding guidance — shown only when auth explicitly reports a
              non-active binding. Absent cquBindStatus (older auth deploy) is
              "unknown" and must NOT trigger this card. -->
@@ -155,7 +166,7 @@
                 v-if="syncErrorMessage(item.sub)"
                 class="text-xs text-destructive"
               >
-                同步失败：{{ syncErrorMessage(item.sub) }}
+                同步失败<template v-if="!isFirstSyncCard(item.sub)">：{{ syncErrorMessage(item.sub) }}</template>
                 <a
                   v-if="item.sub.sync_error_code === 'NEEDS_REAUTH'"
                   :href="repairBindHref"
@@ -168,6 +179,12 @@
               >
                 <Loader2 class="h-3 w-3 animate-spin" />
                 {{ syncProgressLabel(item.sub) }}
+              </span>
+              <span
+                v-else-if="isFirstSyncCard(item.sub) && item.sub.sync_status === 'success' && item.sub.last_synced_at"
+                class="text-xs text-muted-foreground"
+              >
+                刚刚同步
               </span>
               <span v-else-if="item.sub.last_synced_at" class="text-xs text-muted-foreground">
                 同步于 {{ formatDate(item.sub.last_synced_at) }}
@@ -217,6 +234,7 @@
                   variant="outline"
                   size="sm"
                   class="cursor-pointer"
+                  :disabled="firstSyncLinkUnavailable(item.sub)"
                   :class="{
                     'bg-green-600 hover:bg-green-600 text-white border-transparent':
                       copyFeedback.stateOf(item.sub.id) === 'success',
@@ -237,6 +255,7 @@
                   size="icon"
                   class="cursor-pointer h-8 w-8"
                   title="二维码"
+                  :disabled="firstSyncLinkUnavailable(item.sub)"
                   @click="openQrModal(item)"
                 >
                   <QrCode class="h-4 w-4" />
@@ -244,6 +263,7 @@
 
                 <!-- Open web view -->
                 <a
+                  v-if="!firstSyncLinkUnavailable(item.sub)"
                   :href="buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'web')"
                   target="_blank"
                   rel="noopener"
@@ -257,6 +277,16 @@
                     <ExternalLink class="h-4 w-4" />
                   </Button>
                 </a>
+                <Button
+                  v-else
+                  variant="outline"
+                  size="icon"
+                  class="h-8 w-8"
+                  title="网页预览"
+                  disabled
+                >
+                  <ExternalLink class="h-4 w-4" />
+                </Button>
               </template>
 
               <!-- More actions menu -->
@@ -337,7 +367,7 @@
 
         <!-- Empty state -->
         <div
-          v-if="!loading && subStore.subscriptions.length === 0"
+          v-if="!loading && !preparing && !preparationError && subStore.subscriptions.length === 0"
           class="text-center py-8 text-muted-foreground"
         >
           <p class="text-sm mb-1">还没有订阅</p>
@@ -359,7 +389,7 @@
       :open="shareLinksDialog.open"
       :subscription="activeShareSub"
       @update:open="v => { if (!v) shareLinksDialog.open = false }"
-      @changed="subStore.load(true).catch(() => {})"
+      @changed="loadSubscriptions(true).catch(() => {})"
     />
 
     <!-- Delete subscription confirmation dialog -->
@@ -406,6 +436,7 @@ import {
   Share2,
 } from 'lucide-vue-next'
 import { useButtonFeedback } from '@/composables/useButtonFeedback'
+import { usePersonalSetup } from '@/composables/usePersonalSetup'
 import { useSubscriptionsStore } from '@/stores/subscriptions'
 import { useSession } from '@/stores/session'
 import { useConfigStore } from '@/stores/config'
@@ -415,7 +446,9 @@ import api from '@/api'
 import { parseApiError } from '@/utils/error'
 import { buildLinkUrl } from '@/utils/links'
 import { authCquBindUrl } from '@/config/auth'
+import { deriveFirstSyncPhase } from '@/lib/first-sync-state'
 import Navbar from '@/components/Navbar.vue'
+import FirstSyncNotice from '@/components/FirstSyncNotice.vue'
 import QrcodeModal from '@/components/QrcodeModal.vue'
 import ShareLinksDialog from '@/components/ShareLinksDialog.vue'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -444,6 +477,12 @@ const subStore = useSubscriptionsStore()
 const session = useSession()
 const configStore = useConfigStore()
 const route = useRoute()
+const {
+  preparing,
+  error: preparationError,
+  startedThisVisit,
+  begin: beginPersonalSetup,
+} = usePersonalSetup()
 const bindHref = computed(() => authCquBindUrl(window.location.origin + route.fullPath))
 const repairBindHref = computed(() => authCquBindUrl(
   window.location.origin + route.fullPath,
@@ -512,6 +551,20 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 let pollingActive = false
 let rateLimitedUntil = 0
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
+let subscriptionLoadPromise: Promise<void> | null = null
+let setupDispatchPromise: Promise<void> | null = null
+let returnLoadPromise: Promise<void> | null = null
+
+function loadSubscriptions(noCache = false): Promise<void> {
+  if (subscriptionLoadPromise) return subscriptionLoadPromise
+  const request = subStore.load(noCache)
+  subscriptionLoadPromise = request
+  const clear = () => {
+    if (subscriptionLoadPromise === request) subscriptionLoadPromise = null
+  }
+  void request.then(clear, clear)
+  return request
+}
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 
@@ -553,6 +606,7 @@ function syncErrorMessage(sub: Subscription): string | null {
 }
 
 function syncProgressLabel(sub: Subscription): string {
+  if (isFirstSyncCard(sub)) return '首次同步中…'
   return sub.sync_status === 'queued' && Boolean(sub.sync_error_code)
     ? '同步遇到临时故障，正在自动重试...'
     : '同步中...'
@@ -588,6 +642,90 @@ const syncAllButtonState = computed(() => {
   if (personalSubs.value.some(sub => Boolean(syncErrorMessage(sub)))) return 'error'
   return syncFeedback.stateOf()
 })
+
+const firstSyncTargetIds = computed(() =>
+  subStore.personalSetup?.status === 'created'
+    ? subStore.personalSetup.subscription_ids
+    : [],
+)
+
+const hasUnfinishedFirstSync = computed(() => {
+  if (firstSyncTargetIds.value.length === 0) return false
+  return subStore.subscriptions.some((sub) =>
+    firstSyncTargetIds.value.includes(sub.id) && !sub.last_synced_at,
+  )
+})
+
+const firstSyncContext = computed(() => startedThisVisit.value || hasUnfinishedFirstSync.value)
+const firstSyncDismissed = ref(false)
+
+const firstSyncPhase = computed(() => deriveFirstSyncPhase({
+  subscriptions: subStore.subscriptions,
+  targetIds: firstSyncTargetIds.value,
+  pendingIds: new Set(Object.keys(pendingRefresh)),
+  localErrors: localSyncErrors,
+  preparing: preparing.value,
+  preparationError: preparationError.value,
+}))
+
+const showFirstSyncNotice = computed(() =>
+  !firstSyncDismissed.value
+  && firstSyncContext.value
+  && firstSyncPhase.value !== null,
+)
+
+function isFirstSyncCard(sub: Subscription): boolean {
+  return firstSyncContext.value && firstSyncTargetIds.value.includes(sub.id)
+}
+
+function firstSyncLinkUnavailable(sub: Subscription): boolean {
+  return isFirstSyncCard(sub) && !sub.last_synced_at
+}
+
+const firstSyncRetryDisabled = computed(() => {
+  if (preparationError.value) return preparing.value
+  return !canManualRefresh.value
+    || syncAllCooldownSeconds.value > 0
+    || firstSyncTargetIds.value.some((id) => id in pendingRefresh)
+})
+
+const firstSyncRetryHint = computed(() => {
+  if (preparationError.value) return preparing.value ? '正在重试' : ''
+  if (!canManualRefresh.value) return '今日手动刷新次数已达上限'
+  if (syncAllCooldownSeconds.value > 0) return cooldownLabel(syncAllCooldownSeconds.value)
+  if (firstSyncTargetIds.value.some((id) => id in pendingRefresh)) return '同步正在进行'
+  return ''
+})
+
+function firstSyncDismissKey(): string | null {
+  const userId = session.user?.id
+  const runId = subStore.personalSetup?.run_id
+  return userId && runId ? `first-sync-dismissed:${userId}:${runId}` : null
+}
+
+function restoreFirstSyncDismissal() {
+  const key = firstSyncDismissKey()
+  if (!key) {
+    firstSyncDismissed.value = false
+    return
+  }
+  try {
+    firstSyncDismissed.value = sessionStorage.getItem(key) === '1'
+  } catch {
+    firstSyncDismissed.value = false
+  }
+}
+
+function dismissFirstSync() {
+  firstSyncDismissed.value = true
+  const key = firstSyncDismissKey()
+  if (!key) return
+  try {
+    sessionStorage.setItem(key, '1')
+  } catch {
+    // Dismissal remains page-local when storage is unavailable.
+  }
+}
 
 // ── Source type labels ────────────────────────────────────────────────────────
 
@@ -651,6 +789,33 @@ function isRateLimitError(error: unknown): boolean {
     && (error as { response?: { status?: number } }).response?.status === 429
 }
 
+function recoverPendingSetupDispatch(): Promise<void> {
+  const setup = subStore.personalSetup
+  if (
+    setup?.status !== 'created'
+    || (setup.dispatch_status !== 'pending' && setup.dispatch_status !== 'sending')
+  ) {
+    return Promise.resolve()
+  }
+  if (setupDispatchPromise) return setupDispatchPromise
+
+  const request = (async () => {
+    try {
+      await api.ensureDefaultSubscriptions()
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_BACKOFF_WINDOW)
+      }
+    }
+  })()
+  setupDispatchPromise = request
+  const clear = () => {
+    if (setupDispatchPromise === request) setupDispatchPromise = null
+  }
+  void request.then(clear, clear)
+  return request
+}
+
 /**
  * Fail selected pending refreshes so no subscription stays "同步中" forever.
  * Defaults to all pending entries for callers that need a global abort.
@@ -666,7 +831,8 @@ function failPendingRefreshes(message: string, ids = Object.keys(pendingRefresh)
 async function runSyncPoll() {
   pollTimer = null
   try {
-    await subStore.load(true)
+    await recoverPendingSetupDispatch()
+    await loadSubscriptions(true)
   } catch (error) {
     if (pollingActive) {
       const rateLimited = isRateLimitError(error)
@@ -752,6 +918,16 @@ function trackRefresh(runs: Array<{ id: string; runId: string | null }>) {
   startSyncPolling()
 }
 
+function trackCurrentActiveRuns() {
+  const activeRuns = subStore.subscriptions
+    .filter((sub) =>
+      (sub.sync_status === 'queued' || sub.sync_status === 'running')
+      && !(sub.id in pendingRefresh),
+    )
+    .map((sub) => ({ id: sub.id, runId: sub.sync_run_id }))
+  if (activeRuns.length > 0) trackRefresh(activeRuns)
+}
+
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 function openDeleteSubDialog(sub: Subscription) {
@@ -764,7 +940,7 @@ function openShareLinks(sub: Subscription) {
 }
 
 async function handleCopyIcs(item: EnrichedSub) {
-  if (!item.defaultLink) return
+  if (!item.defaultLink || firstSyncLinkUnavailable(item.sub)) return
   const url = buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics')
   try {
     await copyFeedback.run(async () => {
@@ -776,7 +952,7 @@ async function handleCopyIcs(item: EnrichedSub) {
 }
 
 function openQrModal(item: EnrichedSub) {
-  if (!item.defaultLink) return
+  if (!item.defaultLink || firstSyncLinkUnavailable(item.sub)) return
   qrModal.value = {
     open: true,
     url: buildLinkUrl(configStore.publicUrl, item.defaultLink.token, 'ics'),
@@ -805,7 +981,7 @@ async function handleDeleteSub(sid: string) {
     await api.deleteSubscription(sid)
     toast.success('订阅已删除')
     deleteSubDialog.value = null
-    await subStore.load(true).catch(() => {})
+    await loadSubscriptions(true).catch(() => {})
   } catch (error) {
     toast.error(parseApiError(error, '删除订阅失败'))
   }
@@ -824,11 +1000,21 @@ async function handleSyncAll() {
       const cooldownUntil = Date.parse(result.cooldown_until ?? '') || Date.now() + MANUAL_REFRESH_COOLDOWN_MS
       for (const id of affectedIds) localCooldownUntil[id] = cooldownUntil
       trackRefresh(affectedIds.map(id => ({ id, runId: result.run_id })))
-      await subStore.load(true).catch(() => {})
+      await loadSubscriptions(true).catch(() => {})
     })
   } catch (error) {
     toast.error(parseApiError(error, '同步失败'))
   }
+}
+
+async function retryFirstSync() {
+  if (preparationError.value) {
+    await beginPersonalSetup()
+    restoreFirstSyncDismissal()
+    trackCurrentActiveRuns()
+    return
+  }
+  await handleSyncAll()
 }
 
 async function loadNotificationSettings() {
@@ -857,20 +1043,50 @@ async function toggleNotification() {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+function refreshFromReturn(): Promise<void> {
+  if (returnLoadPromise) return returnLoadPromise
+  const request = (async () => {
+    await session.load()
+    await loadSubscriptions(true)
+    restoreFirstSyncDismissal()
+    trackCurrentActiveRuns()
+  })()
+  returnLoadPromise = request
+  const clear = () => {
+    if (returnLoadPromise === request) returnLoadPromise = null
+  }
+  void request.then(clear, clear)
+  return request
+}
+
+function handleWindowFocus() {
+  void refreshFromReturn().catch(() => undefined)
+}
+
+function handlePageShow(event: PageTransitionEvent) {
+  if (event.persisted) void refreshFromReturn().catch(() => undefined)
+}
+
 onMounted(async () => {
+  window.addEventListener('focus', handleWindowFocus)
+  window.addEventListener('pageshow', handlePageShow)
   cooldownTimer = setInterval(() => {
     cooldownClock.value = Date.now()
   }, 1000)
   try {
-    if (!session.loaded) await session.load()
-    await Promise.all([
-      subStore.load(),
-      ...(session.can('change_notification') ? [loadNotificationSettings()] : []),
-    ])
-    const activeRuns = subStore.subscriptions
-      .filter(sub => sub.sync_status === 'queued' || sub.sync_status === 'running')
-      .map(sub => ({ id: sub.id, runId: sub.sync_run_id }))
-    if (activeRuns.length > 0) trackRefresh(activeRuns)
+    const setupRequested = route.query.setup === '1'
+    if (setupRequested) {
+      await beginPersonalSetup()
+      if (!startedThisVisit.value && !session.isCquUnbound && !preparationError.value) {
+        await loadSubscriptions()
+      }
+    } else {
+      if (!session.loaded) await session.load()
+      await loadSubscriptions()
+    }
+    if (session.can('change_notification')) await loadNotificationSettings()
+    restoreFirstSyncDismissal()
+    trackCurrentActiveRuns()
   } catch {
     toast.error('加载订阅列表失败')
   } finally {
@@ -879,6 +1095,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('focus', handleWindowFocus)
+  window.removeEventListener('pageshow', handlePageShow)
   stopPolling()
   if (cooldownTimer) clearInterval(cooldownTimer)
 })

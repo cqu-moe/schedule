@@ -1,14 +1,14 @@
 <template>
   <header class="fixed top-4 left-4 right-4 z-50">
     <div class="max-w-7xl mx-auto rounded-lg border border-border backdrop-blur-md bg-background/80 px-4 sm:px-6 py-3">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-2">
         <!-- Logo -->
         <router-link to="/" class="font-heading font-semibold text-lg cursor-pointer transition-colors hover:text-foreground/80">
           CQU Schedule
         </router-link>
 
         <!-- Nav Links + Theme Toggle -->
-        <nav class="flex items-center gap-4 sm:gap-6">
+        <nav class="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-6">
           <!-- Authenticated: Dashboard + Add + Account/Logout (via auth.cqu.moe) -->
           <template v-if="session.isAuthenticated">
             <router-link

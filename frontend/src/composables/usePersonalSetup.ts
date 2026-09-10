@@ -71,9 +71,10 @@ export function usePersonalSetup(): PersonalSetupController {
     if (inFlight) return inFlight
     const request = runSetup()
     inFlight = request
-    void request.finally(() => {
+    const clear = () => {
       if (inFlight === request) inFlight = null
-    })
+    }
+    void request.then(clear, clear)
     return request
   }
 

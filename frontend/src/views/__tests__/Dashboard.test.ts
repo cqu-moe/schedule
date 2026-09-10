@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mountWithContext, mockSubscription, mockSubscriptionList } from '@/test-utils'
 
-const { mockApi, mockToast } = vi.hoisted(() => {
+const { mockApi, mockToast, mockRedirect } = vi.hoisted(() => {
   const mockToast = { error: vi.fn(), success: vi.fn() }
   const mockApi = {
     getMe: vi.fn(),
     getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
     getSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [], count: 0 }),
+    ensureDefaultSubscriptions: vi.fn(),
     getSubscription: vi.fn(),
     createSubscription: vi.fn(),
     deleteSubscription: vi.fn(),
@@ -24,14 +25,16 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     getNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: false }),
     updateNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: true }),
   }
-  return { mockApi, mockToast }
+  const mockRedirect = { fn: vi.fn() }
+  return { mockApi, mockToast, mockRedirect }
 })
 
-vi.mock('@/api', () => ({ default: mockApi }))
-vi.mock('@/api/index', () => ({ default: mockApi }))
+vi.mock('@/api', () => ({ default: mockApi, redirect: mockRedirect }))
+vi.mock('@/api/index', () => ({ default: mockApi, redirect: mockRedirect }))
 vi.mock('vue-sonner', () => ({ toast: mockToast }))
 
 const { default: Dashboard } = await import('@/views/Dashboard.vue')
+const mountedWrappers: Array<{ unmount: () => void }> = []
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,10 +54,19 @@ const DEFAULT_SESSION = {
   loading: false,
 }
 
-async function mountDashboard(subs = [mockSubscription()], sessionOverrides?: object) {
-  mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList(subs))
+async function mountDashboard(
+  subs = [mockSubscription()],
+  sessionOverrides?: object,
+  options: {
+    initialRoute?: string
+    personalSetup?: Parameters<typeof mockSubscriptionList>[2]
+  } = {},
+) {
+  mockApi.getSubscriptions.mockResolvedValue(
+    mockSubscriptionList(subs, undefined, options.personalSetup ?? null),
+  )
   const result = await mountWithContext(Dashboard, {
-    initialRoute: '/dashboard',
+    initialRoute: options.initialRoute ?? '/dashboard',
     pinia: {
       initialState: {
         session: { ...DEFAULT_SESSION, ...sessionOverrides },
@@ -63,6 +75,7 @@ async function mountDashboard(subs = [mockSubscription()], sessionOverrides?: ob
     },
   })
   await flushPromises()
+  mountedWrappers.push(result.wrapper)
   return result
 }
 
@@ -71,7 +84,19 @@ async function mountDashboard(subs = [mockSubscription()], sessionOverrides?: ob
 describe('Dashboard view (v2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
+    mockApi.getMe.mockResolvedValue({
+      user: DEFAULT_SESSION.user,
+      caps: { calendar: DEFAULT_SESSION.caps },
+      cquBindStatus: 'active',
+    })
+    mockApi.ensureDefaultSubscriptions.mockResolvedValue({
+      status: 'created',
+      subscription_ids: ['all', 'courses', 'exams'],
+      run_id: 'run-setup',
+      dispatch_status: 'sent',
+    })
     mockApi.refreshSubscription.mockResolvedValue({ status: 'queued', run_id: 'run-1' })
     mockApi.deleteSubscription.mockResolvedValue(undefined)
     mockApi.getNotificationSettings.mockResolvedValue({ eligible: true, enabled: false })
@@ -79,6 +104,7 @@ describe('Dashboard view (v2)', () => {
   })
 
   afterEach(() => {
+    mountedWrappers.splice(0).forEach((wrapper) => wrapper.unmount())
     vi.useRealTimers()
   })
 
@@ -156,6 +182,207 @@ describe('Dashboard view (v2)', () => {
 
     expect(wrapper.text()).toContain('同步失败')
     expect(wrapper.find('a[href*="auth.cqu.moe/cqu/bind?"]').exists()).toBe(false)
+  })
+
+  describe('approved first-sync feedback', () => {
+    const setup = {
+      status: 'created' as const,
+      subscription_ids: ['all', 'courses', 'exams'],
+      run_id: 'run-setup',
+      dispatch_status: 'sent' as const,
+    }
+
+    function trio(syncStatus: 'queued' | 'success' | 'error' = 'queued') {
+      return [
+        mockSubscription({
+          id: 'all',
+          source_type: 'personal_all',
+          source_name: '我的全部课表',
+          sync_status: syncStatus,
+          sync_run_id: 'run-setup',
+          last_synced_at: syncStatus === 'success' ? '2026-09-10T08:00:00Z' : null,
+          sync_error_message: syncStatus === 'error' ? '同步服务暂时不可用' : null,
+        }),
+        mockSubscription({
+          id: 'courses',
+          source_type: 'personal_courses',
+          source_name: '我的课程',
+          sync_status: syncStatus,
+          sync_run_id: 'run-setup',
+          last_synced_at: syncStatus === 'success' ? '2026-09-10T08:00:00Z' : null,
+          sync_error_message: syncStatus === 'error' ? '同步服务暂时不可用' : null,
+        }),
+        mockSubscription({
+          id: 'exams',
+          source_type: 'personal_exams',
+          source_name: '我的考试',
+          sync_status: syncStatus,
+          sync_run_id: 'run-setup',
+          last_synced_at: syncStatus === 'success' ? '2026-09-10T08:00:00Z' : null,
+          sync_error_message: syncStatus === 'error' ? '同步服务暂时不可用' : null,
+        }),
+      ]
+    }
+
+    it('shows one syncing notice above three real cards with all existing operations', async () => {
+      const { wrapper } = await mountDashboard(trio(), undefined, {
+        initialRoute: '/dashboard?setup=1',
+        personalSetup: setup,
+      })
+
+      expect(wrapper.findAll('[role="status"]')).toHaveLength(1)
+      expect(wrapper.text()).toContain('正在同步课表')
+      expect(wrapper.text()).toContain('(3/5)')
+      expect(wrapper.text()).toContain('我的全部课表')
+      expect(wrapper.text()).toContain('我的课程')
+      expect(wrapper.text()).toContain('我的考试')
+      expect(wrapper.findAll('button').filter((button) => button.text().includes('复制订阅链接'))).toHaveLength(3)
+      expect(wrapper.findAll('button[title="二维码"]')).toHaveLength(3)
+      expect(wrapper.findAll('button[title="网页预览"]')).toHaveLength(3)
+      expect(wrapper.findAll('button[title="更多"]')).toHaveLength(3)
+      expect(wrapper.text()).not.toContain('周课表')
+    })
+
+    it('keeps a created/queued 201 result in syncing instead of treating it as success', async () => {
+      const { wrapper } = await mountDashboard(trio(), undefined, {
+        initialRoute: '/dashboard?setup=1',
+        personalSetup: setup,
+      })
+      expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(1)
+      expect(wrapper.text()).toContain('正在同步课表')
+      expect(wrapper.text()).not.toContain('课表已同步')
+    })
+
+    it('disables copy, QR, and web preview only while a first-sync target has no data', async () => {
+      const { wrapper } = await mountDashboard(trio(), undefined, {
+        initialRoute: '/dashboard?setup=1',
+        personalSetup: setup,
+      })
+      const copyButtons = wrapper.findAll('button').filter((button) =>
+        button.text().includes('复制订阅链接'),
+      )
+      expect(copyButtons.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+      expect(wrapper.findAll('button[title="二维码"]').every((button) =>
+        button.attributes('disabled') !== undefined)).toBe(true)
+      expect(wrapper.findAll('button[title="网页预览"]').every((button) =>
+        button.attributes('disabled') !== undefined)).toBe(true)
+      expect(wrapper.findAll('button[title="更多"]').every((button) =>
+        button.attributes('disabled') === undefined)).toBe(true)
+    })
+
+    it('keeps an old valid link usable during a background refresh', async () => {
+      const old = mockSubscription({
+        id: 'all',
+        source_type: 'personal_all',
+        sync_status: 'queued',
+        sync_run_id: 'run-setup',
+        last_synced_at: '2026-09-09T08:00:00Z',
+      })
+      const { wrapper } = await mountDashboard([old], undefined, {
+        personalSetup: { ...setup, subscription_ids: ['all'] },
+      })
+      const copy = wrapper.findAll('button').find((button) =>
+        button.text().includes('复制订阅链接'),
+      )
+      expect(copy?.attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('button[title="二维码"]').attributes('disabled')).toBeUndefined()
+    })
+
+    it('shows success for this visit, enables operations, and dismisses only the notice', async () => {
+      const { wrapper } = await mountDashboard(trio('success'), undefined, {
+        initialRoute: '/dashboard?setup=1',
+        personalSetup: setup,
+      })
+      expect(wrapper.text()).toContain('课表已同步')
+      expect(wrapper.text()).toContain('刚刚同步')
+      expect(wrapper.findAll('button').filter((button) =>
+        button.text().includes('复制订阅链接'),
+      ).every((button) => button.attributes('disabled') === undefined)).toBe(true)
+
+      await wrapper.find('[aria-label="关闭同步提示"]').trigger('click')
+      expect(wrapper.find('[role="status"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('我的全部课表')
+      expect(mockApi.deleteSubscription).not.toHaveBeenCalled()
+      expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+    })
+
+    it('retries a finished sync error through the existing personal group refresh once', async () => {
+      const subscriptions = trio('success')
+      subscriptions[1] = mockSubscription({
+        ...subscriptions[1],
+        sync_status: 'error',
+        last_synced_at: null,
+        sync_error_message: '同步服务暂时不可用',
+      })
+      const { wrapper } = await mountDashboard(subscriptions, undefined, { personalSetup: setup })
+      expect(wrapper.text()).toContain('暂时无法同步')
+
+      await wrapper.find('[role="status"] button').trigger('click')
+      await flushPromises()
+      expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
+      expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+    })
+
+    it('retries a preparation failure through defaults, not manual sync', async () => {
+      mockApi.ensureDefaultSubscriptions
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce({ status: 'existing', subscription_ids: [], run_id: null, dispatch_status: 'sent' })
+      const { wrapper } = await mountDashboard([], undefined, {
+        initialRoute: '/dashboard?setup=1',
+      })
+      expect(wrapper.text()).toContain('订阅准备未完成')
+
+      await wrapper.find('[role="status"] button').trigger('click')
+      await flushPromises()
+      expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(2)
+      expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+    })
+
+    it('does not repeat the completed notice on an ordinary later Dashboard visit', async () => {
+      const { wrapper } = await mountDashboard(trio('success'), undefined, { personalSetup: setup })
+      expect(wrapper.find('[role="status"]').exists()).toBe(false)
+      expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+    })
+
+    it('recovers a pending dispatch through the existing polling loop', async () => {
+      vi.useFakeTimers()
+      const pendingSetup = { ...setup, dispatch_status: 'pending' as const }
+      await mountDashboard(trio(), undefined, { personalSetup: pendingSetup })
+      expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(3000)
+      await flushPromises()
+      expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(1)
+    })
+
+    it('coalesces focus reloads and never creates defaults without setup=1', async () => {
+      await mountDashboard(trio('success'), undefined, { personalSetup: setup })
+      vi.clearAllMocks()
+      let resolve!: (value: unknown) => void
+      mockApi.getMe.mockReturnValueOnce(new Promise((done) => { resolve = done }))
+      mockApi.getSubscriptions.mockResolvedValueOnce(mockSubscriptionList(trio('success'), 3, setup))
+
+      window.dispatchEvent(new Event('focus'))
+      window.dispatchEvent(new Event('focus'))
+      await flushPromises()
+      expect(mockApi.getMe).toHaveBeenCalledTimes(1)
+      resolve({
+        user: DEFAULT_SESSION.user,
+        caps: { calendar: DEFAULT_SESSION.caps },
+        cquBindStatus: 'active',
+      })
+      await flushPromises()
+
+      expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(1)
+      expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+    })
+  })
+
+  it('keeps the desktop container while adding only mobile navigation clearance', async () => {
+    const { wrapper } = await mountDashboard()
+    const container = wrapper.find('.max-w-2xl')
+    expect(container.classes()).toContain('pt-28')
+    expect(container.classes()).toContain('sm:pt-24')
   })
 
   it('shows and loads the compact change notification switch for eligible users', async () => {

@@ -3,7 +3,7 @@ import { createTestingPinia, type TestingOptions } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { vi } from 'vitest'
 import type { Component } from 'vue'
-import type { Subscription, SubscriptionList, SearchResult, SessionUser, CalendarCaps, MeResponse } from '@/types/api'
+import type { Subscription, SubscriptionList, SearchResult, SessionUser, CalendarCaps, MeResponse, PersonalSetupSummary } from '@/types/api'
 import { RouteNames } from '@/router'
 
 // ---- Mock data factories ----
@@ -23,6 +23,7 @@ export function mockCalendarCaps(overrides: Partial<CalendarCaps> = {}): Calenda
     sync: true,
     external: true,
     share: true,
+    change_notification: true,
     sub_limit: 5,
     share_limit: 10,
     sync_interval: 60,
@@ -74,8 +75,12 @@ export function mockSubscription(overrides: Partial<Subscription> = {}): Subscri
   }
 }
 
-export function mockSubscriptionList(subs: Subscription[] = [mockSubscription()], count?: number): SubscriptionList {
-  return { subscriptions: subs, count: count ?? subs.length }
+export function mockSubscriptionList(
+  subs: Subscription[] = [mockSubscription()],
+  count?: number,
+  personalSetup: PersonalSetupSummary | null = null,
+): SubscriptionList {
+  return { subscriptions: subs, count: count ?? subs.length, personal_setup: personalSetup }
 }
 
 export function mockSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
