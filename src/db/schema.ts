@@ -103,6 +103,24 @@ export const notificationState = sqliteTable("notification_state", {
     .$defaultFn(() => new Date().toISOString()),
 });
 
+export const personalSubscriptionSetup = sqliteTable(
+  "personal_subscription_setup",
+  {
+    userId: text("user_id").primaryKey(),
+    status: text("status").notNull().$type<"created" | "existing">(),
+    subscriptionIds: text("subscription_ids").notNull().default("[]"),
+    runId: text("run_id"),
+    dispatchStatus: text("dispatch_status")
+      .notNull()
+      .$type<"pending" | "sending" | "sent" | "failed">(),
+    leaseToken: text("lease_token"),
+    leaseUntil: integer("lease_until").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_personal_setup_dispatch").on(table.dispatchStatus, table.leaseUntil)],
+);
+
 // ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
 
 export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
@@ -174,3 +192,4 @@ export type NewSubscription = typeof subscriptions.$inferInsert;
 export type NotificationState = typeof notificationState.$inferSelect;
 export type CalendarLink = typeof calendarLinks.$inferSelect;
 export type NewCalendarLink = typeof calendarLinks.$inferInsert;
+export type PersonalSubscriptionSetup = typeof personalSubscriptionSetup.$inferSelect;
