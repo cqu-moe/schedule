@@ -750,7 +750,7 @@ describe('Dashboard view (v2)', () => {
       sync_status: 'queued',
       sync_run_id: 'run-retry',
       sync_trigger: 'manual',
-      sync_error_code: 'ATRUST_TRANSIENT',
+      sync_error_code: 'WAF_CHALLENGE',
       sync_error_message: '学校系统暂时无法完成同步，请稍后重试',
     })
     mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([retrying]))

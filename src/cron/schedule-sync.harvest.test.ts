@@ -359,7 +359,7 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
   it("retries a transient HarvestError with backoff", async () => {
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
-      new HarvestError("ATRUST_TRANSIENT"),
+      new HarvestError("WAF_CHALLENGE"),
     );
 
     const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
@@ -446,7 +446,7 @@ describe("processScheduleSyncBatch — shared batch deadline", () => {
   });
 });
 
-describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY / ATRUST_LOGIN_IN_FLIGHT)", () => {
+describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY)", () => {
   async function insertQueuedRunSub(overrides: Partial<typeof subscriptions.$inferInsert> = {}) {
     const runId = crypto.randomUUID();
     const sid = await insertSub({
@@ -508,7 +508,7 @@ describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY / ATRUST_LOGI
 
   it("still waits on the 44th attempt but fails the run on the 45th", async () => {
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
-      new HarvestError("ATRUST_LOGIN_IN_FLIGHT"),
+      new HarvestError("BROWSER_BUSY"),
     );
 
     const run44 = await insertQueuedRunSub({
@@ -537,7 +537,7 @@ describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY / ATRUST_LOGI
     expect(second.messages[0].ack).toHaveBeenCalledOnce();
     const row = await db.select().from(subscriptions).where(eq(subscriptions.id, run45.sid)).get();
     expect(row?.syncStatus).toBe("error");
-    expect(row?.syncErrorCode).toBe("ATRUST_LOGIN_IN_FLIGHT");
+    expect(row?.syncErrorCode).toBe("BROWSER_BUSY");
     expect(row?.syncErrorMessage).not.toContain("排队");
   });
 

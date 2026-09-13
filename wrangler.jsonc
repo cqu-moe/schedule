@@ -75,7 +75,7 @@
       {
         "queue": "schedule-sync",
         "max_batch_size": 5,
-        // 45 给容量等待分支(BROWSER_BUSY/ATRUST_LOGIN_IN_FLIGHT)留出空间:60-90s 退避、
+        // 45 给容量等待分支(BROWSER_BUSY)留出空间:60-90s 退避、
         // 同一 syncRun 最多等 45 分钟/45 次。普通失败仍由代码限定 [30,120,300] 共 3 次,
         // 平台上限扩大不改变这个规则。batch=5、consumer concurrency=1 保持不变。
         "max_retries": 45,

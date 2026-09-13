@@ -277,7 +277,7 @@ function isDue(lastSyncedAt: string | null, intervalMinutes: number, now: number
  *
  * Each personal message harvests the 课表 through the user's已登录浏览器 via
  * {@link fetchPersonalHarvest} (auth 拓扑① organic harvest). A harvest failure
- * Transient WAF/aTrust/network failures are retried with bounded backoff. Errors
+ * Transient WAF/network failures are retried with bounded backoff. Errors
  * that require user action are persisted and acknowledged immediately.
  */
 export async function processScheduleSyncBatch(
@@ -528,8 +528,8 @@ export async function processScheduleSyncBatch(
           const attempt = message.attempts ?? 1;
           const failure = publicSyncFailure(e);
           // Capacity-wait branch, checked BEFORE the generic transient retry:
-          // a busy browser pool or an in-flight aTrust login is a capacity
-          // signal, so the run waits with its own bounded 60-90s backoff
+          // a busy browser pool is a capacity signal, so the run waits with
+          // its own bounded 60-90s backoff
           // (platform max_retries=45 gives it room; ordinary failures still
           // stop after the 3 code-level delays below). The wait is bounded by
           // the run's FIRST request time (45 min) AND the attempt count, so

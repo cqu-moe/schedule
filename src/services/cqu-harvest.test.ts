@@ -36,7 +36,7 @@ describe("buildPersonalHarvestArgs", () => {
     expect(args.userId).toBe("user-1");
     // Navigating /workspace/curriculum is what organically fires the 课表 POST.
     expect(args.navUrl).toBe(
-      "https://my-cqu-edu-cn-s.atrust.cqu.edu.cn/workspace/curriculum",
+      "https://my.cqu.edu.cn/workspace/curriculum",
     );
     // Capture the auto-fired 课表 + session-list responses by URL substring.
     expect(args.capture).toContain("my-table-detail");
@@ -47,12 +47,10 @@ describe("buildPersonalHarvestArgs", () => {
     expect(args.fetch.every((f) => f.method === "GET")).toBe(true);
   });
 
-  it("only targets the aTrust rewritten host (auth host-whitelists; keep recipe in-bound)", () => {
+  it("only targets the direct CQU host", () => {
     const args = buildPersonalHarvestArgs(envWith(async () => ({ captures: [], fetches: [] })) as never, "user-1");
     const hosts = [args.navUrl, ...args.fetch.map((f) => f.url)].map((u) => new URL(u).host);
-    expect(
-      hosts.every((h) => h === "my-cqu-edu-cn-s.atrust.cqu.edu.cn"),
-    ).toBe(true);
+    expect(hosts.every((h) => h === "my.cqu.edu.cn")).toBe(true);
   });
 });
 
@@ -392,11 +390,7 @@ describe("fetchPersonalHarvest", () => {
     for (const [args] of cquHarvest.mock.calls) {
       const urls = [args.navUrl, ...args.fetch.map((item) => item.url)];
       expect(
-        urls.every(
-          (url) =>
-            new URL(url).hostname ===
-            "my-cqu-edu-cn-s.atrust.cqu.edu.cn",
-        ),
+        urls.every((url) => new URL(url).origin === "https://my.cqu.edu.cn"),
       ).toBe(true);
     }
   });
@@ -429,7 +423,7 @@ describe("fetchPersonalHarvest", () => {
     // Phase 1 + Phase 2 = 2 cquHarvest calls for the FIRST harvest, ZERO for the second.
     expect(cquHarvest).toHaveBeenCalledTimes(2);
     expect(cache.put).toHaveBeenCalledTimes(1);
-    expect(cache.get).toHaveBeenCalledWith("harvest:user-1");
+    expect(cache.get).toHaveBeenCalledWith("harvest:direct-v1:user-1");
     // The cached value round-trips byte-identically.
     expect(second.ctx.semesterInfo.begin_date).toBe(first.ctx.semesterInfo.begin_date);
     expect(second.data.semesterStart).toBe(first.data.semesterStart);

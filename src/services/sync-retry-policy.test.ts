@@ -16,11 +16,8 @@ describe("capacityRetryDelay", () => {
     expect(capacityRetryDelay("BROWSER_BUSY", NOW - 60_000, NOW, 1, -5)).toBe(60);
   });
 
-  it("applies to ATRUST_LOGIN_IN_FLIGHT as well", () => {
-    expect(capacityRetryDelay("ATRUST_LOGIN_IN_FLIGHT", NOW - 60_000, NOW, 3, 10)).toBe(70);
-  });
-
   it("returns null for non-capacity codes (they keep the original finite retry)", () => {
+    expect(capacityRetryDelay("ATRUST_LOGIN_IN_FLIGHT", NOW - 60_000, NOW, 1, 0)).toBeNull();
     expect(capacityRetryDelay("PASSWORD_REJECTED", NOW - 60_000, NOW, 1, 0)).toBeNull();
     expect(capacityRetryDelay("BROWSER_DEADLINE", NOW - 60_000, NOW, 1, 0)).toBeNull();
     expect(capacityRetryDelay("BROWSER_INSTANCE_REPLACED", NOW - 60_000, NOW, 1, 0)).toBeNull();

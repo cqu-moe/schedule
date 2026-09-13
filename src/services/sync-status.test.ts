@@ -25,7 +25,7 @@ describe("publicSyncFailure", () => {
   });
 
   it("keeps the generic message for a TERMINAL capacity failure (no stale queueing text)", () => {
-    for (const code of ["BROWSER_BUSY", "ATRUST_LOGIN_IN_FLIGHT"]) {
+    for (const code of ["BROWSER_BUSY"]) {
       const failure = publicSyncFailure(new HarvestError(code));
       expect(failure.code).toBe(code);
       expect(failure.message).not.toContain("排队");
@@ -35,6 +35,13 @@ describe("publicSyncFailure", () => {
   it("falls back to HARVEST_FAILED for non-stable-code messages", () => {
     expect(publicSyncFailure(new HarvestError("harvest exam body is not an object")).code)
       .toBe("HARVEST_FAILED");
+  });
+
+  it("renders an already-persisted aTrust error safely without treating it as queued", () => {
+    expect(publicSyncFailure(new HarvestError("ATRUST_TRANSIENT"))).toEqual({
+      code: "ATRUST_TRANSIENT",
+      message: "学校系统暂时无法完成同步，请稍后重试",
+    });
   });
 
   it("maps non-harvest errors to INTERNAL_ERROR", () => {
@@ -51,10 +58,6 @@ describe("capacityWaitFailure", () => {
       code: "BROWSER_BUSY",
       message: CAPACITY_WAIT_MESSAGE,
     });
-    expect(capacityWaitFailure(new HarvestError("ATRUST_LOGIN_IN_FLIGHT"))).toEqual({
-      code: "ATRUST_LOGIN_IN_FLIGHT",
-      message: CAPACITY_WAIT_MESSAGE,
-    });
   });
 });
 
@@ -62,7 +65,6 @@ describe("isRetryableSyncFailure", () => {
   it("explicitly treats the browser capacity/transient codes as retryable (not by regex accident)", () => {
     for (const code of [
       "BROWSER_BUSY",
-      "ATRUST_LOGIN_IN_FLIGHT",
       "BROWSER_DEADLINE",
       "BROWSER_INSTANCE_REPLACED",
     ]) {

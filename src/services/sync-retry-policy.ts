@@ -1,9 +1,8 @@
 /**
  * Bounded capacity-wait retry policy for schedule-sync.
  *
- * BROWSER_BUSY (browser pool full) and ATRUST_LOGIN_IN_FLIGHT (the user's
- * aTrust login is already running) are CAPACITY signals, not real failures:
- * the sync can simply wait for a slot. They get their own bounded retry branch
+ * BROWSER_BUSY (browser pool full) is a CAPACITY signal, not a real failure:
+ * the sync can simply wait for a slot. It gets its own bounded retry branch
  * (60-90s delay, checked before the generic [30,120,300] backoff), bounded by
  * BOTH a 45-minute window (from the sync run's first request) and 45 attempts,
  * so every queue message has a definite end.
@@ -15,7 +14,6 @@
 /** Stable failure codes that mean "browser capacity is temporarily full". */
 export const CAPACITY_RETRY_CODES: ReadonlySet<string> = new Set([
   "BROWSER_BUSY",
-  "ATRUST_LOGIN_IN_FLIGHT",
 ]);
 
 /** One sync run may wait for capacity at most 45 minutes from its first request… */
