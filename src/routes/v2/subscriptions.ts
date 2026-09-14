@@ -10,6 +10,7 @@ import {
   PERSONAL_SOURCE_TYPES,
   type SourceType,
   type PersonalSubscriptionView,
+  type PersonalViewType,
 } from "../../db/schema";
 import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
@@ -838,26 +839,49 @@ function chinaDateKey(now: Date): string {
 //  to the current user (404 otherwise).
 // ════════════════════════════════════════════════════════════════════════════
 
-/** Return the subscription if it belongs to `userId`, else undefined. */
-async function ownedSubscription(db: ReturnType<typeof drizzle>, sid: string, userId: string) {
-  const [sub] = await db
-    .select({ id: subscriptions.id })
-    .from(subscriptions)
-    .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, userId)))
-    .limit(1);
-  return sub;
+interface OwnedSubscriptionScope {
+  id: string;
+  viewType: PersonalViewType | null;
+  isPersonal: boolean;
+}
+
+/** Resolve either a real subscription id or a compatibility view id. */
+async function ownedSubscription(
+  database: D1Database,
+  sid: string,
+  userId: string,
+): Promise<OwnedSubscriptionScope | null> {
+  const resolved = await resolveOwnedSubscription(database, userId, sid);
+  if (!resolved) return null;
+  let viewType = resolved.view?.sourceType ?? null;
+  if (resolved.subscription.sourceType === "personal" && !viewType) {
+    viewType = (await listPersonalViews(database, resolved.subscription.id))
+      .find((view) => view.sourceType === "personal_all")?.sourceType ?? null;
+  }
+  return {
+    id: resolved.subscription.id,
+    viewType,
+    isPersonal: PERSONAL_SOURCE_TYPES.has(resolved.subscription.sourceType),
+  };
 }
 
 /** Return the link if it exists and belongs to the given subscription, else undefined. */
 async function linkOfSubscription(
   db: ReturnType<typeof drizzle>,
   lid: string,
-  sid: string,
+  owner: OwnedSubscriptionScope,
 ) {
+  const scope = owner.viewType
+    ? eq(calendarLinks.personalViewType, owner.viewType)
+    : isNull(calendarLinks.personalViewType);
   const [link] = await db
     .select()
     .from(calendarLinks)
-    .where(and(eq(calendarLinks.id, lid), eq(calendarLinks.subscriptionId, sid)))
+    .where(and(
+      eq(calendarLinks.id, lid),
+      eq(calendarLinks.subscriptionId, owner.id),
+      scope,
+    ))
     .limit(1);
   return link;
 }
@@ -868,14 +892,20 @@ app.get("/:sid/links", async (c) => {
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
 
   const links = await db
     .select()
     .from(calendarLinks)
-    .where(eq(calendarLinks.subscriptionId, sid))
+    .where(and(
+      eq(calendarLinks.subscriptionId, owner.id),
+      owner.viewType
+        ? eq(calendarLinks.personalViewType, owner.viewType)
+        : isNull(calendarLinks.personalViewType),
+    ))
     .orderBy(desc(calendarLinks.isDefault), asc(calendarLinks.createdAt));
 
   return c.json({ links: links.map(toLinkSummary), count: links.length });
@@ -888,10 +918,11 @@ app.get("/:sid/links/:lid", async (c) => {
   const lid = c.req.param("lid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
-  const link = await linkOfSubscription(db, lid, sid);
+  const link = await linkOfSubscription(db, lid, owner);
   if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
 
   return c.json(toLinkSummary(link));
@@ -904,8 +935,12 @@ app.post("/:sid/links", async (c) => {
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
+  if (owner.isPersonal && personalSubscriptionMode(c.env) === "migration") {
+    return errorResponse("PERSONAL_SUBSCRIPTION_MIGRATING", "个人课表正在维护，请稍后重试", 503);
   }
 
   let body: Record<string, unknown>;
@@ -958,10 +993,11 @@ app.post("/:sid/links", async (c) => {
 
   await db.insert(calendarLinks).values({
     id: linkId,
-    subscriptionId: sid,
+    subscriptionId: owner.id,
     token,
     label,
     formats: formatsJson,
+    personalViewType: owner.viewType,
     isDefault: false,
     createdAt: now,
     updatedAt: now,
@@ -971,7 +1007,7 @@ app.post("/:sid/links", async (c) => {
     JSON.stringify({
       event: "link.v2.create",
       userId: user.id,
-      subscriptionId: sid,
+      subscriptionId: owner.id,
       linkId,
       formats,
       message: "Share link created",
@@ -992,10 +1028,14 @@ app.patch("/:sid/links/:lid", async (c) => {
   const lid = c.req.param("lid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
-  const link = await linkOfSubscription(db, lid, sid);
+  if (owner.isPersonal && personalSubscriptionMode(c.env) === "migration") {
+    return errorResponse("PERSONAL_SUBSCRIPTION_MIGRATING", "个人课表正在维护，请稍后重试", 503);
+  }
+  const link = await linkOfSubscription(db, lid, owner);
   if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
   if (link.isDefault) {
     return errorResponse("DEFAULT_LINK_IMMUTABLE", "默认链接不可修改", 403);
@@ -1064,10 +1104,14 @@ app.delete("/:sid/links/:lid", async (c) => {
   const lid = c.req.param("lid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
-  const link = await linkOfSubscription(db, lid, sid);
+  if (owner.isPersonal && personalSubscriptionMode(c.env) === "migration") {
+    return errorResponse("PERSONAL_SUBSCRIPTION_MIGRATING", "个人课表正在维护，请稍后重试", 503);
+  }
+  const link = await linkOfSubscription(db, lid, owner);
   if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
   if (link.isDefault) {
     return errorResponse("DEFAULT_LINK_IMMUTABLE", "默认链接不可删除", 403);
@@ -1095,10 +1139,14 @@ app.post("/:sid/links/:lid/rotations", async (c) => {
   const lid = c.req.param("lid");
   const db = drizzle(c.env.DB);
 
-  if (!(await ownedSubscription(db, sid, user.id))) {
+  const owner = await ownedSubscription(c.env.DB, sid, user.id);
+  if (!owner) {
     return errorResponse("NOT_FOUND", "订阅不存在", 404);
   }
-  const link = await linkOfSubscription(db, lid, sid);
+  if (owner.isPersonal && personalSubscriptionMode(c.env) === "migration") {
+    return errorResponse("PERSONAL_SUBSCRIPTION_MIGRATING", "个人课表正在维护，请稍后重试", 503);
+  }
+  const link = await linkOfSubscription(db, lid, owner);
   if (!link) return errorResponse("NOT_FOUND", "链接不存在", 404);
 
   const token = await generateUniqueToken((t) => linkTokenExists(db, t));

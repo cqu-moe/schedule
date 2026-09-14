@@ -2,7 +2,13 @@ import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { subscriptions, calendarLinks, type LinkFormat } from "../../db/schema";
+import {
+  subscriptions,
+  calendarLinks,
+  type LinkFormat,
+  type PersonalViewType,
+  type Subscription,
+} from "../../db/schema";
 import type { Env } from "../../types";
 import { rateLimit } from "../../middleware/rate-limit";
 import { linkAllows } from "../../services/links";
@@ -14,6 +20,7 @@ import {
 import { EMPTY_ICS } from "../../services/ics";
 import type { CourseEntry, ExamEntry } from "../../services/cqu-api";
 import { errorResponse } from "../../utils/error";
+import { projectPersonalCalendar } from "../../services/personal-calendar-projection";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -32,6 +39,9 @@ interface ResolvedLink {
   examsJson: string | null;
   semesterStart: string | null;
   sessionName: string | null;
+  sourceType: string;
+  sourceId: string;
+  personalViewType: PersonalViewType | null;
 }
 
 /**
@@ -51,6 +61,9 @@ async function resolveLink(
       examsJson: subscriptions.examsJson,
       semesterStart: subscriptions.semesterStart,
       sessionName: subscriptions.sessionName,
+      sourceType: subscriptions.sourceType,
+      sourceId: subscriptions.sourceId,
+      personalViewType: calendarLinks.personalViewType,
     })
     .from(calendarLinks)
     .innerJoin(subscriptions, eq(calendarLinks.subscriptionId, subscriptions.id))
@@ -72,6 +85,20 @@ async function resolveLinkOr404(
   // Hard revocation: the owner's required calendar cap was revoked → the cron
   // producer / manual refresh flipped is_active false. Stop serving the link.
   if (!link.isActive) return errorResponse("SUBSCRIPTION_INACTIVE", "该订阅已停用", 403);
+  const view = link.sourceType === "personal" ? link.personalViewType : null;
+  if (link.sourceType === "personal" && !view) {
+    return errorResponse("NOT_FOUND", "链接不存在", 404);
+  }
+  if (view) {
+    try {
+      const projected = projectPersonalCalendar(link as unknown as Subscription, view);
+      link.icsContent = projected.icsContent;
+      link.coursesJson = projected.coursesJson;
+      link.examsJson = projected.examsJson;
+    } catch {
+      return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
+    }
+  }
   return link;
 }
 

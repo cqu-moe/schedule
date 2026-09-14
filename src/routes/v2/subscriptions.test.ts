@@ -850,6 +850,18 @@ describe("DELETE /api/v2/subscriptions/:sid", () => {
 // ── E2: GET /:sid/links and /:sid/links/:lid ─────────────────────────────────
 
 describe("GET /api/v2/subscriptions/:sid/links", () => {
+  it("keeps canonical links isolated by the path view id", async () => {
+    const owner = await insertCanonicalPersonal("userA");
+    const app = buildApp("userA", FULL_CAPS, "active", env.DB, "enabled");
+    const first = await app.request(`/${owner.viewIds[0]}/links`);
+    const second = await app.request(`/${owner.viewIds[1]}/links`);
+    const firstBody = await first.json() as { links: Array<{ token: string }> };
+    const secondBody = await second.json() as { links: Array<{ token: string }> };
+    expect(firstBody.links).toHaveLength(1);
+    expect(secondBody.links).toHaveLength(1);
+    expect(firstBody.links[0].token).not.toBe(secondBody.links[0].token);
+  });
+
   it("lists all links for the subscription, default first", async () => {
     const subId = await insertSub("userA");
     await insertLink(subId, { token: "share-1", isDefault: false });
@@ -911,6 +923,21 @@ describe("GET /api/v2/subscriptions/:sid/links", () => {
 // ── E3: POST /:sid/links (create share link) ─────────────────────────────────
 
 describe("POST /api/v2/subscriptions/:sid/links", () => {
+  it("inherits canonical link scope from the path and ignores body scope", async () => {
+    const owner = await insertCanonicalPersonal("userA");
+    const app = buildApp("userA", FULL_CAPS, "active", env.DB, "enabled");
+    const response = await app.request(`/${owner.viewIds[1]}/links`, jsonBody({
+      label: "课程分享",
+      formats: ["ics"],
+      personalViewType: "personal_exams",
+    }));
+    expect(response.status).toBe(201);
+    const body = await response.json() as { id: string };
+    const link = await db.select().from(calendarLinks).where(eq(calendarLinks.id, body.id)).get();
+    expect(link?.subscriptionId).toBe(owner.id);
+    expect(link?.personalViewType).toBe("personal_courses");
+  });
+
   it("creates a share link → 201 + Location + correct formats stored", async () => {
     const subId = await insertSub("userA");
     const app = buildApp("userA");

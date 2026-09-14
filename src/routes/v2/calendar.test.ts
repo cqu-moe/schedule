@@ -173,6 +173,24 @@ beforeEach(async () => {
 // ── Default (all-format) link: every endpoint reachable ──────────────────────
 
 describe("default (all-format) link", () => {
+  it("uses the stored personal view scope for every public format", async () => {
+    const sid = await insertSub({
+      sourceType: "personal",
+      sourceId: "userA",
+      isPersonal: true,
+    });
+    const token = await insertLink(sid, [...LINK_FORMATS], {
+      personalViewType: "personal_courses",
+    });
+    for (const path of ["calendar.ics", "origin.json", "data.json", "data.csv", "view.json"]) {
+      const response = await buildApp().request(`/${token}/${path}?view=personal_all`);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain("高等数学");
+      expect(body).not.toContain("高等数学期末");
+    }
+  });
+
   it("GET /:token/calendar.ics → 200 ICS with correct headers", async () => {
     const sid = await insertSub();
     const token = await insertLink(sid, [...LINK_FORMATS], {

@@ -140,7 +140,11 @@ export function buildPersonalSyncResult(
   let coursesJson: string | null;
   let examsJson: string | null;
 
-  if (sourceType === "personal" || sourceType === "personal_all") {
+  if (sourceType === "personal") {
+    icsContent = ics.examsIcs ? mergeIcs(ics.coursesIcs, ics.examsIcs) : ics.coursesIcs;
+    coursesJson = JSON.stringify(data.courses);
+    examsJson = JSON.stringify(data.exams);
+  } else if (sourceType === "personal_all") {
     icsContent = ics.examsIcs ? mergeIcs(ics.coursesIcs, ics.examsIcs) : ics.coursesIcs;
     coursesJson = JSON.stringify(data.courses);
     examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
