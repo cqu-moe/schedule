@@ -36,4 +36,5 @@ export interface Env {
   PUBLIC_URL: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
+  PERSONAL_SUBSCRIPTION_MODE?: "legacy" | "migration" | "enabled";
 }

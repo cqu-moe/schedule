@@ -27,6 +27,8 @@ const db = drizzle(env.DB);
 beforeAll(async () => {
   await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_views").run();
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_migration_backups").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
   await env.DB.prepare(`CREATE TABLE subscriptions (
     id text PRIMARY KEY NOT NULL, user_id text NOT NULL, source_type text NOT NULL,
@@ -41,10 +43,23 @@ beforeAll(async () => {
   await env.DB.prepare(
     "CREATE UNIQUE INDEX uq_user_source_personal ON subscriptions (user_id, source_type, source_id) WHERE source_type IN ('personal_all', 'personal_courses', 'personal_exams')",
   ).run();
+  await env.DB.prepare(
+    "CREATE UNIQUE INDEX uq_personal_subscription_user ON subscriptions (user_id) WHERE source_type='personal'",
+  ).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_views (
+    id text PRIMARY KEY NOT NULL, subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    source_type text NOT NULL, source_name text NOT NULL, created_at text NOT NULL,
+    UNIQUE(subscription_id, source_type)
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_migration_backups (
+    user_id text PRIMARY KEY NOT NULL, subscriptions_json text NOT NULL,
+    links_json text NOT NULL, setup_json text, migrated_at text NOT NULL
+  )`).run();
   await env.DB.prepare(`CREATE TABLE calendar_links (
     id text PRIMARY KEY NOT NULL,
     subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     token text NOT NULL UNIQUE, label text, formats text NOT NULL,
+    personal_view_type text,
     is_default integer NOT NULL DEFAULT 0, created_at text NOT NULL, updated_at text NOT NULL
   )`).run();
   await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
@@ -61,6 +76,8 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
   await env.DB.prepare("DELETE FROM calendar_links").run();
+  await env.DB.prepare("DELETE FROM personal_subscription_views").run();
+  await env.DB.prepare("DELETE FROM personal_subscription_migration_backups").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
 });
 

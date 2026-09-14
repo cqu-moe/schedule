@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
 
@@ -86,6 +86,9 @@ export const subscriptions = sqliteTable(
     uniqueIndex("uq_user_source_personal")
       .on(table.userId, table.sourceType, table.sourceId)
       .where(sql`${table.sourceType} in ('personal_all', 'personal_courses', 'personal_exams')`),
+    uniqueIndex("uq_personal_subscription_user")
+      .on(table.userId)
+      .where(sql`${table.sourceType} = 'personal'`),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
 );
@@ -121,6 +124,40 @@ export const personalSubscriptionSetup = sqliteTable(
   (table) => [index("idx_personal_setup_dispatch").on(table.dispatchStatus, table.leaseUntil)],
 );
 
+export const personalSubscriptionViews = sqliteTable(
+  "personal_subscription_views",
+  {
+    id: text("id").primaryKey(),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull().$type<PersonalViewType>(),
+    sourceName: text("source_name").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_personal_subscription_view_type").on(
+      table.subscriptionId,
+      table.sourceType,
+    ),
+    check(
+      "ck_personal_subscription_view_type",
+      sql`${table.sourceType} in ('personal_all', 'personal_courses', 'personal_exams')`,
+    ),
+  ],
+);
+
+export const personalSubscriptionMigrationBackups = sqliteTable(
+  "personal_subscription_migration_backups",
+  {
+    userId: text("user_id").primaryKey(),
+    subscriptionsJson: text("subscriptions_json").notNull(),
+    linksJson: text("links_json").notNull(),
+    setupJson: text("setup_json"),
+    migratedAt: text("migrated_at").notNull(),
+  },
+);
+
 // ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
 
 export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
@@ -139,6 +176,7 @@ export const calendarLinks = sqliteTable(
     label: text("label"),
     /** JSON array of LinkFormat */
     formats: text("formats").notNull(),
+    personalViewType: text("personal_view_type").$type<PersonalViewType>(),
     isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at")
       .notNull()
@@ -147,12 +185,20 @@ export const calendarLinks = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [index("idx_calendar_links_subscription_id").on(t.subscriptionId)],
+  (t) => [
+    index("idx_calendar_links_subscription_id").on(t.subscriptionId),
+    index("idx_calendar_links_personal_view").on(t.subscriptionId, t.personalViewType),
+    check(
+      "ck_calendar_links_personal_view_type",
+      sql`${t.personalViewType} is null or ${t.personalViewType} in ('personal_all', 'personal_courses', 'personal_exams')`,
+    ),
+  ],
 );
 
 // ── Source type constants ────────────────────────────────────────────────────
 
 export const SOURCE_TYPES = [
+  "personal",
   "personal_all",
   "personal_courses",
   "personal_exams",
@@ -165,13 +211,20 @@ export const SOURCE_TYPES = [
 
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
-export type PersonalSourceType = Extract<SourceType, "personal_all" | "personal_courses" | "personal_exams">;
+export const PERSONAL_VIEW_TYPES = [
+  "personal_all",
+  "personal_courses",
+  "personal_exams",
+] as const;
+export type PersonalViewType = (typeof PERSONAL_VIEW_TYPES)[number];
+export type PersonalSourceType = Extract<SourceType, "personal" | PersonalViewType>;
 export type ExternalSourceType = Extract<SourceType, "instructor" | "room" | "laboratory" | "course" | "admin_class">;
 
 export type SyncStatus = "idle" | "queued" | "running" | "success" | "error";
 export type SyncTrigger = "cron" | "manual" | "initial" | "admin";
 
 export const PERSONAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<PersonalSourceType>([
+  "personal",
   "personal_all",
   "personal_courses",
   "personal_exams",
@@ -193,3 +246,7 @@ export type NotificationState = typeof notificationState.$inferSelect;
 export type CalendarLink = typeof calendarLinks.$inferSelect;
 export type NewCalendarLink = typeof calendarLinks.$inferInsert;
 export type PersonalSubscriptionSetup = typeof personalSubscriptionSetup.$inferSelect;
+export type PersonalSubscriptionView = typeof personalSubscriptionViews.$inferSelect;
+export type NewPersonalSubscriptionView = typeof personalSubscriptionViews.$inferInsert;
+export type PersonalSubscriptionMigrationBackup =
+  typeof personalSubscriptionMigrationBackups.$inferSelect;

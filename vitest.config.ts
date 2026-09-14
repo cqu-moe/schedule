@@ -1,7 +1,11 @@
 import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { readD1Migrations } from "@cloudflare/vitest-pool-workers/config";
 
-export default defineWorkersConfig({
+export default defineWorkersConfig(async () => {
+  const migrations = await readD1Migrations("./drizzle/migrations");
+  return {
   test: {
+    include: ["src/**/*.test.ts"],
     poolOptions: {
       workers: {
         wrangler: {
@@ -18,8 +22,12 @@ export default defineWorkersConfig({
               return new Response("AUTH service binding stub", { status: 501 });
             },
           },
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+          },
         },
       },
     },
   },
+  };
 });

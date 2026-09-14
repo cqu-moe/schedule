@@ -87,7 +87,8 @@
 
   // Environment Variables
   "vars": {
-    "PUBLIC_URL": "https://schedule.cqu.moe"
+    "PUBLIC_URL": "https://schedule.cqu.moe",
+    "PERSONAL_SUBSCRIPTION_MODE": "legacy"
   },
 
   // Observability (Workers Logs & Traces)

@@ -151,6 +151,7 @@ beforeAll(async () => {
       token text NOT NULL,
       label text,
       formats text NOT NULL,
+      personal_view_type text,
       is_default integer NOT NULL DEFAULT 0,
       created_at text NOT NULL,
       updated_at text NOT NULL

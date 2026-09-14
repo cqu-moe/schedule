@@ -104,6 +104,8 @@ beforeAll(async () => {
   // Drop legacy tables (other test files create `users`/old subscriptions).
   await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_views").run();
+  await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_migration_backups").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
 
   await env.DB.prepare(
@@ -147,6 +149,22 @@ beforeAll(async () => {
   await env.DB.prepare(
     `CREATE INDEX idx_subscriptions_user_id ON subscriptions (user_id)`,
   ).run();
+  await env.DB.prepare(
+    `CREATE UNIQUE INDEX uq_personal_subscription_user ON subscriptions (user_id) WHERE source_type='personal'`,
+  ).run();
+
+  await env.DB.prepare(`CREATE TABLE personal_subscription_views (
+    id text PRIMARY KEY NOT NULL,
+    subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    source_type text NOT NULL,
+    source_name text NOT NULL,
+    created_at text NOT NULL,
+    UNIQUE(subscription_id, source_type)
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE personal_subscription_migration_backups (
+    user_id text PRIMARY KEY NOT NULL, subscriptions_json text NOT NULL,
+    links_json text NOT NULL, setup_json text, migrated_at text NOT NULL
+  )`).run();
 
   await env.DB.prepare(
     `CREATE TABLE calendar_links (
@@ -155,6 +173,7 @@ beforeAll(async () => {
       token text NOT NULL,
       label text,
       formats text NOT NULL,
+      personal_view_type text,
       is_default integer NOT NULL DEFAULT 0,
       created_at text NOT NULL,
       updated_at text NOT NULL
@@ -179,6 +198,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
   await env.DB.prepare("DELETE FROM calendar_links").run();
+  await env.DB.prepare("DELETE FROM personal_subscription_views").run();
+  await env.DB.prepare("DELETE FROM personal_subscription_migration_backups").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
 });
 
