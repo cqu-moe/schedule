@@ -24,6 +24,7 @@ export default defineWorkersConfig(async () => {
           },
           bindings: {
             TEST_MIGRATIONS: migrations,
+            PERSONAL_SUBSCRIPTION_MODE: "legacy",
           },
         },
       },

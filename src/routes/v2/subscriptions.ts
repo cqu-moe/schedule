@@ -316,6 +316,13 @@ app.post("/", async (c) => {
     return errorResponse("INVALID_INPUT", "sourceType 无效", 400);
   }
   if (PERSONAL_SOURCE_TYPES.has(sourceType as SourceType)) {
+    if (personalSubscriptionMode(c.env) === "migration") {
+      return errorResponse(
+        "PERSONAL_SUBSCRIPTION_MIGRATING",
+        "个人课表正在维护，请稍后重试",
+        503,
+      );
+    }
     return errorResponse(
       "PERSONAL_SUBSCRIPTION_MANAGED",
       "个人课表由系统自动提供，无需手动添加",
@@ -616,6 +623,16 @@ app.post("/:sid/syncs", async (c) => {
 
   const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
   if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  if (
+    personalSubscriptionMode(c.env) === "migration"
+    && PERSONAL_SOURCE_TYPES.has(resolved.subscription.sourceType)
+  ) {
+    return errorResponse(
+      "PERSONAL_SUBSCRIPTION_MIGRATING",
+      "个人课表正在维护，请稍后重试",
+      503,
+    );
+  }
   if (resolved.subscription.sourceType === "personal") {
     try {
       const result = await requestPersonalSync(

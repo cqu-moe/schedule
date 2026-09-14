@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeAll, describe, it, expect, vi } from "vitest";
+import { applyD1Migrations, env as cloudflareEnv } from "cloudflare:test";
 import adminApp from "./admin";
+import { resetPersonalData } from "../../tests/fixtures/personal-subscriptions";
+
+beforeAll(async () => {
+  await applyD1Migrations(cloudflareEnv.DB, cloudflareEnv.TEST_MIGRATIONS);
+});
 
 /** Build a mock Env. `subs` are the rows returned by the subscriptions select. */
 function mockEnv(
@@ -103,5 +109,38 @@ describe("POST /refresh-all enqueue", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as any;
     expect(body.enqueued).toBe(100); // first batch was queued — must NOT report 0
+  });
+});
+
+describe("POST /personal-subscription-migration", () => {
+  it("defaults to dry-run and applies only in migration mode", async () => {
+    await resetPersonalData(cloudflareEnv.DB);
+    const now = new Date().toISOString();
+    await cloudflareEnv.DB.prepare(`INSERT INTO subscriptions
+      (id,user_id,source_type,source_id,source_name,is_personal,created_at,updated_at)
+      VALUES ('legacy-admin','admin-user','personal_all','admin-user','全部',1,?,?)`)
+      .bind(now, now)
+      .run();
+    const migrationEnv = {
+      ...cloudflareEnv,
+      ADMIN_SECRET: "test-secret",
+      PERSONAL_SUBSCRIPTION_MODE: "migration",
+    } as never;
+    const response = await adminApp.request(
+      "/personal-subscription-migration",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mode: "apply", limit: 10, after_user_id: null }),
+      },
+      migrationEnv,
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json() as { summary: { users: number }; complete: boolean };
+    expect(body.summary.users).toBe(1);
+    expect(body.complete).toBe(true);
   });
 });
