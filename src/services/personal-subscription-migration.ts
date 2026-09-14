@@ -310,7 +310,23 @@ export async function migratePersonalUser(
       now,
     ));
 
-  await env.DB.batch(statements);
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    const completed = await env.DB.prepare(`SELECT s.id,
+      (SELECT count(*) FROM personal_subscription_views v WHERE v.subscription_id=s.id) AS views
+      FROM subscriptions s WHERE s.user_id=? AND s.source_type='personal' LIMIT 1`)
+      .bind(userId)
+      .first<{ id: string; views: number }>();
+    const legacy = await env.DB.prepare(`SELECT count(*) AS count FROM subscriptions
+      WHERE user_id=? AND source_type IN ('personal_all','personal_courses','personal_exams')`)
+      .bind(userId)
+      .first<{ count: number }>();
+    if (completed?.views === 3 && Number(legacy?.count ?? 0) === 0) {
+      return { ...EMPTY_SUMMARY };
+    }
+    throw error;
+  }
   return summary;
 }
 

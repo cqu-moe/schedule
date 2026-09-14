@@ -264,7 +264,10 @@ async function prepareCanonicalDefaultSubscriptions(
     && !hasActiveRun
     && (canonical.sync_status === "idle" || recoverableErrors.has(canonical.sync_error_code ?? ""));
 
-  if (bindingStatus !== "active" && canonical.last_synced_at === null && !hasActiveRun) {
+  const bindingBlocked = bindingStatus !== "active"
+    && canonical.last_synced_at === null
+    && !hasActiveRun;
+  if (bindingBlocked) {
     const errorCode = bindingStatus === undefined
       ? "CQU_BINDING_STATUS_UNKNOWN"
       : "CQU_BINDING_REQUIRED";
@@ -293,8 +296,12 @@ async function prepareCanonicalDefaultSubscriptions(
 
   const current = await getPersonalSetup(env.DB, userId);
   const status = claimedRunId ? "created" : (current?.status ?? "existing");
-  const runId = claimedRunId ?? current?.run_id ?? canonical.sync_run_id;
-  const dispatchStatus = claimedRunId
+  const runId = bindingBlocked
+    ? null
+    : claimedRunId ?? current?.run_id ?? canonical.sync_run_id;
+  const dispatchStatus = bindingBlocked
+    ? "sent"
+    : claimedRunId
     ? "pending"
     : current?.dispatch_status ?? "sent";
   await env.DB.prepare(`INSERT INTO personal_subscription_setup

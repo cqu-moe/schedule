@@ -169,6 +169,19 @@ describe("prepareDefaultSubscriptions", () => {
     expect(result.dispatch_status).toBe("sent");
   });
 
+  it("clears a stale initial setup run while binding is unavailable", async () => {
+    const enabledEnv = { ...setupEnv, PERSONAL_SUBSCRIPTION_MODE: "enabled" } as Env;
+    const first = await prepareDefaultSubscriptions(enabledEnv, "userA", FULL_CAPS, "active");
+    await env.DB.prepare(`UPDATE subscriptions SET sync_status='error',
+      sync_requested_at='2020-01-01T00:00:00.000Z',sync_error_code='CQU_BINDING_REQUIRED'
+      WHERE user_id='userA'`).run();
+
+    const blocked = await prepareDefaultSubscriptions(enabledEnv, "userA", FULL_CAPS, "unbound");
+    expect(first.run_id).not.toBeNull();
+    expect(blocked.run_id).toBeNull();
+    expect(blocked.dispatch_status).toBe("sent");
+  });
+
   it("creates three personal views atomically for the session user", async () => {
     const result = await prepareDefaultSubscriptions(setupEnv, "userA", FULL_CAPS);
 
