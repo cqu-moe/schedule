@@ -1,11 +1,36 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, beforeEach, describe, it, expect } from "vitest";
+import { applyD1Migrations, env } from "cloudflare:test";
 import { HarvestError } from "./cqu-harvest";
 import {
   CAPACITY_WAIT_MESSAGE,
   capacityWaitFailure,
   isRetryableSyncFailure,
   publicSyncFailure,
+  claimSubscriptionRun,
 } from "./sync-status";
+import { resetPersonalData, seedPersonal } from "../../tests/fixtures/personal-subscriptions";
+
+beforeAll(async () => {
+  await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+});
+
+beforeEach(async () => {
+  await resetPersonalData(env.DB);
+});
+
+describe("claimSubscriptionRun", () => {
+  it("allows only one concurrent canonical claim", async () => {
+    const { id } = await seedPersonal(env.DB, "claim-user");
+    const now = new Date().toISOString();
+    const claims = await Promise.all([
+      claimSubscriptionRun(env.DB, id, "cron", now),
+      claimSubscriptionRun(env.DB, id, "cron", now),
+    ]);
+    expect(claims.filter((claim) => claim.kind === "accepted")).toHaveLength(1);
+    expect(claims.filter((claim) => claim.kind === "active")).toHaveLength(1);
+    expect(new Set(claims.map((claim) => "runId" in claim ? claim.runId : null)).size).toBe(1);
+  });
+});
 
 describe("publicSyncFailure", () => {
   it("maps reauth failures to the rebind message", () => {

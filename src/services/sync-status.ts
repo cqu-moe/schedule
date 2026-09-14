@@ -10,6 +10,76 @@ export interface PublicSyncFailure {
   message: string;
 }
 
+export type SyncClaim =
+  | { kind: "accepted"; runId: string; requestedAt: string }
+  | { kind: "active"; runId: string; requestedAt: string }
+  | { kind: "cooldown"; manualRefreshAt: string };
+
+export async function claimSubscriptionRun(
+  database: D1Database,
+  subscriptionId: string,
+  trigger: SyncTrigger,
+  now: string,
+): Promise<SyncClaim> {
+  const nowMs = Date.parse(now);
+  const activeCutoff = new Date(nowMs - 2 * 60 * 60_000).toISOString();
+  const cooldownCutoff = new Date(nowMs - 5 * 60_000).toISOString();
+  const runId = crypto.randomUUID();
+  const manual = trigger === "manual";
+  const result = await database.prepare(`UPDATE subscriptions SET
+    manual_refresh_at=CASE WHEN ?='manual' THEN ? ELSE manual_refresh_at END,
+    sync_run_id=?,sync_trigger=?,sync_status='queued',sync_requested_at=?,
+    sync_started_at=NULL,sync_finished_at=NULL,sync_error_code=NULL,
+    sync_error_message=NULL,updated_at=?
+    WHERE id=? AND source_type='personal'
+      AND (? != 'manual' OR manual_refresh_at IS NULL OR manual_refresh_at<=?)
+      AND (sync_status NOT IN ('queued','running') OR sync_requested_at IS NULL
+           OR sync_requested_at<=?)`)
+    .bind(
+      trigger,
+      now,
+      runId,
+      trigger,
+      now,
+      now,
+      subscriptionId,
+      trigger,
+      cooldownCutoff,
+      activeCutoff,
+    )
+    .run();
+  if ((result.meta.changes ?? 0) === 1) {
+    return { kind: "accepted", runId, requestedAt: now };
+  }
+
+  const current = await database.prepare(`SELECT sync_status,sync_run_id,sync_requested_at,
+    manual_refresh_at FROM subscriptions WHERE id=? AND source_type='personal'`)
+    .bind(subscriptionId)
+    .first<{
+      sync_status: string;
+      sync_run_id: string | null;
+      sync_requested_at: string | null;
+      manual_refresh_at: string | null;
+    }>();
+  if (!current) throw new Error("PERSONAL_SUBSCRIPTION_NOT_FOUND");
+  if (manual && current.manual_refresh_at && current.manual_refresh_at > cooldownCutoff) {
+    return { kind: "cooldown", manualRefreshAt: current.manual_refresh_at };
+  }
+  if (
+    (current.sync_status === "queued" || current.sync_status === "running")
+    && current.sync_run_id
+    && current.sync_requested_at
+    && current.sync_requested_at > activeCutoff
+  ) {
+    return {
+      kind: "active",
+      runId: current.sync_run_id,
+      requestedAt: current.sync_requested_at,
+    };
+  }
+  throw new Error("PERSONAL_SYNC_CLAIM_FAILED");
+}
+
 export async function queueSyncRun(
   db: Db,
   subscriptionId: string,

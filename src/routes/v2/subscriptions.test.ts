@@ -557,16 +557,12 @@ describe("POST /api/v2/subscriptions/defaults", () => {
     });
   });
 
-  it("does not restore the last deleted legacy subscription", async () => {
+  it("does not allow deleting a legacy personal subscription", async () => {
     const legacyId = await insertSub("userA");
     const app = buildApp("userA");
     const deleted = await app.request(`/${legacyId}`, { method: "DELETE" });
-    expect(deleted.status).toBe(204);
-
-    const response = await app.request("/defaults", { method: "POST" });
-    expect(response.status).toBe(200);
-    expect((await response.json() as DefaultSubscriptionsResponse).status).toBe("existing");
-    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    expect(deleted.status).toBe(403);
+    expect(await db.select().from(subscriptions)).toHaveLength(1);
     expect(app.send).not.toHaveBeenCalled();
   });
 });
@@ -611,45 +607,23 @@ describe("GET /api/v2/subscriptions/:sid", () => {
 // ── POST / (create) ──────────────────────────────────────────────────────────
 
 describe("POST /api/v2/subscriptions", () => {
-  it("creates a subscription + default all-format link → 201 + Location", async () => {
+  it("rejects creating a managed personal subscription", async () => {
     const app = buildApp("userA");
     const res = await app.request("/", jsonBody(VALID_CREATE));
-    expect(res.status).toBe(201);
-    expect(res.headers.get("Location")).toMatch(/^\/api\/v2\/subscriptions\//);
-
-    const body = (await res.json()) as {
-      id: string;
-      links: { is_default: boolean; formats: string[] }[];
-    };
-    expect(res.headers.get("Location")).toBe(`/api/v2/subscriptions/${body.id}`);
-    expect(body.links).toHaveLength(1);
-    expect(body.links[0].is_default).toBe(true);
-    expect(body.links[0].formats).toEqual([...LINK_FORMATS]);
-
-    // Verify persisted: exactly one default, full-format link in DB.
-    const links = await db
-      .select()
-      .from(calendarLinks)
-      .where(eq(calendarLinks.subscriptionId, body.id));
-    expect(links).toHaveLength(1);
-    expect(links[0].isDefault).toBe(true);
-    expect(JSON.parse(links[0].formats)).toEqual([...LINK_FORMATS]);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      detail: { error: { code: "PERSONAL_SUBSCRIPTION_MANAGED" } },
+    });
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
   });
 
-  it("enqueues an initial sync for the new subscription", async () => {
+  it("does not enqueue when personal creation is rejected", async () => {
     // A fresh subscription must be populated promptly, not left empty until the
     // next hourly cron (which spreads deliveries over 6h).
     const app = buildApp("userA");
     const res = await app.request("/", jsonBody(VALID_CREATE));
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; sync_run_id: string; sync_status: string };
-    expect(body.sync_status).toBe("queued");
-    expect(app.send).toHaveBeenCalledWith({
-      subscriptionId: body.id,
-      userId: "userA",
-      trigger: "initial",
-      runId: body.sync_run_id,
-    });
+    expect(res.status).toBe(403);
+    expect(app.send).not.toHaveBeenCalled();
   });
 
   // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): creating an
@@ -669,34 +643,24 @@ describe("POST /api/v2/subscriptions", () => {
     expect(row.isPersonal).toBe(false);
   });
 
-  it("derives is_personal=true for a personal type even if the client sends false", async () => {
+  it("rejects a personal type even if the client sends isPersonal=false", async () => {
     const app = buildApp("userA");
     const res = await app.request(
       "/",
       jsonBody({ sourceType: "personal_all", sourceName: "我的课表", isPersonal: false }),
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { is_personal: boolean };
-    expect(body.is_personal).toBe(true);
+    expect(res.status).toBe(403);
   });
 
-  it("SECURITY: pins personal sourceId to the auth user.id, ignoring client input", async () => {
+  it("rejects attempts to choose another identity for a managed personal subscription", async () => {
     const app = buildApp("userA");
     // Client tries to bind the personal subscription to ANOTHER student's 学号.
     const res = await app.request(
       "/",
       jsonBody({ sourceType: "personal_all", sourceId: "20219999", sourceName: "我的课表" }),
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; source_id: string };
-    // Response and DB must store the trusted user.id, not the forged 学号.
-    expect(body.source_id).toBe("userA");
-
-    const [row] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.id, body.id));
-    expect(row.sourceId).toBe("userA");
+    expect(res.status).toBe(403);
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
   });
 
   // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): adding an
@@ -727,24 +691,14 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
-  it("creates a personal subscription with NO sourceId → 201, source_id pinned to user.id", async () => {
+  it("rejects a personal subscription even when sourceId is omitted", async () => {
     const app = buildApp("userA");
     // Client omits sourceId entirely; personal types pin it to the auth user.id.
     const res = await app.request(
       "/",
       jsonBody({ sourceType: "personal_all", sourceName: "我的课表" }),
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; source_id: string; is_personal: boolean };
-    expect(body.source_id).toBe("userA");
-    expect(body.is_personal).toBe(true);
-
-    const [row] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.id, body.id));
-    expect(row.sourceId).toBe("userA");
-    expect(row.isPersonal).toBe(true);
+    expect(res.status).toBe(403);
   });
 
   it("rejects missing sourceId for external source types → 400 INVALID_INPUT", async () => {
@@ -755,15 +709,15 @@ describe("POST /api/v2/subscriptions", () => {
     expect(body.detail.error.code).toBe("INVALID_INPUT");
   });
 
-  it("rejects overly long session fields → 400 INVALID_INPUT", async () => {
+  it("rejects managed personal creation before accepting mutable session fields", async () => {
     const app = buildApp("userA");
     const res = await app.request(
       "/",
       jsonBody({ ...VALID_CREATE, sessionName: "x".repeat(201) }),
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("INVALID_INPUT");
+    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
   });
 
   // SKIPPED while EXTERNAL_DISABLED=true (see external-availability.ts): external
@@ -778,7 +732,7 @@ describe("POST /api/v2/subscriptions", () => {
     );
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
   });
 
   it("external add → 503 EXTERNAL_UNAVAILABLE (no DB write, no enqueue) while soft-disabled", async () => {
@@ -800,35 +754,35 @@ describe("POST /api/v2/subscriptions", () => {
     expect(rows.length).toBe(0);
   });
 
-  it("personal source without `sync` cap → 403", async () => {
+  it("personal source remains managed even without the sync cap", async () => {
     const app = buildApp("userA", capsWith({ sync: false }));
     const res = await app.request("/", jsonBody(VALID_CREATE));
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("FEATURE_NOT_ENABLED");
+    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
   });
 
-  it("over sub_limit → 409 QUOTA_EXCEEDED", async () => {
+  it("managed personal creation is rejected before quota accounting", async () => {
     await insertSub("userA", { sourceId: "111" });
     const app = buildApp("userA", capsWith({ sub_limit: 1 }));
     const res = await app.request(
       "/",
       jsonBody({ sourceType: "personal_courses", sourceId: "222", sourceName: "课程" }),
     );
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("QUOTA_EXCEEDED");
+    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
   });
 
-  it("duplicate (same user/source/session) → 409 ALREADY_EXISTS", async () => {
+  it("repeated managed personal creates remain forbidden", async () => {
     const app = buildApp("userA");
     const first = await app.request("/", jsonBody(VALID_CREATE));
-    expect(first.status).toBe(201);
+    expect(first.status).toBe(403);
 
     const dup = await app.request("/", jsonBody(VALID_CREATE));
-    expect(dup.status).toBe(409);
+    expect(dup.status).toBe(403);
     const body = (await dup.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("ALREADY_EXISTS");
+    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
   });
 
   it("rejects malformed JSON → 400 INVALID_INPUT", async () => {
@@ -847,8 +801,13 @@ describe("POST /api/v2/subscriptions", () => {
 describe("DELETE /api/v2/subscriptions/:sid", () => {
   it("deletes the subscription and cascades its links → 204", async () => {
     const app = buildApp("userA");
-    const created = await app.request("/", jsonBody(VALID_CREATE));
-    const { id } = (await created.json()) as { id: string };
+    const id = await insertSub("userA", {
+      sourceType: "course",
+      sourceId: "external-course",
+      sourceName: "外部课程",
+      isPersonal: false,
+    });
+    await insertLink(id, { isDefault: true });
 
     // Sanity: link exists before delete.
     const before = await db
@@ -1242,6 +1201,26 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
 
   beforeEach(async () => {
     await env.CACHE.delete(`refresh:userA:${dayKey()}`);
+  });
+
+  it("accepts one session-scoped personal sync request and ignores body identity", async () => {
+    const owner = await insertCanonicalPersonal("userA");
+    await env.DB.prepare(`UPDATE subscriptions SET sync_status='success',sync_run_id='old',
+      sync_requested_at=NULL,manual_refresh_at=NULL WHERE id=?`)
+      .bind(owner.id)
+      .run();
+    const app = buildApp("userA", FULL_CAPS, "active", env.DB, "enabled");
+
+    const response = await app.request("/personal/syncs", jsonBody({ userId: "userB" }));
+    expect(response.status).toBe(202);
+    const result = await response.json() as {
+      run_id: string;
+      affected_subscription_ids: string[];
+    };
+    expect(app.send).toHaveBeenCalledTimes(1);
+    expect(app.send.mock.calls[0][0].userId).toBe("userA");
+    expect(app.send.mock.calls[0][0].subscriptionId).toBe(owner.id);
+    expect(result.affected_subscription_ids.sort()).toEqual(owner.viewIds.sort());
   });
 
   afterEach(() => {

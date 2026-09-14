@@ -33,6 +33,10 @@ import {
   resolveOwnedSubscription,
 } from "../../services/personal-subscription-views";
 import { personalSubscriptionMode } from "../../config/personal-subscription-mode";
+import {
+  ManualRefreshCooldownError,
+  requestPersonalSync,
+} from "../../services/personal-subscription-sync";
 
 const app = new Hono<SessionEnv>();
 
@@ -310,6 +314,13 @@ app.post("/", async (c) => {
   if (typeof sourceType !== "string" || !SOURCE_TYPE_SET.has(sourceType)) {
     return errorResponse("INVALID_INPUT", "sourceType 无效", 400);
   }
+  if (PERSONAL_SOURCE_TYPES.has(sourceType as SourceType)) {
+    return errorResponse(
+      "PERSONAL_SUBSCRIPTION_MANAGED",
+      "个人课表由系统自动提供，无需手动添加",
+      403,
+    );
+  }
   // sourceType is now known-valid; personal types ignore (and pin) sourceId, so
   // it is OPTIONAL for them. External types still require a non-empty sourceId.
   const isPersonalType = PERSONAL_SOURCE_TYPES.has(sourceType as SourceType);
@@ -533,13 +544,23 @@ app.delete("/:sid", async (c) => {
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
 
-  const [sub] = await db
-    .select({ id: subscriptions.id })
-    .from(subscriptions)
-    .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, user.id)))
-    .limit(1);
-
-  if (!sub) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
+  if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  const sub = resolved.subscription;
+  if (PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
+    if (personalSubscriptionMode(c.env) === "migration") {
+      return errorResponse(
+        "PERSONAL_SUBSCRIPTION_MIGRATING",
+        "个人课表正在维护，请稍后重试",
+        503,
+      );
+    }
+    return errorResponse(
+      "PERSONAL_SUBSCRIPTION_MANAGED",
+      "个人课表由系统自动提供，无法删除",
+      403,
+    );
+  }
 
   const now = new Date().toISOString();
   await c.env.DB.batch([
@@ -567,11 +588,50 @@ app.delete("/:sid", async (c) => {
 //  Verifies ownership → checks the daily refresh counter against caps →
 //  enqueues a single-subscription sync → 202 Accepted. The KV counter
 //  `refresh:<userId>:<china-date>` is incremented best-effort after enqueue.
+app.post("/personal/syncs", async (c) => {
+  const user = c.get("user");
+  try {
+    const result = await requestPersonalSync(
+      c.env,
+      user.id,
+      c.get("caps").calendar,
+      c.get("cquBindStatus"),
+    );
+    return c.json(result, 202);
+  } catch (error) {
+    if (error instanceof ManualRefreshCooldownError) {
+      return manualRefreshCooldownResponse(error.manualRefreshAt, new Date());
+    }
+    if (error instanceof EntitlementError) return entitlementError(error);
+    throw error;
+  }
+});
+
 app.post("/:sid/syncs", async (c) => {
   const user = c.get("user");
   const caps = c.get("caps").calendar;
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
+
+  const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
+  if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  if (resolved.subscription.sourceType === "personal") {
+    try {
+      const result = await requestPersonalSync(
+        c.env,
+        user.id,
+        caps,
+        c.get("cquBindStatus"),
+      );
+      return c.json(result, 202);
+    } catch (error) {
+      if (error instanceof ManualRefreshCooldownError) {
+        return manualRefreshCooldownResponse(error.manualRefreshAt, new Date());
+      }
+      if (error instanceof EntitlementError) return entitlementError(error);
+      throw error;
+    }
+  }
 
   const [sub] = await db
     .select({
