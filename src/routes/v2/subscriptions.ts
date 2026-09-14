@@ -9,6 +9,7 @@ import {
   EXTERNAL_SOURCE_TYPES,
   PERSONAL_SOURCE_TYPES,
   type SourceType,
+  type PersonalSubscriptionView,
 } from "../../db/schema";
 import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
@@ -27,6 +28,10 @@ import {
   type DefaultSubscriptionsResponse,
 } from "../../services/personal-subscription-setup";
 import { dispatchPersonalSetup } from "../../services/personal-setup-dispatch";
+import {
+  listPersonalViews,
+  resolveOwnedSubscription,
+} from "../../services/personal-subscription-views";
 
 const app = new Hono<SessionEnv>();
 
@@ -89,19 +94,36 @@ app.get("/", async (c) => {
       .innerJoin(subscriptions, eq(calendarLinks.subscriptionId, subscriptions.id))
       .where(eq(subscriptions.userId, user.id));
     for (const row of links) {
-      const list = linksBySub.get(row.calendar_links.subscriptionId) ?? [];
+      const scope = row.calendar_links.personalViewType ?? "";
+      const key = `${row.calendar_links.subscriptionId}:${scope}`;
+      const list = linksBySub.get(key) ?? [];
       list.push(toLinkSummary(row.calendar_links));
-      linksBySub.set(row.calendar_links.subscriptionId, list);
+      linksBySub.set(key, list);
     }
+  }
+
+  const serialized = [];
+  for (const sub of subs) {
+    if (sub.sourceType === "personal") {
+      const views = await listPersonalViews(c.env.DB, sub.id);
+      for (const view of views) {
+        serialized.push({
+          ...serializePersonalView(sub, view),
+          links: linksBySub.get(`${sub.id}:${view.sourceType}`) ?? [],
+        });
+      }
+      continue;
+    }
+    serialized.push({
+      ...serializeSubscription(sub),
+      links: linksBySub.get(`${sub.id}:`) ?? [],
+    });
   }
 
   const setup = await getPersonalSetup(c.env.DB, user.id);
   return c.json({
-    subscriptions: subs.map((sub) => ({
-      ...serializeSubscription(sub),
-      links: linksBySub.get(sub.id) ?? [],
-    })),
-    count: subs.length,
+    subscriptions: serialized,
+    count: serialized.length,
     personal_setup: setup ? summarizePersonalSetup(setup) : null,
   });
 });
@@ -199,23 +221,30 @@ app.get("/:sid", async (c) => {
   const user = c.get("user");
   const sid = c.req.param("sid");
   const db = drizzle(c.env.DB);
+  const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
+  if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
 
-  const [sub] = await db
-    .select()
-    .from(subscriptions)
-    .where(and(eq(subscriptions.id, sid), eq(subscriptions.userId, user.id)))
-    .limit(1);
-
-  if (!sub) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  const sub = resolved.subscription;
+  let view = resolved.view;
+  if (sub.sourceType === "personal" && !view) {
+    view = (await listPersonalViews(c.env.DB, sub.id))
+      .find((candidate) => candidate.sourceType === "personal_all") ?? null;
+    if (!view) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  }
 
   const links = await db
     .select()
     .from(calendarLinks)
-    .where(eq(calendarLinks.subscriptionId, sub.id))
+    .where(view
+      ? and(
+          eq(calendarLinks.subscriptionId, sub.id),
+          eq(calendarLinks.personalViewType, view.sourceType),
+        )
+      : eq(calendarLinks.subscriptionId, sub.id))
     .orderBy(desc(calendarLinks.isDefault), asc(calendarLinks.createdAt));
 
   return c.json({
-    ...serializeSubscription(sub),
+    ...(view ? serializePersonalView(sub, view) : serializeSubscription(sub)),
     links: links.map(toLinkSummary),
   });
 });
@@ -1023,6 +1052,19 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     manual_refresh_at: sub.manualRefreshAt,
     created_at: sub.createdAt,
     updated_at: sub.updatedAt,
+  };
+}
+
+function serializePersonalView(
+  sub: typeof subscriptions.$inferSelect,
+  view: PersonalSubscriptionView,
+) {
+  return {
+    ...serializeSubscription(sub),
+    id: view.id,
+    source_type: view.sourceType,
+    source_name: view.sourceName,
+    created_at: view.createdAt,
   };
 }
 

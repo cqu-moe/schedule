@@ -7,6 +7,7 @@ import {
   subscriptions,
   calendarLinks,
   personalSubscriptionSetup,
+  PERSONAL_VIEW_TYPES,
   LINK_FORMATS,
 } from "../../db/schema";
 import { sessionMiddleware, type SessionEnv } from "../../middleware/session";
@@ -240,9 +241,90 @@ async function insertLink(
   return id;
 }
 
+async function insertCanonicalPersonal(userId: string) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const runId = crypto.randomUUID();
+  await db.insert(subscriptions).values({
+    id,
+    userId,
+    sourceType: "personal",
+    sourceId: userId,
+    sourceName: "个人课表",
+    isPersonal: true,
+    syncStatus: "success",
+    syncRunId: runId,
+    manualRefreshAt: now,
+    lastSyncedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const viewIds: string[] = [];
+  for (const sourceType of PERSONAL_VIEW_TYPES) {
+    const viewId = crypto.randomUUID();
+    viewIds.push(viewId);
+    await env.DB.prepare(`INSERT INTO personal_subscription_views
+      (id,subscription_id,source_type,source_name,created_at) VALUES (?,?,?,?,?)`)
+      .bind(viewId, id, sourceType, sourceType, now)
+      .run();
+    await db.insert(calendarLinks).values({
+      id: crypto.randomUUID(),
+      subscriptionId: id,
+      token: `canonical-${sourceType}-${userId}`,
+      formats: JSON.stringify(LINK_FORMATS),
+      personalViewType: sourceType,
+      isDefault: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  return { id, viewIds, runId, now };
+}
+
 // ── GET / (list) ─────────────────────────────────────────────────────────────
 
 describe("GET /api/v2/subscriptions", () => {
+  it("projects one canonical personal row into three legacy-shaped views", async () => {
+    const owner = await insertCanonicalPersonal("userA");
+    await insertSub("userA", {
+      sourceType: "instructor",
+      sourceId: "teacher-1",
+      sourceName: "教师课表",
+      isPersonal: false,
+    });
+
+    const result = await (await buildApp("userA").request("/")).json() as {
+      subscriptions: Array<{
+        id: string;
+        source_type: string;
+        sync_run_id: string | null;
+        manual_refresh_at: string | null;
+        links: Array<{ token: string }>;
+      }>;
+      count: number;
+    };
+
+    const personal = result.subscriptions.filter((item) => item.source_type.startsWith("personal"));
+    expect(result.count).toBe(4);
+    expect(personal.map((item) => item.id).sort()).toEqual(owner.viewIds.sort());
+    expect(personal.some((item) => item.source_type === "personal")).toBe(false);
+    expect(new Set(personal.map((item) => item.sync_run_id))).toEqual(new Set([owner.runId]));
+    expect(new Set(personal.map((item) => item.manual_refresh_at))).toEqual(new Set([owner.now]));
+    expect(personal.every((item) => item.links.length === 1)).toBe(true);
+  });
+
+  it("resolves owned personal view IDs and hides them from other users", async () => {
+    const owner = await insertCanonicalPersonal("userA");
+    const mine = await buildApp("userA").request(`/${owner.viewIds[0]}`);
+    expect(mine.status).toBe(200);
+    const mineBody = await mine.json() as { id: string; source_type: string; links: unknown[] };
+    expect(mineBody.id).toBe(owner.viewIds[0]);
+    expect(mineBody.source_type).toBe("personal_all");
+    expect(mineBody.links).toHaveLength(1);
+
+    expect((await buildApp("userB").request(`/${owner.viewIds[0]}`)).status).toBe(404);
+  });
+
   it("returns only the current user's subscriptions", async () => {
     const mine = await insertSub("userA", { sourceId: "111", sourceName: "A1" });
     await insertSub("userB", { sourceId: "222", sourceName: "B1" });
