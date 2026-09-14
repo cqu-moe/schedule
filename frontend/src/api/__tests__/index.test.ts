@@ -272,6 +272,17 @@ describe('API module (v2)', () => {
     })
   })
 
+  describe('refreshPersonalSubscription', () => {
+    it('POST /subscriptions/personal/syncs without a client identity', async () => {
+      mockClient.post.mockResolvedValueOnce({ data: { status: 'queued', run_id: 'personal-run' } })
+
+      const result = await api.refreshPersonalSubscription()
+
+      expect(mockClient.post).toHaveBeenCalledWith('/subscriptions/personal/syncs', null)
+      expect(result).toEqual({ status: 'queued', run_id: 'personal-run' })
+    })
+  })
+
   // ── createSubscription ──
 
   describe('createSubscription', () => {

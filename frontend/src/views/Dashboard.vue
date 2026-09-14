@@ -353,6 +353,7 @@
 
                   <!-- Delete -->
                   <DropdownMenuItem
+                    v-if="!item.sub.is_personal"
                     class="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
                     @click="openDeleteSubDialog(item.sub)"
                   >
@@ -932,6 +933,7 @@ function trackCurrentActiveRuns() {
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 function openDeleteSubDialog(sub: Subscription) {
+  if (sub.is_personal) return
   deleteSubDialog.value = { id: sub.id, name: sub.source_name }
 }
 
@@ -961,9 +963,13 @@ function openQrModal(item: EnrichedSub) {
 }
 
 async function handleRefreshSub(sid: string) {
+  const sub = subStore.subscriptions.find(item => item.id === sid)
+  if (!sub) return
   try {
     await refreshFeedback.run(async () => {
-      const result = await api.refreshSubscription(sid)
+      const result = sub.is_personal
+        ? await api.refreshPersonalSubscription()
+        : await api.refreshSubscription(sid)
       toast.success('已加入刷新队列')
       const affectedIds = result.affected_subscription_ids?.length
         ? result.affected_subscription_ids
@@ -978,6 +984,8 @@ async function handleRefreshSub(sid: string) {
 }
 
 async function handleDeleteSub(sid: string) {
+  const sub = subStore.subscriptions.find(item => item.id === sid)
+  if (!sub || sub.is_personal) return
   try {
     await api.deleteSubscription(sid)
     toast.success('订阅已删除')
@@ -992,9 +1000,7 @@ async function handleSyncAll() {
   if (personalSubs.value.length === 0) return
   try {
     await syncFeedback.run(async () => {
-      const target = personalSubs.value.find(sub => sub.source_type === 'personal_all')
-        ?? personalSubs.value[0]
-      const result = await api.refreshSubscription(target.id)
+      const result = await api.refreshPersonalSubscription()
       const affectedIds = result.affected_subscription_ids?.length
         ? result.affected_subscription_ids
         : personalSubs.value.map(sub => sub.id)

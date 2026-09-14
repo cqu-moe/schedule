@@ -13,6 +13,7 @@ const { mockApi, mockToast, mockRedirect } = vi.hoisted(() => {
     createSubscription: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn().mockResolvedValue(undefined),
+    refreshPersonalSubscription: vi.fn().mockResolvedValue(undefined),
     getLinks: vi.fn(),
     createLink: vi.fn(),
     patchLink: vi.fn(),
@@ -98,6 +99,7 @@ describe('Dashboard view (v2)', () => {
       dispatch_status: 'sent',
     })
     mockApi.refreshSubscription.mockResolvedValue({ status: 'queued', run_id: 'run-1' })
+    mockApi.refreshPersonalSubscription.mockResolvedValue({ status: 'queued', run_id: 'run-1' })
     mockApi.deleteSubscription.mockResolvedValue(undefined)
     mockApi.getNotificationSettings.mockResolvedValue({ eligible: true, enabled: false })
     mockApi.updateNotificationSettings.mockResolvedValue({ eligible: true, enabled: true })
@@ -323,7 +325,8 @@ describe('Dashboard view (v2)', () => {
 
       await wrapper.find('[role="status"] button').trigger('click')
       await flushPromises()
-      expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
+      expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledTimes(1)
+      expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
       expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
     })
 
@@ -541,7 +544,7 @@ describe('Dashboard view (v2)', () => {
 
   // ── Manual refresh ────────────────────────────────────────────────────────────
 
-  it('calls api.refreshSubscription with sub.id when sync button is clicked', async () => {
+  it('calls the personal endpoint once when a personal card sync button is clicked', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
 
     const syncBtn = wrapper.findAll('button').find(
@@ -551,7 +554,23 @@ describe('Dashboard view (v2)', () => {
     await syncBtn!.trigger('click')
     await flushPromises()
 
-    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('sub-uuid-123')
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledTimes(1)
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledWith()
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+  })
+
+  it('keeps the by-id endpoint for an external card sync button', async () => {
+    const external = mockSubscription({
+      id: 'external-1',
+      source_type: 'instructor',
+      is_personal: false,
+    })
+    const { wrapper } = await mountDashboard([external])
+    const syncBtn = wrapper.findAll('button').find(b => b.text() === '同步')
+    await syncBtn!.trigger('click')
+    await flushPromises()
+    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('external-1')
+    expect(mockApi.refreshPersonalSubscription).not.toHaveBeenCalled()
   })
 
   it('shows toast "已加入刷新队列" after manual refresh', async () => {
@@ -854,7 +873,7 @@ describe('Dashboard view (v2)', () => {
     )
 
     let refreshStartedAt: number | null = null
-    mockApi.refreshSubscription.mockImplementation(async () => {
+    mockApi.refreshPersonalSubscription.mockImplementation(async () => {
       refreshStartedAt = Date.now()
       return {
         status: 'queued',
@@ -911,7 +930,7 @@ describe('Dashboard view (v2)', () => {
       sync_error_message: null,
     }
     let phase: 'initial' | 'active' | 'missing' = 'initial'
-    mockApi.refreshSubscription.mockImplementation(async () => {
+    mockApi.refreshPersonalSubscription.mockImplementation(async () => {
       phase = 'active'
       return {
         status: 'queued',
@@ -958,7 +977,7 @@ describe('Dashboard view (v2)', () => {
 
   it('shows toast error when refresh subscription fails', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
-    mockApi.refreshSubscription.mockRejectedValueOnce({
+    mockApi.refreshPersonalSubscription.mockRejectedValueOnce({
       response: {
         data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '刷新超时' } } },
       },
@@ -988,9 +1007,9 @@ describe('Dashboard view (v2)', () => {
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
-    expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
-    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('p-sub-1')
-    expect(mockApi.refreshSubscription).not.toHaveBeenCalledWith('e-sub-1')
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledTimes(1)
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledWith()
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
   })
 
   it('sync all sends only one request for the complete personal trio', async () => {
@@ -1005,8 +1024,9 @@ describe('Dashboard view (v2)', () => {
     await syncAllBtn!.trigger('click')
     await flushPromises()
 
-    expect(mockApi.refreshSubscription).toHaveBeenCalledTimes(1)
-    expect(mockApi.refreshSubscription).toHaveBeenCalledWith('personal-all')
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledTimes(1)
+    expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledWith()
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
   })
 
   it('keeps sync all in progress after requests are only accepted into the queue', async () => {
@@ -1056,10 +1076,24 @@ describe('Dashboard view (v2)', () => {
 
   // ── Delete ────────────────────────────────────────────────────────────────────
 
-  it('shows delete menu item for personal subscriptions', async () => {
+  it('hides the delete menu item for personal subscriptions', async () => {
     const { wrapper } = await mountDashboard([mockSubscription({ is_personal: true })])
     const menuDeleteItems = wrapper.findAll('div').filter(b => b.text().trim() === '删除')
-    expect(menuDeleteItems.length).toBeGreaterThanOrEqual(1)
+    expect(menuDeleteItems).toHaveLength(0)
+  })
+
+  it('refuses a stale personal delete dialog target', async () => {
+    const personal = mockSubscription({ id: 'personal-stale', is_personal: true })
+    const { wrapper } = await mountDashboard([personal])
+    const vm = wrapper.vm as unknown as {
+      deleteSubDialog: { id: string; name: string } | null
+    }
+    vm.deleteSubDialog = { id: personal.id, name: personal.source_name }
+    await flushPromises()
+    const action = wrapper.findAll('button').find(button => button.text().trim() === '删除')
+    await action!.trigger('click')
+    await flushPromises()
+    expect(mockApi.deleteSubscription).not.toHaveBeenCalled()
   })
 
   it('calls api.deleteSubscription with sub.id for non-personal subscription', async () => {

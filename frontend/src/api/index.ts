@@ -146,6 +146,11 @@ export default {
     return response.data
   },
 
+  async refreshPersonalSubscription(): Promise<SyncQueuedResponse> {
+    const response = await client.post<SyncQueuedResponse>('/subscriptions/personal/syncs', null)
+    return response.data
+  },
+
   // ── Calendar links ────────────────────────────────────────────────────────
 
   async getLinks(sid: string): Promise<{ links: CalendarLink[]; count: number }> {
