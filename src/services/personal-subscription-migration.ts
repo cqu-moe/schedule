@@ -128,7 +128,8 @@ function selectSnapshot(rows: LegacyRow[]): {
       }
     }
     if (exams === null && row.source_type !== "personal_courses") {
-      const parsed = row.source_type === "personal_all" && row.exams_json === null
+      const parsed = (row.source_type === "personal_all" || row.source_type === "personal_exams")
+        && row.exams_json === null
         ? []
         : parseArray<ExamEntry>(row.exams_json, "EXAMS", row.id);
       if (parsed !== null) {

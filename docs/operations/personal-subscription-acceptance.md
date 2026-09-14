@@ -27,13 +27,21 @@ npm --prefix frontend run build
 git diff --check
 ```
 
-Fresh final results on the tree prepared for review:
+Full-suite results recorded before the focused review fixes (`cfd030f`):
 
 - backend: 37 files passed; 377 tests passed and 21 existing tests skipped;
 - frontend: 23 files passed; 293 tests passed and 13 existing tests skipped;
 - TypeScript typecheck: passed;
 - Vite production build: passed;
 - `git diff --check`: passed.
+
+Focused review follow-up on the final fix tree:
+
+- setup creation now reconciles migration `0010` markers inside the canonical creation batch; real-migration tests cover a plain `setup(existing,[])` marker, an external-only user, a historically emptied user, and concurrent canonical creation;
+- legacy `personal_exams` with successful `exams_json=NULL` is migrated as a valid empty list; all seven type combinations now assert canonical status, empty payload representation, and freshness;
+- a late unique-constraint failure appended to the migration batch proves subscriptions, links, setup, backup, and views all roll back;
+- reusing a cron/initial active run without `manual_refresh_at` returns a non-extended `cooldown_until` and leaves the database cooldown null;
+- the combined setup/migration/sync/routes run passed 148 tests with 3 existing skips across 8 files; TypeScript typecheck and `git diff --check` passed.
 
 The backend suite uses `readD1Migrations()` and `applyD1Migrations()` for the new schema and migration acceptance. Root Vitest is scoped to `src/**/*.test.ts`; before this change it also collected the frontend suite without the frontend alias and failed before producing a valid combined result. The frontend continues to run from its own config.
 

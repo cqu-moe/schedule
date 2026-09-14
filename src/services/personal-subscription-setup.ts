@@ -179,7 +179,12 @@ async function prepareCanonicalDefaultSubscriptions(
           )),
         env.DB.prepare(`INSERT INTO personal_subscription_setup
           (user_id,status,subscription_ids,run_id,dispatch_status,created_at,updated_at)
-          VALUES (?,'created',?,?,?, ?,?)`)
+          VALUES (?,'created',?,?,?, ?,?)
+          ON CONFLICT(user_id) DO UPDATE SET status='created',
+            subscription_ids=excluded.subscription_ids,
+            run_id=excluded.run_id,
+            dispatch_status=excluded.dispatch_status,
+            lease_token=NULL,lease_until=0,updated_at=excluded.updated_at`)
           .bind(
             userId,
             JSON.stringify(viewRows.map((row) => row.id)),

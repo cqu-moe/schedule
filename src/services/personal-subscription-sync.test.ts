@@ -7,6 +7,7 @@ import {
   ManualRefreshCooldownError,
   requestPersonalSync,
 } from "./personal-subscription-sync";
+import { claimSubscriptionRun } from "./sync-status";
 
 const CAPS: CalendarCaps = {
   sync: true,
@@ -61,5 +62,36 @@ describe("requestPersonalSync", () => {
     await expect(requestPersonalSync(testEnv, "user-a", CAPS, "active"))
       .rejects.toBeInstanceOf(ManualRefreshCooldownError);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent a five-minute cooldown when reusing a non-manual active run", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
+    try {
+      const seeded = await seedPersonal(env.DB, "user-a");
+      const active = await claimSubscriptionRun(
+        env.DB,
+        seeded.id,
+        "cron",
+        "2026-09-15T02:00:00.000Z",
+      );
+      if (active.kind !== "accepted") throw new Error("expected cron claim");
+      const send = vi.fn(async () => undefined);
+      const testEnv = {
+        ...env,
+        PERSONAL_SUBSCRIPTION_MODE: "enabled",
+        SCHEDULE_SYNC_QUEUE: { send },
+      } as unknown as Env;
+
+      const result = await requestPersonalSync(testEnv, "user-a", CAPS, "active");
+      expect(result.run_id).toBe(active.runId);
+      expect(result.cooldown_until).toBe("2026-09-15T02:00:00.000Z");
+      expect(send).not.toHaveBeenCalled();
+      const row = await env.DB.prepare(`SELECT manual_refresh_at FROM subscriptions WHERE id=?`)
+        .bind(seeded.id).first<{ manual_refresh_at: string | null }>();
+      expect(row?.manual_refresh_at).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -135,16 +135,16 @@ export async function requestPersonalSync(
   }
 
   const views = await listPersonalViews(env.DB, canonical.id);
-  const refreshAt = claim.kind === "accepted"
-    ? claim.requestedAt
-    : canonical.manual_refresh_at ?? now;
+  const cooldownUntil = claim.kind === "accepted"
+    ? new Date(Date.parse(claim.requestedAt) + MANUAL_REFRESH_COOLDOWN_MS).toISOString()
+    : canonical.manual_refresh_at
+      ? new Date(Date.parse(canonical.manual_refresh_at) + MANUAL_REFRESH_COOLDOWN_MS).toISOString()
+      : now;
   return {
     status: "queued",
     run_id: claim.runId,
     affected_subscription_ids: views.map((view) => view.id),
-    cooldown_until: new Date(
-      Date.parse(refreshAt) + MANUAL_REFRESH_COOLDOWN_MS,
-    ).toISOString(),
+    cooldown_until: cooldownUntil,
   };
 }
 
