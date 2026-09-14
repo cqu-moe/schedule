@@ -90,6 +90,32 @@ async function createSetup(userId = "userA") {
 }
 
 describe("dispatchPersonalSetup", () => {
+  it("dispatches the one canonical row in enabled mode", async () => {
+    const send = vi.fn(async () => undefined);
+    const enabledEnv = {
+      ...testEnv(send),
+      PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    } as Env;
+    const setup = await prepareDefaultSubscriptions(
+      enabledEnv,
+      "canonical-user",
+      FULL_CAPS,
+      "active",
+    );
+
+    await dispatchPersonalSetup(enabledEnv, "canonical-user");
+
+    const [canonical] = await db.select().from(subscriptions)
+      .where(eq(subscriptions.userId, "canonical-user"));
+    expect(canonical.sourceType).toBe("personal");
+    expect(send).toHaveBeenCalledWith({
+      subscriptionId: canonical.id,
+      userId: "canonical-user",
+      runId: setup.run_id,
+      trigger: "initial",
+    });
+  });
+
   it("sends one initial message for the shared personal run", async () => {
     const setup = await createSetup();
     const send = vi.fn(async () => undefined);

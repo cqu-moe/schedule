@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import type { ScheduleSyncMessage } from "../cron/schedule-sync";
 import { getPersonalSetup } from "./personal-subscription-setup";
+import { personalSubscriptionMode } from "../config/personal-subscription-mode";
 
 const DISPATCH_LEASE_MS = 60_000;
 
@@ -17,6 +18,8 @@ async function finishOwnedLease(env: Env, userId: string, leaseToken: string): P
 }
 
 export async function dispatchPersonalSetup(env: Env, userId: string): Promise<void> {
+  const mode = personalSubscriptionMode(env);
+  if (mode === "migration") return;
   const nowMs = Date.now();
   const leaseToken = crypto.randomUUID();
   const now = new Date(nowMs).toISOString();
@@ -41,7 +44,9 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
 
   const target = await env.DB.prepare(`SELECT id FROM subscriptions
     WHERE user_id=? AND sync_run_id=?
-      AND source_type IN ('personal_all','personal_courses','personal_exams')
+      AND ${mode === "enabled"
+        ? "source_type='personal'"
+        : "source_type IN ('personal_all','personal_courses','personal_exams')"}
     ORDER BY CASE source_type
       WHEN 'personal_all' THEN 0
       WHEN 'personal_courses' THEN 1
@@ -65,9 +70,10 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
     sync_error_code=CASE WHEN sync_error_code='QUEUE_UNAVAILABLE' THEN NULL ELSE sync_error_code END,
     sync_error_message=CASE WHEN sync_error_code='QUEUE_UNAVAILABLE' THEN NULL ELSE sync_error_message END,
     updated_at=?
-    WHERE user_id=? AND sync_run_id=?
-      AND source_type IN ('personal_all','personal_courses','personal_exams')`)
-    .bind(dispatchTime, dispatchTime, userId, runId)
+    WHERE ${mode === "enabled"
+      ? "id=? AND sync_run_id=? AND source_type='personal'"
+      : "user_id=? AND sync_run_id=? AND source_type IN ('personal_all','personal_courses','personal_exams')"}`)
+    .bind(dispatchTime, dispatchTime, mode === "enabled" ? target.id : userId, runId)
     .run();
 
   try {
@@ -89,9 +95,10 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
       await env.DB.prepare(`UPDATE subscriptions SET sync_status='error',
         sync_finished_at=?, sync_error_code='QUEUE_UNAVAILABLE',
         sync_error_message='同步服务暂时不可用，请稍后重试', updated_at=?
-        WHERE user_id=? AND sync_run_id=?
-          AND source_type IN ('personal_all','personal_courses','personal_exams')`)
-        .bind(failureNow, failureNow, userId, runId)
+        WHERE ${mode === "enabled"
+          ? "id=? AND sync_run_id=? AND source_type='personal'"
+          : "user_id=? AND sync_run_id=? AND source_type IN ('personal_all','personal_courses','personal_exams')"}`)
+        .bind(failureNow, failureNow, mode === "enabled" ? target.id : userId, runId)
         .run();
     }
     throw error;

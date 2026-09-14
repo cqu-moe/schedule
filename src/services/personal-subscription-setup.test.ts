@@ -129,6 +129,46 @@ async function insertLegacySubscription(userId: string) {
 }
 
 describe("prepareDefaultSubscriptions", () => {
+  it("provisions one canonical row and three views in enabled mode regardless of quota", async () => {
+    const enabledEnv = {
+      ...setupEnv,
+      PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    } as Env;
+    const caps = { ...FULL_CAPS, sub_limit: 0 };
+
+    const first = await prepareDefaultSubscriptions(enabledEnv, "userA", caps, "active");
+    const second = await prepareDefaultSubscriptions(enabledEnv, "userA", caps, "active");
+
+    const rows = await db.select().from(subscriptions).where(eq(subscriptions.userId, "userA"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceType).toBe("personal");
+    expect(first.subscription_ids).toHaveLength(3);
+    expect(second.subscription_ids).toEqual(first.subscription_ids);
+    expect(second.run_id).toBe(first.run_id);
+    expect(await db.select().from(calendarLinks)).toHaveLength(3);
+  });
+
+  it.each([
+    ["unbound", "CQU_BINDING_REQUIRED"],
+    [undefined, "CQU_BINDING_STATUS_UNKNOWN"],
+  ] as const)("persists %s binding state without queueing", async (bindingStatus, errorCode) => {
+    const enabledEnv = {
+      ...setupEnv,
+      PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    } as Env;
+    const result = await prepareDefaultSubscriptions(
+      enabledEnv,
+      "userA",
+      FULL_CAPS,
+      bindingStatus,
+    );
+    const [row] = await db.select().from(subscriptions);
+    expect(row.syncStatus).toBe("error");
+    expect(row.syncErrorCode).toBe(errorCode);
+    expect(result.run_id).toBeNull();
+    expect(result.dispatch_status).toBe("sent");
+  });
+
   it("creates three personal views atomically for the session user", async () => {
     const result = await prepareDefaultSubscriptions(setupEnv, "userA", FULL_CAPS);
 

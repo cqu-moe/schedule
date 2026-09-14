@@ -32,6 +32,7 @@ import {
   listPersonalViews,
   resolveOwnedSubscription,
 } from "../../services/personal-subscription-views";
+import { personalSubscriptionMode } from "../../config/personal-subscription-mode";
 
 const app = new Hono<SessionEnv>();
 
@@ -77,6 +78,35 @@ function entitlementError(e: unknown): Response {
 app.get("/", async (c) => {
   const user = c.get("user");
   const db = drizzle(c.env.DB);
+  const mode = personalSubscriptionMode(c.env);
+
+  if (mode === "enabled") {
+    try {
+      const prepared = await prepareDefaultSubscriptions(
+        c.env,
+        user.id,
+        c.get("caps").calendar,
+        c.get("cquBindStatus"),
+      );
+      if (prepared.status === "created" || prepared.status === "resumed") {
+        await dispatchPersonalSetup(c.env, user.id).catch((error) => {
+          console.error(JSON.stringify({
+            event: "subscription.list.dispatch_failed",
+            userId: user.id,
+            error: error instanceof Error ? error.message : String(error),
+          }));
+        });
+      }
+    } catch (error) {
+      if (error instanceof EntitlementError) return entitlementError(error);
+      console.error(JSON.stringify({
+        event: "subscription.list.prepare_failed",
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return errorResponse("DEFAULT_SUBSCRIPTIONS_FAILED", "订阅准备未完成，请重试。", 503);
+    }
+  }
 
   const subs = await db
     .select()
@@ -121,6 +151,7 @@ app.get("/", async (c) => {
   }
 
   const setup = await getPersonalSetup(c.env.DB, user.id);
+  c.header("Cache-Control", "private, no-store");
   return c.json({
     subscriptions: serialized,
     count: serialized.length,
@@ -132,6 +163,15 @@ app.get("/", async (c) => {
 app.post("/defaults", async (c) => {
   const user = c.get("user");
   const caps = c.get("caps").calendar;
+  const mode = personalSubscriptionMode(c.env);
+
+  if (mode === "migration") {
+    return errorResponse(
+      "PERSONAL_SUBSCRIPTION_MIGRATING",
+      "个人课表正在维护，请稍后重试",
+      503,
+    );
+  }
 
   if (!caps.sync) {
     return c.json({
@@ -143,14 +183,14 @@ app.post("/defaults", async (c) => {
   }
 
   const cquBindStatus = c.get("cquBindStatus");
-  if (cquBindStatus === undefined) {
+  if (mode === "legacy" && cquBindStatus === undefined) {
     return errorResponse(
       "CQU_BINDING_STATUS_UNKNOWN",
       "暂时无法确认统一认证绑定状态",
       503,
     );
   }
-  if (cquBindStatus !== "active") {
+  if (mode === "legacy" && cquBindStatus !== "active") {
     return errorResponse(
       "CQU_BINDING_REQUIRED",
       "请先绑定重庆大学统一认证账号",
@@ -160,7 +200,7 @@ app.post("/defaults", async (c) => {
 
   let result: DefaultSubscriptionsResponse;
   try {
-    result = await prepareDefaultSubscriptions(c.env, user.id, caps);
+    result = await prepareDefaultSubscriptions(c.env, user.id, caps, cquBindStatus);
   } catch (error) {
     if (error instanceof EntitlementError) return entitlementError(error);
     console.error(JSON.stringify({

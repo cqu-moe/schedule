@@ -64,6 +64,7 @@ function buildApp(
   caps: CalendarCaps = FULL_CAPS,
   cquBindStatus: CquBindStatus | null = "active",
   database: D1Database = env.DB,
+  personalMode?: "legacy" | "migration" | "enabled",
 ) {
   const send = vi.fn().mockResolvedValue(undefined);
   const app = new Hono<SessionEnv>();
@@ -74,6 +75,7 @@ function buildApp(
     DB: database,
     AUTH: fakeAuth(userId, caps, cquBindStatus ?? undefined),
     SCHEDULE_SYNC_QUEUE: { send },
+    PERSONAL_SUBSCRIPTION_MODE: personalMode,
   };
   return {
     send,
@@ -284,6 +286,31 @@ async function insertCanonicalPersonal(userId: string) {
 // ── GET / (list) ─────────────────────────────────────────────────────────────
 
 describe("GET /api/v2/subscriptions", () => {
+  it("automatically provisions entitled built-in views in enabled mode", async () => {
+    const app = buildApp(
+      "auto-user",
+      capsWith({ sub_limit: 0 }),
+      "active",
+      env.DB,
+      "enabled",
+    );
+    const response = await app.request("/");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    const body = await response.json() as {
+      count: number;
+      subscriptions: Array<{ source_type: string; sync_run_id: string | null }>;
+    };
+    expect(body.count).toBe(3);
+    expect(body.subscriptions.map((item) => item.source_type).sort()).toEqual([
+      "personal_all",
+      "personal_courses",
+      "personal_exams",
+    ]);
+    expect(new Set(body.subscriptions.map((item) => item.sync_run_id)).size).toBe(1);
+    expect(app.send).toHaveBeenCalledTimes(1);
+  });
+
   it("projects one canonical personal row into three legacy-shaped views", async () => {
     const owner = await insertCanonicalPersonal("userA");
     await insertSub("userA", {
