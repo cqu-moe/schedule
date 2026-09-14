@@ -123,6 +123,46 @@ function futureExamTimes(daysAhead = 4) {
 }
 
 describe("processScheduleSyncBatch — organic harvest personal path", () => {
+  it("harvests and commits one canonical row for all built-in views", async () => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal",
+      sourceId: "user-1",
+      syncStatus: "queued",
+      syncRunId: runId,
+      syncTrigger: "manual",
+      syncRequestedAt: new Date().toISOString(),
+    });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
+      ctx: {
+        sessionId: "term-1",
+        semesterInfo: {
+          id: "term-1",
+          name: "测试学期",
+          begin_date: "2026-09-01",
+          end_date: "2027-01-31",
+        },
+      },
+      data: { courses: [], exams: [], semesterStart: "2026-09-01" },
+    });
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+      { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+    ]);
+
+    await processScheduleSyncBatch(batch, {
+      ...testEnv(),
+      PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(harvest).toHaveBeenCalledTimes(1);
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStatus).toBe("success");
+    expect(row?.coursesJson).toBe("[]");
+    expect(messages.filter((message) => message.ack.mock.calls.length === 1)).toHaveLength(1);
+    expect(messages.filter((message) => message.retry.mock.calls.length === 1)).toHaveLength(1);
+  });
+
   it("stores the first successful harvest as a baseline without sending", async () => {
     const sid = await insertSub();
     const send = vi.fn();

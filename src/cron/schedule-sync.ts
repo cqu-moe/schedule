@@ -26,6 +26,8 @@ import {
   publicSyncFailure,
   queueSyncRun,
   isRetryableSyncFailure,
+  claimSubscriptionRun,
+  expireInterruptedRun,
 } from "../services/sync-status";
 import type { PersonalScheduleData } from "../services/sync";
 import {
@@ -37,6 +39,9 @@ import {
   renderScheduleChangeEmail,
 } from "../services/schedule-notifications";
 import { dispatchPendingPersonalSetups } from "../services/personal-setup-dispatch";
+import { personalSubscriptionMode } from "../config/personal-subscription-mode";
+import { executePersonalSync } from "../services/personal-subscription-sync";
+import { resolveOwnedSubscription } from "../services/personal-subscription-views";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
@@ -50,7 +55,7 @@ export interface ScheduleSyncMessage {
    * `"manual"` (user refresh), `"initial"` (just-created subscription), and
    * legacy/undefined always sync, bypassing the due re-check.
    */
-  trigger?: "cron" | "manual" | "initial";
+  trigger?: "cron" | "manual" | "initial" | "admin";
   /** Identifies this attempt so delayed/stale queue messages cannot overwrite a newer run. */
   runId?: string;
 }
@@ -88,6 +93,7 @@ const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
  * refresh. Genuine sub-hourly refresh would require a higher-frequency cron.
  */
 export async function enqueueScheduleSync(env: Env): Promise<void> {
+  const mode = personalSubscriptionMode(env);
   await dispatchPendingPersonalSetups(env);
   console.log(
     JSON.stringify({ event: "cron.schedule_sync.start", message: "Selecting due subscriptions" }),
@@ -119,6 +125,12 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   const due: ScheduleSyncMessage[] = [];
 
   for (const sub of allSubs) {
+    if (mode === "migration" && PERSONAL_SOURCE_TYPES.has(sub.sourceType)) continue;
+    if (
+      mode === "enabled"
+      && sub.sourceType !== "personal"
+      && PERSONAL_SOURCE_TYPES.has(sub.sourceType)
+    ) continue;
     let caps = capsCache.get(sub.userId);
     if (caps === undefined) {
       caps = await readCaps(env, sub.userId);
@@ -157,8 +169,20 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
       && Number.isFinite(activeRunAge)
       && activeRunAge < 2 * 60 * 60_000;
     if (!hasActiveRun && isDue(sub.lastSyncedAt, capsSyncInterval(caps), now)) {
-      const runId = await queueSyncRun(db, sub.id, "cron");
-      due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron", runId });
+      if (sub.sourceType === "personal") {
+        const claim = await claimSubscriptionRun(env.DB, sub.id, "cron", new Date(now).toISOString());
+        if (claim.kind === "accepted") {
+          due.push({
+            subscriptionId: sub.id,
+            userId: sub.userId,
+            trigger: "cron",
+            runId: claim.runId,
+          });
+        }
+      } else {
+        const runId = await queueSyncRun(db, sub.id, "cron");
+        due.push({ subscriptionId: sub.id, userId: sub.userId, trigger: "cron", runId });
+      }
     }
   }
 
@@ -285,6 +309,7 @@ export async function processScheduleSyncBatch(
   env: Env,
 ): Promise<void> {
   const db = drizzle(env.DB);
+  const mode = personalSubscriptionMode(env);
   // One absolute harvest deadline for the whole batch invocation: every
   // message and every harvest phase shares it (auth clamps each operation
   // against it). Never add 13 minutes again per user or per phase.
@@ -322,25 +347,40 @@ export async function processScheduleSyncBatch(
       // capacity wait. NaN when unavailable → the finite retry path is used.
       let runFirstRequestedAt = Number.NaN;
       try {
-        const [sub] = await db
-          .select({
-            id: subscriptions.id,
-            sourceType: subscriptions.sourceType,
-            sourceId: subscriptions.sourceId,
-            sourceName: subscriptions.sourceName,
-            sessionId: subscriptions.sessionId,
-            sessionName: subscriptions.sessionName,
-            lastSyncedAt: subscriptions.lastSyncedAt,
-            syncStatus: subscriptions.syncStatus,
-            syncRunId: subscriptions.syncRunId,
-            syncRequestedAt: subscriptions.syncRequestedAt,
-          })
+        let sub = (await db
+          .select()
           .from(subscriptions)
           .where(eq(subscriptions.id, subscriptionId))
-          .limit(1);
+          .limit(1))[0] as typeof subscriptions.$inferSelect | undefined;
+
+        if (!sub && mode !== "legacy") {
+          const resolved = await resolveOwnedSubscription(env.DB, userId, subscriptionId);
+          sub = resolved?.subscription;
+          if (sub) syncTargetIds = [sub.id];
+        }
 
         if (!sub) {
           // Subscription deleted between enqueue and processing.
+          message.ack();
+          return;
+        }
+        if (sub.userId !== userId) {
+          message.ack();
+          return;
+        }
+        if (mode === "migration" && PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
+          message.ack();
+          return;
+        }
+        if (
+          mode === "enabled"
+          && sub.sourceType !== "personal"
+          && PERSONAL_SOURCE_TYPES.has(sub.sourceType)
+        ) {
+          message.ack();
+          return;
+        }
+        if (sub.sourceType === "personal" && !runId) {
           message.ack();
           return;
         }
@@ -364,6 +404,19 @@ export async function processScheduleSyncBatch(
           message.ack();
           return;
         }
+        if (runId && sub.syncStatus === "running") {
+          const interruptedBefore = new Date(Date.now() - 14 * 60_000).toISOString();
+          if (
+            sub.syncStartedAt
+            && sub.syncStartedAt <= interruptedBefore
+            && await expireInterruptedRun(env.DB, sub.id, runId, interruptedBefore)
+          ) {
+            message.ack();
+            return;
+          }
+          message.retry({ delaySeconds: 60 });
+          return;
+        }
         if (!runId) {
           runId = await queueSyncRun(db, subscriptionId, trigger ?? "admin");
           // queueSyncRun just stamped syncRequestedAt for this new run.
@@ -377,8 +430,9 @@ export async function processScheduleSyncBatch(
             ? Date.parse(sub.syncRequestedAt)
             : Number.NaN;
         }
-        if (!(await markSyncRunning(db, subscriptionId, runId))) {
-          message.ack();
+        if (!(await markSyncRunning(db, sub.id, runId))) {
+          if (sub.sourceType === "personal") message.retry({ delaySeconds: 60 });
+          else message.ack();
           return;
         }
 
@@ -396,7 +450,7 @@ export async function processScheduleSyncBatch(
             await db
               .update(subscriptions)
               .set({ isActive: false, updatedAt: new Date().toISOString() })
-              .where(eq(subscriptions.id, subscriptionId));
+              .where(eq(subscriptions.id, sub.id));
           }
           console.log(
             JSON.stringify({
@@ -408,7 +462,7 @@ export async function processScheduleSyncBatch(
                 : "Caps unresolved; failing closed (skip sync, keep is_active)",
             }),
           );
-          await markSyncError(db, subscriptionId, runId, caps !== null
+          await markSyncError(db, sub.id, runId, caps !== null
             ? { code: "FEATURE_NOT_ENABLED", message: "日历同步未开通" }
             : { code: "CAPS_UNAVAILABLE", message: "暂时无法确认同步权限，请稍后重试" });
           message.ack();
@@ -430,7 +484,7 @@ export async function processScheduleSyncBatch(
               message: "Already synced within interval; dropping duplicate",
             }),
           );
-          await markSyncSuccess(db, subscriptionId, runId);
+          await markSyncSuccess(db, sub.id, runId);
           message.ack();
           return;
         }
@@ -452,10 +506,28 @@ export async function processScheduleSyncBatch(
               message: "External subscription has no harvest path; acking without sync",
             }),
           );
-          await markSyncError(db, subscriptionId, runId, {
+          await markSyncError(db, sub.id, runId, {
             code: "EXTERNAL_SYNC_UNAVAILABLE",
             message: "外部订阅同步暂不可用",
           });
+          message.ack();
+          return;
+        }
+
+        if (sub.sourceType === "personal") {
+          syncTargetIds = [sub.id];
+          const result = await executePersonalSync(env, sub, runId, deadlineAt);
+          if (result.committed) {
+            try {
+              await processBatchPersonalNotification(userId, result.data, caps);
+            } catch {
+              console.error(JSON.stringify({
+                event: "queue.schedule_notification.processing_failed",
+                userId,
+                reason: "notification_processing_failed",
+              }));
+            }
+          }
           message.ack();
           return;
         }

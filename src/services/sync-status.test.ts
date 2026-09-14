@@ -7,7 +7,10 @@ import {
   isRetryableSyncFailure,
   publicSyncFailure,
   claimSubscriptionRun,
+  markSyncRunning,
+  expireInterruptedRun,
 } from "./sync-status";
+import { drizzle } from "drizzle-orm/d1";
 import { resetPersonalData, seedPersonal } from "../../tests/fixtures/personal-subscriptions";
 
 beforeAll(async () => {
@@ -29,6 +32,46 @@ describe("claimSubscriptionRun", () => {
     expect(claims.filter((claim) => claim.kind === "accepted")).toHaveLength(1);
     expect(claims.filter((claim) => claim.kind === "active")).toHaveLength(1);
     expect(new Set(claims.map((claim) => "runId" in claim ? claim.runId : null)).size).toBe(1);
+  });
+
+  it("allows only one queued-to-running transition", async () => {
+    const { id } = await seedPersonal(env.DB, "start-user");
+    const claim = await claimSubscriptionRun(env.DB, id, "cron", new Date().toISOString());
+    if (claim.kind !== "accepted") throw new Error("expected accepted claim");
+    const starts = await Promise.all([
+      markSyncRunning(drizzle(env.DB), id, claim.runId),
+      markSyncRunning(drizzle(env.DB), id, claim.runId),
+    ]);
+    expect(starts.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("expires only an old running instance and preserves its data", async () => {
+    const { id } = await seedPersonal(env.DB, "interrupted-user");
+    const claim = await claimSubscriptionRun(env.DB, id, "cron", new Date().toISOString());
+    if (claim.kind !== "accepted") throw new Error("expected accepted claim");
+    await markSyncRunning(drizzle(env.DB), id, claim.runId);
+    const old = new Date(Date.now() - 15 * 60_000).toISOString();
+    await env.DB.prepare(`UPDATE subscriptions SET sync_started_at=?,courses_json='[]' WHERE id=?`)
+      .bind(old, id)
+      .run();
+
+    expect(await expireInterruptedRun(
+      env.DB,
+      id,
+      claim.runId,
+      new Date(Date.now() - 14 * 60_000).toISOString(),
+    )).toBe(true);
+    const row = await env.DB.prepare(`SELECT sync_status,sync_error_code,courses_json
+      FROM subscriptions WHERE id=?`).bind(id).first<{
+        sync_status: string;
+        sync_error_code: string;
+        courses_json: string;
+      }>();
+    expect(row).toEqual({
+      sync_status: "error",
+      sync_error_code: "SYNC_INTERRUPTED",
+      courses_json: "[]",
+    });
   });
 });
 

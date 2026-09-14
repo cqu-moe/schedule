@@ -110,6 +110,36 @@ async function insertSub(
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("enqueueScheduleSync (producer)", () => {
+  it("enqueues only one canonical personal run in enabled mode", async () => {
+    const sid = await insertSub({
+      sourceType: "personal",
+      sourceId: "user-1",
+      lastSyncedAt: null,
+      syncStatus: "idle",
+    });
+    await insertSub({
+      sourceType: "personal_courses",
+      sourceId: "user-1",
+      sourceName: "legacy row",
+    });
+    const sendBatch = vi.fn(async () => undefined);
+
+    await enqueueScheduleSync({
+      ...env,
+      PERSONAL_SUBSCRIPTION_MODE: "enabled",
+      SCHEDULE_SYNC_QUEUE: { sendBatch },
+    } as unknown as Env);
+
+    const messages = sendBatch.mock.calls[0][0] as Array<{ body: ScheduleSyncMessage }>;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].body).toMatchObject({
+      subscriptionId: sid,
+      userId: "user-1",
+      trigger: "cron",
+      runId: expect.any(String),
+    });
+  });
+
   it("recovers one pending personal setup message before selecting cron work", async () => {
     const runId = crypto.randomUUID();
     const sid = await insertSub({

@@ -9,6 +9,14 @@ import { dispatchPersonalSetup } from "./personal-setup-dispatch";
 import { claimSubscriptionRun, markSyncError } from "./sync-status";
 import { drizzle } from "drizzle-orm/d1";
 import { CHINA_TZ_OFFSET_MS } from "../utils/time";
+import type { Subscription } from "../db/schema";
+import { fetchPersonalHarvest } from "./cqu-harvest";
+import {
+  applySyncResult,
+  buildPersonalSyncResult,
+  preGenerateIcs,
+  type PersonalScheduleData,
+} from "./sync";
 
 const MANUAL_REFRESH_COOLDOWN_MS = 5 * 60_000;
 
@@ -138,4 +146,26 @@ export async function requestPersonalSync(
       Date.parse(refreshAt) + MANUAL_REFRESH_COOLDOWN_MS,
     ).toISOString(),
   };
+}
+
+export async function executePersonalSync(
+  env: Env,
+  subscription: Subscription,
+  runId: string,
+  deadlineAt: number,
+): Promise<{ committed: boolean; data: PersonalScheduleData }> {
+  if (subscription.sourceType !== "personal") {
+    throw new Error("PERSONAL_SYNC_REQUIRES_CANONICAL_SUBSCRIPTION");
+  }
+  const { ctx, data } = await fetchPersonalHarvest(env, subscription.userId, { deadlineAt });
+  const ics = preGenerateIcs(data, subscription.sourceId);
+  const committed = await applySyncResult(
+    drizzle(env.DB),
+    subscription.id,
+    buildPersonalSyncResult("personal", data, ics),
+    ctx,
+    { sessionName: subscription.sessionName },
+    runId,
+  );
+  return { committed, data };
 }

@@ -140,7 +140,7 @@ export function buildPersonalSyncResult(
   let coursesJson: string | null;
   let examsJson: string | null;
 
-  if (sourceType === "personal_all") {
+  if (sourceType === "personal" || sourceType === "personal_all") {
     icsContent = ics.examsIcs ? mergeIcs(ics.coursesIcs, ics.examsIcs) : ics.coursesIcs;
     coursesJson = JSON.stringify(data.courses);
     examsJson = data.exams.length > 0 ? JSON.stringify(data.exams) : null;
@@ -198,9 +198,9 @@ export async function applySyncResult(
   ctx: SessionContext,
   fallback: { sessionName: string | null },
   syncRunId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const now = new Date().toISOString();
-  await db
+  const updateResult = await db
     .update(subscriptions)
     .set({
       icsContent: result.icsContent,
@@ -218,6 +218,11 @@ export async function applySyncResult(
       updatedAt: now,
     })
     .where(syncRunId
-      ? and(eq(subscriptions.id, subId), eq(subscriptions.syncRunId, syncRunId))
+      ? and(
+          eq(subscriptions.id, subId),
+          eq(subscriptions.syncRunId, syncRunId),
+          eq(subscriptions.syncStatus, "running"),
+        )
       : eq(subscriptions.id, subId));
+  return (updateResult.meta?.changes ?? 0) === 1;
 }

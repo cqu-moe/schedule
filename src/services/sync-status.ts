@@ -121,7 +121,11 @@ export async function markSyncRunning(db: Db, subscriptionId: string, runId: str
     syncErrorCode: null,
     syncErrorMessage: null,
     updatedAt: now,
-  }).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.syncRunId, runId)));
+  }).where(and(
+    eq(subscriptions.id, subscriptionId),
+    eq(subscriptions.syncRunId, runId),
+    eq(subscriptions.syncStatus, "queued"),
+  ));
   return (result.meta?.changes ?? 0) > 0;
 }
 
@@ -138,7 +142,11 @@ export async function markSyncError(
     syncErrorCode: failure.code,
     syncErrorMessage: failure.message,
     updatedAt: now,
-  }).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.syncRunId, runId)));
+  }).where(and(
+    eq(subscriptions.id, subscriptionId),
+    eq(subscriptions.syncRunId, runId),
+    inArray(subscriptions.syncStatus, ["queued", "running"]),
+  ));
 }
 
 export async function markSyncSuccess(db: Db, subscriptionId: string, runId: string): Promise<void> {
@@ -149,7 +157,11 @@ export async function markSyncSuccess(db: Db, subscriptionId: string, runId: str
     syncErrorCode: null,
     syncErrorMessage: null,
     updatedAt: now,
-  }).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.syncRunId, runId)));
+  }).where(and(
+    eq(subscriptions.id, subscriptionId),
+    eq(subscriptions.syncRunId, runId),
+    eq(subscriptions.syncStatus, "running"),
+  ));
 }
 
 export async function markSyncRetrying(
@@ -165,7 +177,28 @@ export async function markSyncRetrying(
     syncErrorCode: failure.code,
     syncErrorMessage: failure.message,
     updatedAt: now,
-  }).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.syncRunId, runId)));
+  }).where(and(
+    eq(subscriptions.id, subscriptionId),
+    eq(subscriptions.syncRunId, runId),
+    eq(subscriptions.syncStatus, "running"),
+  ));
+}
+
+export async function expireInterruptedRun(
+  database: D1Database,
+  subscriptionId: string,
+  runId: string,
+  startedBefore: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await database.prepare(`UPDATE subscriptions SET sync_status='error',
+    sync_finished_at=?,sync_error_code='SYNC_INTERRUPTED',
+    sync_error_message='同步任务已中断，请重试',updated_at=?
+    WHERE id=? AND sync_run_id=? AND sync_status='running'
+      AND sync_started_at IS NOT NULL AND sync_started_at<=?`)
+    .bind(now, now, subscriptionId, runId, startedBefore)
+    .run();
+  return (result.meta.changes ?? 0) === 1;
 }
 
 export function isRetryableSyncFailure(error: unknown): boolean {
