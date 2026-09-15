@@ -30,7 +30,7 @@ export async function claimSubscriptionRun(
     manual_refresh_at=CASE WHEN ?='manual' THEN ? ELSE manual_refresh_at END,
     sync_run_id=?,sync_trigger=?,sync_status='queued',sync_requested_at=?,
     sync_started_at=NULL,sync_finished_at=NULL,sync_error_code=NULL,
-    sync_error_message=NULL,updated_at=?
+    sync_error_message=NULL,session_recovery_attempts=0,updated_at=?
     WHERE id=? AND source_type='personal'
       AND (? != 'manual' OR manual_refresh_at IS NULL OR manual_refresh_at<=?)
       AND (sync_status NOT IN ('queued','running') OR sync_requested_at IS NULL
@@ -107,6 +107,7 @@ export async function queueSyncRuns(
     syncFinishedAt: null,
     syncErrorCode: null,
     syncErrorMessage: null,
+    sessionRecoveryAttempts: 0,
     updatedAt: now,
   }).where(inArray(subscriptions.id, subscriptionIds));
   return runId;
@@ -127,6 +128,20 @@ export async function markSyncRunning(db: Db, subscriptionId: string, runId: str
     eq(subscriptions.syncStatus, "queued"),
   ));
   return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function claimSessionRecoveryAttempt(
+  database: D1Database,
+  subscriptionId: string,
+  runId: string,
+): Promise<number | null> {
+  const row = await database.prepare(`UPDATE subscriptions
+    SET session_recovery_attempts=session_recovery_attempts+1
+    WHERE id=? AND sync_run_id=? AND sync_status='running'
+    RETURNING session_recovery_attempts`)
+    .bind(subscriptionId, runId)
+    .first<{ session_recovery_attempts: number }>();
+  return row?.session_recovery_attempts ?? null;
 }
 
 export async function markSyncError(
@@ -203,7 +218,7 @@ export async function expireInterruptedRun(
 
 export function isRetryableSyncFailure(error: unknown): boolean {
   if (!(error instanceof HarvestError)) return true;
-  return !/NEEDS_REAUTH|SESSION_INACTIVE|FEATURE_NOT_ENABLED|INVALID_HARVEST_URL/i.test(error.message);
+  return !/NEEDS_REAUTH|FEATURE_NOT_ENABLED|INVALID_HARVEST_URL/i.test(error.message);
 }
 
 /**
@@ -221,10 +236,13 @@ export function capacityWaitFailure(error: unknown): PublicSyncFailure {
 
 export function publicSyncFailure(error: unknown): PublicSyncFailure {
   if (error instanceof HarvestError) {
-    if (/NEEDS_REAUTH|SESSION_INACTIVE/i.test(error.message)) {
+    if (/NEEDS_REAUTH/i.test(error.message)) {
       return { code: "NEEDS_REAUTH", message: "登录状态已失效，请到账号设置重新绑定" };
     }
     const stableCode = /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : "HARVEST_FAILED";
+    if (stableCode === "SESSION_INACTIVE" || stableCode === "TGT_EXPIRED") {
+      return { code: stableCode, message: "登录状态正在恢复，稍后自动重试" };
+    }
     if (stableCode === "BROWSER_DEADLINE" || stableCode === "BROWSER_INSTANCE_REPLACED") {
       // Controlled transient infrastructure failure — the message must never
       // read like a password/account problem to the user.

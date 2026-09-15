@@ -281,7 +281,7 @@ async function prepareCanonicalDefaultSubscriptions(
       : "请先绑定重庆大学统一认证账号";
     await env.DB.prepare(`UPDATE subscriptions SET sync_status='error',sync_run_id=NULL,
       sync_trigger=NULL,sync_requested_at=NULL,sync_started_at=NULL,sync_finished_at=?,
-      sync_error_code=?,sync_error_message=?,updated_at=? WHERE id=?`)
+      sync_error_code=?,sync_error_message=?,session_recovery_attempts=0,updated_at=? WHERE id=?`)
       .bind(now, errorCode, errorMessage, now, canonical.id)
       .run();
   }
@@ -291,7 +291,8 @@ async function prepareCanonicalDefaultSubscriptions(
     const runId = crypto.randomUUID();
     const claimed = await env.DB.prepare(`UPDATE subscriptions SET sync_status='queued',
       sync_run_id=?,sync_trigger='initial',sync_requested_at=?,sync_started_at=NULL,
-      sync_finished_at=NULL,sync_error_code=NULL,sync_error_message=NULL,updated_at=?
+      sync_finished_at=NULL,sync_error_code=NULL,sync_error_message=NULL,
+      session_recovery_attempts=0,updated_at=?
       WHERE id=? AND last_synced_at IS NULL
         AND (sync_status NOT IN ('queued','running') OR sync_requested_at IS NULL OR sync_requested_at<=?)`)
       .bind(runId, now, now, canonical.id, activeCutoff)

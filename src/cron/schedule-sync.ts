@@ -11,7 +11,12 @@ import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
 import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
-import { capacityRetryDelay, CAPACITY_RETRY_CODES } from "../services/sync-retry-policy";
+import {
+  capacityRetryDelay,
+  CAPACITY_RETRY_CODES,
+  sessionRecoveryRetryDelay,
+  SESSION_RECOVERY_RETRY_CODES,
+} from "../services/sync-retry-policy";
 import {
   buildPersonalSyncResult,
   applySyncResult,
@@ -27,6 +32,7 @@ import {
   queueSyncRun,
   isRetryableSyncFailure,
   claimSubscriptionRun,
+  claimSessionRecoveryAttempt,
   expireInterruptedRun,
 } from "../services/sync-status";
 import type { PersonalScheduleData } from "../services/sync";
@@ -599,6 +605,52 @@ export async function processScheduleSyncBatch(
         if (e instanceof HarvestError) {
           const attempt = message.attempts ?? 1;
           const failure = publicSyncFailure(e);
+          if (runId && SESSION_RECOVERY_RETRY_CODES.has(failure.code)) {
+            const recoveryAttempt = await claimSessionRecoveryAttempt(
+              env.DB,
+              subscriptionId,
+              runId,
+            );
+            if (recoveryAttempt === null) {
+              message.ack();
+              return;
+            }
+            const delaySeconds = sessionRecoveryRetryDelay(
+              failure.code,
+              runFirstRequestedAt,
+              Date.now(),
+              recoveryAttempt,
+            );
+            if (delaySeconds !== null) {
+              await Promise.all(syncTargetIds.map(targetId =>
+                markSyncRetrying(db, targetId, runId!, failure)));
+              console.warn(JSON.stringify({
+                event: "queue.schedule_sync.session_recovery_retry",
+                subscriptionId,
+                attempt: recoveryAttempt,
+                delaySeconds,
+                error: e.message,
+                message: "CQU session is recovering; scheduling bounded retry",
+              }));
+              message.retry({ delaySeconds });
+              return;
+            }
+            const exhaustedFailure = {
+              code: failure.code,
+              message: "登录状态暂未恢复，本次同步已结束，请稍后重试",
+            };
+            await Promise.all(syncTargetIds.map(targetId =>
+              markSyncError(db, targetId, runId!, exhaustedFailure)));
+            console.warn(JSON.stringify({
+              event: "queue.schedule_sync.session_recovery_exhausted",
+              subscriptionId,
+              attempt: recoveryAttempt,
+              error: e.message,
+              message: "Session recovery budget exhausted; keeping cached calendar",
+            }));
+            message.ack();
+            return;
+          }
           // Capacity-wait branch, checked BEFORE the generic transient retry:
           // a busy browser pool is a capacity signal, so the run waits with
           // its own bounded 60-90s backoff

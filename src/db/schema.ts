@@ -58,6 +58,7 @@ export const subscriptions = sqliteTable(
     syncFinishedAt: text("sync_finished_at"),
     syncErrorCode: text("sync_error_code"),
     syncErrorMessage: text("sync_error_message"),
+    sessionRecoveryAttempts: integer("session_recovery_attempts").notNull().default(0),
 
     /** Last accepted manual refresh. Personal trio rows share the same value. */
     manualRefreshAt: text("manual_refresh_at"),

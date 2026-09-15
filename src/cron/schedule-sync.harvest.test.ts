@@ -29,6 +29,7 @@ beforeAll(async () => {
       sync_status text NOT NULL DEFAULT 'idle', sync_run_id text, sync_trigger text,
       sync_requested_at text, sync_started_at text, sync_finished_at text,
       sync_error_code text, sync_error_message text,
+      session_recovery_attempts integer NOT NULL DEFAULT 0,
       manual_refresh_at text,
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
@@ -409,6 +410,205 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
+  it.each(["TGT_EXPIRED", "SESSION_INACTIVE"])(
+    "keeps old calendar data while %s waits in the shared recovery budget",
+    async (code) => {
+      const requestedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+      const runId = crypto.randomUUID();
+      const sid = await insertSub({
+        sourceType: "personal",
+        sourceId: "user-1",
+        syncStatus: "queued",
+        syncRunId: runId,
+        syncRequestedAt: requestedAt,
+        lastSyncedAt: "2026-09-01T00:00:00.000Z",
+        icsContent: "BEGIN:VCALENDAR\r\nOLD\r\nEND:VCALENDAR\r\n",
+        coursesJson: '[{"name":"old-course"}]',
+        examsJson: '[{"name":"old-exam"}]',
+      });
+      vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError(code));
+      const { batch, messages } = makeBatch([
+        { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+      ], code === "TGT_EXPIRED" ? 1 : 2);
+
+      await processScheduleSyncBatch(batch, {
+        ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+      });
+
+      expect(messages[0].retry).toHaveBeenCalledWith({
+        delaySeconds: 60,
+      });
+      expect(messages[0].ack).not.toHaveBeenCalled();
+      const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+      expect(row).toMatchObject({
+        syncStatus: "queued",
+        syncErrorCode: code,
+        lastSyncedAt: "2026-09-01T00:00:00.000Z",
+        icsContent: "BEGIN:VCALENDAR\r\nOLD\r\nEND:VCALENDAR\r\n",
+        coursesJson: '[{"name":"old-course"}]',
+        examsJson: '[{"name":"old-exam"}]',
+        isActive: true,
+      });
+    },
+  );
+
+  it("ends recovery after 30 minutes without erasing the last usable calendar", async () => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      icsContent: "OLD", coursesJson: "[]", examsJson: "[]",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest")
+      .mockRejectedValue(new HarvestError("SESSION_INACTIVE"));
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+    ], 5);
+
+    await processScheduleSyncBatch(batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row).toMatchObject({
+      syncStatus: "error",
+      syncErrorCode: "SESSION_INACTIVE",
+      syncErrorMessage: "登录状态暂未恢复，本次同步已结束，请稍后重试",
+      icsContent: "OLD",
+    });
+    expect(row?.syncErrorMessage).not.toContain("自动重试");
+    expect(row?.syncErrorMessage).not.toContain("重新绑定");
+  });
+
+  it("does not reset recovery when TGT_EXPIRED becomes SESSION_INACTIVE", async () => {
+    const runId = crypto.randomUUID();
+    const requestedAt = new Date(Date.now() - 6 * 60_000).toISOString();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: requestedAt, icsContent: "OLD",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest")
+      .mockRejectedValueOnce(new HarvestError("TGT_EXPIRED"))
+      .mockRejectedValueOnce(new HarvestError("SESSION_INACTIVE"));
+    const body = { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" as const };
+    const first = makeBatch([body], 1);
+    await processScheduleSyncBatch(first.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+    const second = makeBatch([body], 2);
+    await processScheduleSyncBatch(second.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(first.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 60 });
+    expect(second.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row).toMatchObject({
+      syncStatus: "queued",
+      syncRequestedAt: requestedAt,
+      syncErrorCode: "SESSION_INACTIVE",
+      icsContent: "OLD",
+    });
+  });
+
+  it("starts session recovery at 60s after eleven capacity deliveries", async () => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: new Date(Date.now() - 10 * 60_000).toISOString(), icsContent: "OLD",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest")
+      .mockRejectedValueOnce(new HarvestError("TGT_EXPIRED"))
+      .mockRejectedValueOnce(new HarvestError("SESSION_INACTIVE"));
+    const body = { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" as const };
+    const first = makeBatch([body], 12);
+    await processScheduleSyncBatch(first.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+    const second = makeBatch([body], 13);
+    await processScheduleSyncBatch(second.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(first.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 60 });
+    expect(second.messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+    const row = await env.DB.prepare(
+      "SELECT session_recovery_attempts,sync_error_code FROM subscriptions WHERE id=?",
+    ).bind(sid).first<{ session_recovery_attempts: number; sync_error_code: string }>();
+    expect(row).toEqual({ session_recovery_attempts: 2, sync_error_code: "SESSION_INACTIVE" });
+  });
+
+  it("commits fresh calendar data when the same recovery run later succeeds", async () => {
+    const runId = crypto.randomUUID();
+    const requestedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: requestedAt, icsContent: "OLD", coursesJson: '[{"name":"old"}]',
+      examsJson: "[]", lastSyncedAt: "2026-09-01T00:00:00.000Z",
+    });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest")
+      .mockRejectedValueOnce(new HarvestError("TGT_EXPIRED"))
+      .mockResolvedValueOnce({
+        ctx: {
+          sessionId: "term-new",
+          semesterInfo: {
+            id: "term-new", name: "2026秋", begin_date: "2026-09-07", end_date: "2027-01-15",
+          },
+        },
+        data: {
+          courses: [{
+            name: "new-course", lecturer: "teacher", room: "A101", position: "A101",
+            day_of_week: 1, start_session: 1, end_session: 2, weeks: [1],
+          }],
+          exams: [],
+          semesterStart: "2026-09-07",
+        },
+      });
+    const body = { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" as const };
+    const first = makeBatch([body], 1);
+    await processScheduleSyncBatch(first.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+    const second = makeBatch([body], 2);
+    await processScheduleSyncBatch(second.batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(first.messages[0].retry).toHaveBeenCalledOnce();
+    expect(second.messages[0].ack).toHaveBeenCalledOnce();
+    expect(harvest).toHaveBeenCalledTimes(2);
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStatus).toBe("success");
+    expect(row?.syncRunId).toBe(runId);
+    expect(row?.coursesJson).toContain("new-course");
+    expect(row?.coursesJson).not.toContain('"old"');
+    expect(row?.icsContent).not.toBe("OLD");
+    expect(row?.lastSyncedAt).not.toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("requires rebind immediately only for NEEDS_REAUTH", async () => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: new Date().toISOString(), icsContent: "OLD",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("NEEDS_REAUTH"));
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+    ]);
+
+    await processScheduleSyncBatch(batch, {
+      ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled",
+    });
+
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row).toMatchObject({ syncErrorCode: "NEEDS_REAUTH", icsContent: "OLD" });
+  });
+
   it("persists a safe error after transient HarvestError retries are exhausted", async () => {
     const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
     vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
@@ -608,6 +808,7 @@ describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY)", () => {
       syncStatus: "running",
       syncRunId: "newer-run",
       syncRequestedAt: new Date().toISOString(),
+      sessionRecoveryAttempts: 4,
     });
     const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
 
@@ -621,5 +822,6 @@ describe("processScheduleSyncBatch — capacity wait (BROWSER_BUSY)", () => {
     const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
     expect(row?.syncStatus).toBe("running");
     expect(row?.syncRunId).toBe("newer-run");
+    expect(row?.sessionRecoveryAttempts).toBe(4);
   });
 });

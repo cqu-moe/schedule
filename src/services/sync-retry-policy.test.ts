@@ -3,6 +3,9 @@ import {
   capacityRetryDelay,
   CAPACITY_RETRY_MAX_ATTEMPTS,
   CAPACITY_RETRY_WINDOW_MS,
+  sessionRecoveryRetryDelay,
+  SESSION_RECOVERY_MAX_ATTEMPTS,
+  SESSION_RECOVERY_WINDOW_MS,
 } from "./sync-retry-policy";
 
 const NOW = 1_800_000_000_000;
@@ -61,5 +64,39 @@ describe("capacityRetryDelay", () => {
   it("treats non-finite jitter as 0", () => {
     expect(capacityRetryDelay("BROWSER_BUSY", NOW - 60_000, NOW, 1, Number.NaN)).toBe(60);
     expect(capacityRetryDelay("BROWSER_BUSY", NOW - 60_000, NOW, 1, Number.POSITIVE_INFINITY)).toBe(60);
+  });
+});
+
+describe("sessionRecoveryRetryDelay", () => {
+  it("shares one recovery schedule across inactive and expired states", () => {
+    expect(sessionRecoveryRetryDelay("TGT_EXPIRED", NOW - 1_000, NOW, 1)).toBe(60);
+    expect(sessionRecoveryRetryDelay("SESSION_INACTIVE", NOW - 61_000, NOW, 2)).toBe(120);
+    expect(sessionRecoveryRetryDelay("TGT_EXPIRED", NOW - 181_000, NOW, 3)).toBe(300);
+    expect(sessionRecoveryRetryDelay("SESSION_INACTIVE", NOW - 481_000, NOW, 9)).toBe(300);
+    expect(SESSION_RECOVERY_MAX_ATTEMPTS).toBeGreaterThanOrEqual(10);
+  });
+
+  it("never puts credentials or WAF failures into the session recovery loop", () => {
+    for (const code of ["NEEDS_REAUTH", "WAF_CHALLENGE", "HARVEST_TRANSIENT"]) {
+      expect(sessionRecoveryRetryDelay(code, NOW - 1_000, NOW, 1)).toBeNull();
+    }
+  });
+
+  it("stops at the persisted 30-minute boundary or attempt ceiling", () => {
+    expect(sessionRecoveryRetryDelay(
+      "SESSION_INACTIVE", NOW - SESSION_RECOVERY_WINDOW_MS + 1, NOW, 2,
+    )).toBe(120);
+    expect(sessionRecoveryRetryDelay(
+      "SESSION_INACTIVE", NOW - SESSION_RECOVERY_WINDOW_MS, NOW, 2,
+    )).toBeNull();
+    expect(sessionRecoveryRetryDelay(
+      "SESSION_INACTIVE", NOW - 1_000, NOW, SESSION_RECOVERY_MAX_ATTEMPTS,
+    )).toBeNull();
+  });
+
+  it("fails closed for missing, future, or invalid persisted anchors", () => {
+    expect(sessionRecoveryRetryDelay("SESSION_INACTIVE", Number.NaN, NOW, 1)).toBeNull();
+    expect(sessionRecoveryRetryDelay("SESSION_INACTIVE", NOW + 1, NOW, 1)).toBeNull();
+    expect(sessionRecoveryRetryDelay("SESSION_INACTIVE", NOW - 1, NOW, 0)).toBeNull();
   });
 });

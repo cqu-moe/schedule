@@ -279,7 +279,8 @@ export async function migratePersonalUser(
     source_name='个人课表',is_personal=1,session_id=?,session_name=?,semester_start=?,
     ics_content=?,courses_json=?,exams_json=?,last_synced_at=?,manual_refresh_at=?,
     sync_status=?,sync_run_id=NULL,sync_trigger=NULL,sync_requested_at=NULL,
-    sync_started_at=NULL,sync_finished_at=?,sync_error_code=?,sync_error_message=?,updated_at=?
+    sync_started_at=NULL,sync_finished_at=?,sync_error_code=?,sync_error_message=?,
+    session_recovery_attempts=0,updated_at=?
     WHERE id=? AND user_id=?`)
     .bind(
       userId,

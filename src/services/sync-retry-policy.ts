@@ -21,6 +21,36 @@ export const CAPACITY_RETRY_WINDOW_MS = 45 * 60_000;
 /** …and at most 45 delivery attempts (the queue platform max_retries is 45). */
 export const CAPACITY_RETRY_MAX_ATTEMPTS = 45;
 
+export const SESSION_RECOVERY_RETRY_CODES: ReadonlySet<string> = new Set([
+  "SESSION_INACTIVE",
+  "TGT_EXPIRED",
+]);
+export const SESSION_RECOVERY_WINDOW_MS = 30 * 60_000;
+export const SESSION_RECOVERY_MAX_ATTEMPTS = 12;
+const SESSION_RECOVERY_DELAYS_SECONDS = [60, 120, 300] as const;
+
+/**
+ * Delay one session-recovery delivery against the sync run's original D1
+ * request time. Both expiry codes use this same clock, so a TGT_EXPIRED ->
+ * SESSION_INACTIVE transition cannot reset the recovery budget.
+ */
+export function sessionRecoveryRetryDelay(
+  code: string,
+  firstRequestedAt: number,
+  now: number,
+  attempts: number,
+): number | null {
+  if (!SESSION_RECOVERY_RETRY_CODES.has(code)) return null;
+  if (!Number.isFinite(firstRequestedAt) || !Number.isFinite(now)) return null;
+  if (now < firstRequestedAt || now - firstRequestedAt >= SESSION_RECOVERY_WINDOW_MS) return null;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts >= SESSION_RECOVERY_MAX_ATTEMPTS) {
+    return null;
+  }
+  return SESSION_RECOVERY_DELAYS_SECONDS[
+    Math.min(attempts - 1, SESSION_RECOVERY_DELAYS_SECONDS.length - 1)
+  ];
+}
+
 /**
  * Seconds to delay the next capacity retry, or null when the run must STOP
  * waiting: non-capacity code, missing/invalid/future firstRequestedAt, the

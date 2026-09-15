@@ -59,6 +59,7 @@ beforeAll(async () => {
     sync_finished_at text,
     sync_error_code text,
     sync_error_message text,
+    session_recovery_attempts integer NOT NULL DEFAULT 0,
     manual_refresh_at text,
     created_at text NOT NULL,
     updated_at text NOT NULL

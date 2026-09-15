@@ -9,6 +9,7 @@ import {
   claimSubscriptionRun,
   markSyncRunning,
   expireInterruptedRun,
+  claimSessionRecoveryAttempt,
 } from "./sync-status";
 import { drizzle } from "drizzle-orm/d1";
 import { resetPersonalData, seedPersonal } from "../../tests/fixtures/personal-subscriptions";
@@ -75,11 +76,50 @@ describe("claimSubscriptionRun", () => {
   });
 });
 
+describe("claimSessionRecoveryAttempt", () => {
+  it("increments only the owned running generation and resets on a new run", async () => {
+    const { id } = await seedPersonal(env.DB, "recovery-counter-user");
+    const first = await claimSubscriptionRun(env.DB, id, "manual", new Date().toISOString());
+    if (first.kind !== "accepted") throw new Error("expected accepted claim");
+    await markSyncRunning(drizzle(env.DB), id, first.runId);
+    expect(await claimSessionRecoveryAttempt(env.DB, id, first.runId)).toBe(1);
+    expect(await claimSessionRecoveryAttempt(env.DB, id, "stale-run")).toBeNull();
+    expect(await claimSessionRecoveryAttempt(env.DB, id, first.runId)).toBe(2);
+
+    await env.DB.prepare("UPDATE subscriptions SET sync_status='error' WHERE id=?")
+      .bind(id).run();
+    expect(await claimSessionRecoveryAttempt(env.DB, id, first.runId)).toBeNull();
+    const terminal = await env.DB.prepare(
+      "SELECT session_recovery_attempts FROM subscriptions WHERE id=?",
+    ).bind(id).first<{ session_recovery_attempts: number }>();
+    expect(terminal?.session_recovery_attempts).toBe(2);
+    const second = await claimSubscriptionRun(env.DB, id, "cron", new Date().toISOString());
+    if (second.kind !== "accepted") throw new Error("expected second accepted claim");
+    await markSyncRunning(drizzle(env.DB), id, second.runId);
+    expect(await claimSessionRecoveryAttempt(env.DB, id, second.runId)).toBe(1);
+    const row = await env.DB.prepare(
+      "SELECT session_recovery_attempts FROM subscriptions WHERE id=?",
+    ).bind(id).first<{ session_recovery_attempts: number }>();
+    expect(row?.session_recovery_attempts).toBe(1);
+  });
+});
+
 describe("publicSyncFailure", () => {
   it("maps reauth failures to the rebind message", () => {
     expect(publicSyncFailure(new HarvestError("NEEDS_REAUTH"))).toEqual({
       code: "NEEDS_REAUTH",
       message: "登录状态已失效，请到账号设置重新绑定",
+    });
+  });
+
+  it("keeps recoverable session states distinct from credential failure", () => {
+    expect(publicSyncFailure(new HarvestError("SESSION_INACTIVE"))).toEqual({
+      code: "SESSION_INACTIVE",
+      message: "登录状态正在恢复，稍后自动重试",
+    });
+    expect(publicSyncFailure(new HarvestError("TGT_EXPIRED"))).toEqual({
+      code: "TGT_EXPIRED",
+      message: "登录状态正在恢复，稍后自动重试",
     });
   });
 
@@ -143,11 +183,15 @@ describe("isRetryableSyncFailure", () => {
   it("keeps user-action failures non-retryable", () => {
     for (const code of [
       "NEEDS_REAUTH",
-      "SESSION_INACTIVE",
       "FEATURE_NOT_ENABLED",
       "INVALID_HARVEST_URL",
     ]) {
       expect(isRetryableSyncFailure(new HarvestError(code))).toBe(false);
     }
+  });
+
+  it("keeps recoverable session states retryable", () => {
+    expect(isRetryableSyncFailure(new HarvestError("SESSION_INACTIVE"))).toBe(true);
+    expect(isRetryableSyncFailure(new HarvestError("TGT_EXPIRED"))).toBe(true);
   });
 });
