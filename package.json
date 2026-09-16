@@ -8,7 +8,7 @@
     "deploy:secrets": "op read op://Development/schedule-cloudflare/CLIENT_ID | wrangler secret put CALENDAR_CLIENT_ID && op read op://Development/schedule-cloudflare/CLIENT_SECRET | wrangler secret put CALENDAR_CLIENT_SECRET",
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npm run dev",
-    "build:frontend": "cd frontend && npm install && VITE_RELEASE=${VITE_RELEASE:-$(git rev-parse --short HEAD)} npm run build",
+    "build:frontend": "cd frontend && npm install && VITE_POSTHOG_HOST=https://p.cqu.moe VITE_RELEASE=${VITE_RELEASE:-$(git rev-parse --short HEAD)} npm run build",
     "deploy": "npm run build:frontend && npm run db:migrate:remote && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
     "test": "vitest run",
     "test:frontend": "cd frontend && npm test",
