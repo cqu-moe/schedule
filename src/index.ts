@@ -15,6 +15,7 @@ import subscriptionsV2 from "./routes/v2/subscriptions";
 import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
 import notificationSettingsV2 from "./routes/v2/notification-settings";
+import { captureScheduleEvent, captureScheduleException } from "./lib/posthog";
 
 export const app = new Hono<{ Bindings: Env }>();
 
@@ -99,6 +100,11 @@ app.all("/api/v1/*", (c) => errorResponse("GONE", "接口已升级，请刷新�
 
 // Global error handler
 app.onError((err, c) => {
+  captureScheduleException(c.env, c.executionCtx, err, {
+    component: "http",
+    method: c.req.method,
+    route: c.req.routePath || new URL(c.req.url).pathname,
+  });
   console.error(JSON.stringify({ event: "http.unhandled_error", error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined, message: "Unhandled error" }));
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
 });
@@ -135,7 +141,10 @@ export default {
   ): Promise<void> {
     switch (controller.cron) {
       case "0 * * * *":
-        await enqueueScheduleSync(env);
+        await enqueueScheduleSync(env, ctx);
+        captureScheduleEvent(env, ctx, "service_heartbeat", crypto.randomUUID(), {
+          trigger: "cron",
+        }, false);
         break;
       default:
         console.warn(JSON.stringify({ event: "http.unknown_cron", cron: controller.cron, message: "Unknown cron schedule" }));
@@ -144,11 +153,11 @@ export default {
   async queue(
     batch: MessageBatch,
     env: Env,
-    _ctx: ExecutionContext,
+    ctx: ExecutionContext,
   ): Promise<void> {
     switch (batch.queue) {
       case "schedule-sync":
-        await processScheduleSyncBatch(batch as MessageBatch<ScheduleSyncMessage>, env);
+        await processScheduleSyncBatch(batch as MessageBatch<ScheduleSyncMessage>, env, ctx);
         break;
       default:
         console.warn(JSON.stringify({ event: "http.unknown_queue", queue: batch.queue, message: "Unknown queue" }));

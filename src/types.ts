@@ -37,4 +37,8 @@ export interface Env {
   GIT_COMMIT: string;
   GIT_DATE: string;
   PERSONAL_SUBSCRIPTION_MODE?: "legacy" | "migration" | "enabled";
+  POSTHOG_PROJECT_TOKEN?: string;
+  POSTHOG_HOST?: string;
+  ENVIRONMENT?: "production" | "preview" | "development";
+  RELEASE?: string;
 }

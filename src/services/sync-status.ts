@@ -149,9 +149,9 @@ export async function markSyncError(
   subscriptionId: string,
   runId: string,
   failure: PublicSyncFailure,
-): Promise<void> {
+): Promise<boolean> {
   const now = new Date().toISOString();
-  await db.update(subscriptions).set({
+  const result = await db.update(subscriptions).set({
     syncStatus: "error",
     syncFinishedAt: now,
     syncErrorCode: failure.code,
@@ -162,11 +162,12 @@ export async function markSyncError(
     eq(subscriptions.syncRunId, runId),
     inArray(subscriptions.syncStatus, ["queued", "running"]),
   ));
+  return (result.meta?.changes ?? 0) === 1;
 }
 
-export async function markSyncSuccess(db: Db, subscriptionId: string, runId: string): Promise<void> {
+export async function markSyncSuccess(db: Db, subscriptionId: string, runId: string): Promise<boolean> {
   const now = new Date().toISOString();
-  await db.update(subscriptions).set({
+  const result = await db.update(subscriptions).set({
     syncStatus: "success",
     syncFinishedAt: now,
     syncErrorCode: null,
@@ -177,6 +178,7 @@ export async function markSyncSuccess(db: Db, subscriptionId: string, runId: str
     eq(subscriptions.syncRunId, runId),
     eq(subscriptions.syncStatus, "running"),
   ));
+  return (result.meta?.changes ?? 0) === 1;
 }
 
 export async function markSyncRetrying(

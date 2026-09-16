@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { captureSchedulePageview, syncPostHogReplay } from '@/lib/posthog'
 
 const SITE_NAME = 'CQU Schedule'
 
@@ -70,6 +71,9 @@ const router = createRouter({
 
 router.afterEach((to) => {
   document.title = (to.meta.title as string) ?? `重庆大学课表订阅 | ${SITE_NAME}`
+  const routeTemplate = to.matched.at(-1)?.path ?? to.path
+  captureSchedulePageview(routeTemplate)
+  syncPostHogReplay(routeTemplate)
 })
 
 export default router

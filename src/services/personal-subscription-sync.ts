@@ -10,6 +10,7 @@ import { claimSubscriptionRun, markSyncError } from "./sync-status";
 import { drizzle } from "drizzle-orm/d1";
 import { CHINA_TZ_OFFSET_MS } from "../utils/time";
 import type { Subscription } from "../db/schema";
+import { captureScheduleEvent } from "../lib/posthog";
 import { fetchPersonalHarvest } from "./cqu-harvest";
 import {
   applySyncResult,
@@ -31,6 +32,7 @@ export async function requestPersonalSync(
   userId: string,
   caps: CalendarCaps,
   bindingStatus: CquBindStatus | undefined,
+  lifecycle?: ExecutionContext,
 ): Promise<{
   status: "queued";
   run_id: string;
@@ -117,10 +119,20 @@ export async function requestPersonalSync(
         trigger: "manual",
       });
     } catch (error) {
-      await markSyncError(drizzle(env.DB), canonical.id, claim.runId, {
+      const won = await markSyncError(drizzle(env.DB), canonical.id, claim.runId, {
         code: "QUEUE_UNAVAILABLE",
         message: "同步服务暂时不可用，请稍后重试",
       });
+      if (won) {
+        captureScheduleEvent(env, lifecycle, "schedule_sync_completed", userId, {
+          outcome: "failure",
+          trigger: "manual",
+          run_id: claim.runId,
+          subscription_id: canonical.id,
+          duration_ms: Math.max(0, Date.now() - Date.parse(claim.requestedAt)),
+          error_code: "QUEUE_UNAVAILABLE",
+        });
+      }
       await env.DB.prepare(`UPDATE subscriptions SET manual_refresh_at=NULL
         WHERE id=? AND sync_run_id=? AND manual_refresh_at=?`)
         .bind(canonical.id, claim.runId, now)

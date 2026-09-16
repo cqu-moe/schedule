@@ -5,9 +5,25 @@ import { defineConfig, type PluginOption } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { marked } from 'marked'
+import posthog from '@posthog/rollup-plugin'
 
 export default defineConfig(async () => {
   const plugins: PluginOption[] = [vue(), tailwindcss()]
+
+  const sourceMapUpload = process.env.POSTHOG_CLI_API_KEY && process.env.POSTHOG_CLI_PROJECT_ID
+    ? posthog({
+        personalApiKey: process.env.POSTHOG_CLI_API_KEY,
+        projectId: process.env.POSTHOG_CLI_PROJECT_ID,
+        host: process.env.POSTHOG_CLI_HOST || 'https://us.posthog.com',
+        sourcemaps: {
+          enabled: true,
+          releaseName: 'schedule-web',
+          releaseVersion: process.env.VITE_RELEASE || 'development',
+          deleteAfterUpload: true,
+        },
+      })
+    : null
+  if (sourceMapUpload) plugins.push(sourceMapUpload)
 
   if (process.env.ANALYZE === 'true') {
     const { visualizer } = await import('rollup-plugin-visualizer')
@@ -31,6 +47,7 @@ export default defineConfig(async () => {
     },
     base: '/',
     build: {
+      sourcemap: Boolean(sourceMapUpload),
       outDir: 'dist',
       assetsDir: 'assets',
       rollupOptions: {

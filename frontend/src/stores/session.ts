@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import api from '@/api'
 import type { SessionUser, CalendarCaps, CquBindStatus } from '@/types/api'
+import { syncPostHogIdentity } from '@/lib/posthog'
 
 export const useSession = defineStore('session', () => {
   const user = ref<SessionUser | null>(null)
@@ -42,6 +43,7 @@ export const useSession = defineStore('session', () => {
       try {
         const data = await api.getMe()
         user.value = data.user
+        syncPostHogIdentity(data.user.id)
         caps.value = data.caps.calendar
         cquBindStatus.value = data.cquBindStatus
         loaded.value = true
@@ -58,6 +60,7 @@ export const useSession = defineStore('session', () => {
 
   // Composition API stores don't auto-generate $reset() — implement manually.
   function $reset(): void {
+    syncPostHogIdentity(null)
     user.value = null
     caps.value = null
     cquBindStatus.value = undefined

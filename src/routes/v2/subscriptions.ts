@@ -604,6 +604,7 @@ app.post("/personal/syncs", async (c) => {
       user.id,
       c.get("caps").calendar,
       c.get("cquBindStatus"),
+      executionContext(c),
     );
     return c.json(result, 202);
   } catch (error) {
@@ -640,6 +641,7 @@ app.post("/:sid/syncs", async (c) => {
         user.id,
         caps,
         c.get("cquBindStatus"),
+        executionContext(c),
       );
       return c.json(result, 202);
     } catch (error) {
@@ -1234,3 +1236,10 @@ function serializePersonalView(
 }
 
 export default app;
+function executionContext(c: { executionCtx: ExecutionContext }): ExecutionContext | undefined {
+  try {
+    return c.executionCtx;
+  } catch {
+    return undefined;
+  }
+}

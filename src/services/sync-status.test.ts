@@ -10,6 +10,8 @@ import {
   markSyncRunning,
   expireInterruptedRun,
   claimSessionRecoveryAttempt,
+  markSyncError,
+  markSyncSuccess,
 } from "./sync-status";
 import { drizzle } from "drizzle-orm/d1";
 import { resetPersonalData, seedPersonal } from "../../tests/fixtures/personal-subscriptions";
@@ -73,6 +75,26 @@ describe("claimSubscriptionRun", () => {
       sync_error_code: "SYNC_INTERRUPTED",
       courses_json: "[]",
     });
+  });
+
+  it("lets only the first success transition win", async () => {
+    const { id } = await seedPersonal(env.DB, "success-terminal-user");
+    const claim = await claimSubscriptionRun(env.DB, id, "cron", new Date().toISOString());
+    if (claim.kind !== "accepted") throw new Error("expected accepted claim");
+    await markSyncRunning(drizzle(env.DB), id, claim.runId);
+
+    expect(await markSyncSuccess(drizzle(env.DB), id, claim.runId)).toBe(true);
+    expect(await markSyncSuccess(drizzle(env.DB), id, claim.runId)).toBe(false);
+  });
+
+  it("lets only the first failure transition win", async () => {
+    const { id } = await seedPersonal(env.DB, "failure-terminal-user");
+    const claim = await claimSubscriptionRun(env.DB, id, "manual", new Date().toISOString());
+    if (claim.kind !== "accepted") throw new Error("expected accepted claim");
+    const failure = { code: "SAFE_TEST_FAILURE", message: "safe failure" };
+
+    expect(await markSyncError(drizzle(env.DB), id, claim.runId, failure)).toBe(true);
+    expect(await markSyncError(drizzle(env.DB), id, claim.runId, failure)).toBe(false);
   });
 });
 

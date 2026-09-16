@@ -34,7 +34,9 @@ import {
   claimSubscriptionRun,
   claimSessionRecoveryAttempt,
   expireInterruptedRun,
+  type PublicSyncFailure,
 } from "../services/sync-status";
+import { captureScheduleEvent, captureScheduleException } from "../lib/posthog";
 import type { PersonalScheduleData } from "../services/sync";
 import {
   createNotificationId,
@@ -83,6 +85,59 @@ const CAPS_CACHE_TTL_SECONDS = 3600;
 const SYNC_SPREAD_SECONDS = 3600;
 const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
 
+type SyncTerminal = {
+  subscriptionId: string;
+  userId: string;
+  runId: string;
+  trigger: NonNullable<ScheduleSyncMessage["trigger"]>;
+  requestedAt?: number;
+};
+
+function captureSyncTerminal(
+  env: Env,
+  lifecycle: ExecutionContext | undefined,
+  terminal: SyncTerminal,
+  outcome: "success" | "failure",
+  errorCode?: string,
+): void {
+  const durationMs = terminal.requestedAt !== undefined
+    && Number.isFinite(terminal.requestedAt)
+    && terminal.requestedAt <= Date.now()
+      ? Date.now() - terminal.requestedAt
+      : undefined;
+  captureScheduleEvent(env, lifecycle, "schedule_sync_completed", terminal.userId, {
+    outcome,
+    trigger: terminal.trigger,
+    run_id: terminal.runId,
+    subscription_id: terminal.subscriptionId,
+    ...(durationMs === undefined ? {} : { duration_ms: durationMs }),
+    ...(errorCode ? { error_code: errorCode } : {}),
+  });
+}
+
+async function markTerminalError(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  lifecycle: ExecutionContext | undefined,
+  terminal: SyncTerminal,
+  failure: PublicSyncFailure,
+): Promise<boolean> {
+  const won = await markSyncError(db, terminal.subscriptionId, terminal.runId, failure);
+  if (won) captureSyncTerminal(env, lifecycle, terminal, "failure", failure.code);
+  return won;
+}
+
+async function markTerminalSuccess(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  lifecycle: ExecutionContext | undefined,
+  terminal: SyncTerminal,
+): Promise<boolean> {
+  const won = await markSyncSuccess(db, terminal.subscriptionId, terminal.runId);
+  if (won) captureSyncTerminal(env, lifecycle, terminal, "success");
+  return won;
+}
+
 /**
  * Producer: pick subscriptions due for sync and enqueue them.
  *
@@ -98,7 +153,7 @@ const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
  * below 60 min still resolves to once per hour — it does NOT yield sub-hourly
  * refresh. Genuine sub-hourly refresh would require a higher-frequency cron.
  */
-export async function enqueueScheduleSync(env: Env): Promise<void> {
+export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
   await dispatchPendingPersonalSetups(env);
   console.log(
@@ -215,7 +270,12 @@ export async function enqueueScheduleSync(env: Env): Promise<void> {
   } catch (error) {
     const enqueued = error instanceof SpreadEnqueueError ? error.enqueued : 0;
     await Promise.all(due.slice(enqueued).map((item) =>
-      markSyncError(db, item.subscriptionId, item.runId!, {
+      markTerminalError(db, env, lifecycle, {
+        subscriptionId: item.subscriptionId,
+        userId: item.userId,
+        runId: item.runId!,
+        trigger: item.trigger ?? "cron",
+      }, {
         code: "QUEUE_UNAVAILABLE",
         message: "同步服务暂时不可用，请稍后重试",
       }),
@@ -313,6 +373,7 @@ function isDue(lastSyncedAt: string | null, intervalMinutes: number, now: number
 export async function processScheduleSyncBatch(
   batch: MessageBatch<ScheduleSyncMessage>,
   env: Env,
+  lifecycle?: ExecutionContext,
 ): Promise<void> {
   const db = drizzle(env.DB);
   const mode = personalSubscriptionMode(env);
@@ -352,6 +413,25 @@ export async function processScheduleSyncBatch(
       // First request time of THIS sync run (ms epoch), used to bound the
       // capacity wait. NaN when unavailable → the finite retry path is used.
       let runFirstRequestedAt = Number.NaN;
+      const terminal = (targetId: string): SyncTerminal | null => runId ? {
+        subscriptionId: targetId,
+        userId,
+        runId,
+        trigger: trigger ?? "admin",
+        requestedAt: runFirstRequestedAt,
+      } : null;
+      const failTarget = async (targetId: string, failure: PublicSyncFailure) => {
+        const current = terminal(targetId);
+        return current ? markTerminalError(db, env, lifecycle, current, failure) : false;
+      };
+      const succeedTarget = async (targetId: string) => {
+        const current = terminal(targetId);
+        return current ? markTerminalSuccess(db, env, lifecycle, current) : false;
+      };
+      const captureCommittedSuccess = (targetId: string) => {
+        const current = terminal(targetId);
+        if (current) captureSyncTerminal(env, lifecycle, current, "success");
+      };
       try {
         let sub = (await db
           .select()
@@ -417,6 +497,8 @@ export async function processScheduleSyncBatch(
             && sub.syncStartedAt <= interruptedBefore
             && await expireInterruptedRun(env.DB, sub.id, runId, interruptedBefore)
           ) {
+            const current = terminal(sub.id);
+            if (current) captureSyncTerminal(env, lifecycle, current, "failure", "SYNC_INTERRUPTED");
             message.ack();
             return;
           }
@@ -468,7 +550,7 @@ export async function processScheduleSyncBatch(
                 : "Caps unresolved; failing closed (skip sync, keep is_active)",
             }),
           );
-          await markSyncError(db, sub.id, runId, caps !== null
+          await failTarget(sub.id, caps !== null
             ? { code: "FEATURE_NOT_ENABLED", message: "日历同步未开通" }
             : { code: "CAPS_UNAVAILABLE", message: "暂时无法确认同步权限，请稍后重试" });
           message.ack();
@@ -490,7 +572,7 @@ export async function processScheduleSyncBatch(
               message: "Already synced within interval; dropping duplicate",
             }),
           );
-          await markSyncSuccess(db, sub.id, runId);
+          await succeedTarget(sub.id);
           message.ack();
           return;
         }
@@ -512,7 +594,7 @@ export async function processScheduleSyncBatch(
               message: "External subscription has no harvest path; acking without sync",
             }),
           );
-          await markSyncError(db, sub.id, runId, {
+          await failTarget(sub.id, {
             code: "EXTERNAL_SYNC_UNAVAILABLE",
             message: "外部订阅同步暂不可用",
           });
@@ -523,6 +605,7 @@ export async function processScheduleSyncBatch(
         if (sub.sourceType === "personal") {
           syncTargetIds = [sub.id];
           const result = await executePersonalSync(env, sub, runId, deadlineAt);
+          if (result.committed) captureCommittedSuccess(sub.id);
           if (result.committed) {
             try {
               await processBatchPersonalNotification(userId, result.data, caps);
@@ -573,7 +656,7 @@ export async function processScheduleSyncBatch(
         // identical for every user in a semester and collide UIDs across users.
         const uidNamespace = sub.sourceId;
         const ics = preGenerateIcs(personalData, uidNamespace);
-        await Promise.all(personalSubs.map(target => applySyncResult(
+        const committed = await Promise.all(personalSubs.map(target => applySyncResult(
           db,
           target.id,
           buildPersonalSyncResult(target.sourceType, personalData, ics),
@@ -581,6 +664,9 @@ export async function processScheduleSyncBatch(
           { sessionName: target.sessionName },
           target.syncRunId === runId ? runId : undefined,
         )));
+        personalSubs.forEach((target, index) => {
+          if (committed[index] && target.syncRunId === runId) captureCommittedSuccess(target.id);
+        });
         try {
           await processBatchPersonalNotification(userId, personalData, caps);
         } catch {
@@ -639,8 +725,7 @@ export async function processScheduleSyncBatch(
               code: failure.code,
               message: "登录状态暂未恢复，本次同步已结束，请稍后重试",
             };
-            await Promise.all(syncTargetIds.map(targetId =>
-              markSyncError(db, targetId, runId!, exhaustedFailure)));
+            await Promise.all(syncTargetIds.map(targetId => failTarget(targetId, exhaustedFailure)));
             console.warn(JSON.stringify({
               event: "queue.schedule_sync.session_recovery_exhausted",
               subscriptionId,
@@ -692,8 +777,7 @@ export async function processScheduleSyncBatch(
               // ack — the row stops showing "排队中", the existing calendar is
               // kept, and the run never falls into another (unbounded) retry
               // branch. The next cron run or a manual refresh starts fresh.
-              await Promise.all(syncTargetIds.map(targetId =>
-                markSyncError(db, targetId, runId!, failure)));
+              await Promise.all(syncTargetIds.map(targetId => failTarget(targetId, failure)));
               console.warn(JSON.stringify({
                 event: "queue.schedule_sync.capacity_exhausted",
                 subscriptionId,
@@ -722,8 +806,7 @@ export async function processScheduleSyncBatch(
             message.retry({ delaySeconds });
             return;
           }
-          if (runId) await Promise.all(syncTargetIds.map(targetId =>
-            markSyncError(db, targetId, runId!, failure)));
+          if (runId) await Promise.all(syncTargetIds.map(targetId => failTarget(targetId, failure)));
           console.warn(
             JSON.stringify({
               event: "queue.schedule_sync.harvest_failed",
@@ -754,8 +837,13 @@ export async function processScheduleSyncBatch(
           message.retry({ delaySeconds });
           return;
         }
-        if (runId) await Promise.all(syncTargetIds.map(targetId =>
-          markSyncError(db, targetId, runId!, failure)));
+        if (runId) await Promise.all(syncTargetIds.map(targetId => failTarget(targetId, failure)));
+        captureScheduleException(env, lifecycle, e, {
+          component: "schedule-sync",
+          subscription_id: subscriptionId,
+          run_id: runId,
+          trigger: trigger ?? "admin",
+        }, userId);
         console.error(
           JSON.stringify({
             event: "queue.schedule_sync.failed",
