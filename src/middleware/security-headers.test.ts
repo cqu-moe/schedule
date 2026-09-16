@@ -32,6 +32,9 @@ describe("addSecurityHeaders", () => {
     // Cloudflare Analytics
     expect(csp).toContain("https://static.cloudflareinsights.com");
     expect(csp).toContain("https://cloudflareinsights.com");
+    expect(csp).toContain("script-src 'self' https://static.cloudflareinsights.com https://p.cqu.moe");
+    expect(csp).toContain("connect-src 'self' https://cloudflareinsights.com https://p.cqu.moe");
+    expect(csp).not.toContain("posthog.com");
     // font data: URLs (FullCalendar fcicons)
     expect(csp).toContain("font-src 'self' data:");
   });

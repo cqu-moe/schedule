@@ -5,10 +5,10 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' https://static.cloudflareinsights.com",
+    "script-src 'self' https://static.cloudflareinsights.com https://p.cqu.moe",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "connect-src 'self' https://cloudflareinsights.com",
+    "connect-src 'self' https://cloudflareinsights.com https://p.cqu.moe",
     "img-src 'self' data:",
   ].join("; "),
 };
