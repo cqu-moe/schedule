@@ -21,6 +21,8 @@ describe("Schedule browser PostHog persistence", () => {
 
     expect(telemetry.initPostHog()).toBe(true);
     expect(init).toHaveBeenCalledWith("test", expect.objectContaining({
+      api_host: "https://p.cqu.moe",
+      ui_host: "https://us.posthog.com",
       persistence: "localStorage",
       cross_subdomain_cookie: false,
     }));

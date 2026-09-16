@@ -89,7 +89,7 @@
   "vars": {
     "PUBLIC_URL": "https://schedule.cqu.moe",
     "PERSONAL_SUBSCRIPTION_MODE": "enabled",
-    "POSTHOG_HOST": "https://us.i.posthog.com",
+    "POSTHOG_HOST": "https://p.cqu.moe",
     "ENVIRONMENT": "production"
   },
 
