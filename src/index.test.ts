@@ -80,6 +80,19 @@ describe("v1 → 410 catch-all", () => {
   });
 });
 
+describe("PostHog cookie recovery", () => {
+  it("clears the legacy cross-domain PostHog cookie", async () => {
+    const testEnv = { ...env, AUTH: fakeAuth("userA", FULL_CAPS), POSTHOG_PROJECT_TOKEN: "test" };
+    const res = await app.request("/api/v2/telemetry/reset", {}, testEnv);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("ph_test_posthog=");
+    expect(cookie).toContain("Max-Age=0");
+    expect(cookie).toContain("Domain=.cqu.moe");
+  });
+});
+
 describe("GET /api/v2/me", () => {
   it("with a valid session → 200 { user, caps }", async () => {
     const res = await request("/api/v2/me", fakeAuth("userA", FULL_CAPS));

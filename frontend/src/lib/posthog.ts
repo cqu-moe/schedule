@@ -90,15 +90,27 @@ const release = import.meta.env.VITE_RELEASE?.trim() || "development";
 let initialized = false;
 let identifiedUserId: string | null | undefined = undefined;
 
+function clearLegacyPostHogCookie(projectToken: string): void {
+  const encodedToken = projectToken.replace(/\+/g, "PL").replace(/\//g, "SL").replace(/=/g, "EQ");
+  const name = `ph_${encodedToken}_posthog`;
+  document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
+  if (window.location.hostname === "cqu.moe" || window.location.hostname.endsWith(".cqu.moe")) {
+    document.cookie = `${name}=; Max-Age=0; Path=/; Domain=.cqu.moe; Secure; SameSite=Lax`;
+  }
+}
+
 export function initPostHog(): boolean {
   if (initialized) return true;
   if (!token) {
     if (import.meta.env.DEV) console.info("VITE_POSTHOG_PROJECT_TOKEN is not configured; PostHog is disabled.");
     return false;
   }
+  clearLegacyPostHogCookie(token);
   posthog.init(token, {
     api_host: host,
     ui_host: "https://us.posthog.com",
+    persistence: "localStorage",
+    cross_subdomain_cookie: false,
     defaults: "2026-05-30",
     capture_pageview: false,
     capture_pageleave: false,

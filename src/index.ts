@@ -16,8 +16,12 @@ import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
 import notificationSettingsV2 from "./routes/v2/notification-settings";
 import { captureScheduleEvent, captureScheduleException } from "./lib/posthog";
+import { postHogCookieResetResponse } from "./lib/posthog-cookie";
 
 export const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/v2/telemetry/reset", (c) =>
+  postHogCookieResetResponse(c.env.POSTHOG_PROJECT_TOKEN));
 
 // Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
 // 生产环境 binding 必然存在；若缺失则属配置错误，必须 fail-closed 返回 500，
