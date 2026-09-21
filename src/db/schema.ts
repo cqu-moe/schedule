@@ -99,6 +99,7 @@ export const notificationState = sqliteTable("notification_state", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   snapshotJson: text("snapshot_json"),
   snapshotHash: text("snapshot_hash"),
+  pendingNotificationJson: text("pending_notification_json"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

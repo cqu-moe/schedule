@@ -4,6 +4,7 @@ import {
   hashSchedule,
   normalizeSchedule,
   renderScheduleChangeEmail,
+  createScheduleNotificationMessages,
 } from "./schedule-notifications";
 import type { PersonalScheduleData } from "./sync";
 
@@ -96,7 +97,7 @@ describe("diffFutureSchedule", () => {
     expect(diff.courses[0]).toMatchObject({ kind: "changed", name: "高等数学" });
   });
 
-  it("groups a recurring course adjustment and caps its concrete dates", () => {
+  it("groups a recurring course adjustment without dropping dates", () => {
     const oldSnapshot = normalizeSchedule({
       semesterStart: "2026-09-07",
       courses: [course({ weeks: [1, 2, 3, 4, 5, 6, 7] })],
@@ -111,8 +112,8 @@ describe("diffFutureSchedule", () => {
     const diff = diffFutureSchedule(oldSnapshot, newSnapshot, new Date("2026-09-07T00:00:00.000Z"));
 
     expect(diff.total).toBe(1);
-    expect(diff.courses[0].dates).toHaveLength(5);
-    expect(diff.courses[0].extraDates).toBe(2);
+    expect(diff.courses[0].dates).toHaveLength(7);
+    expect(diff.courses[0].extraDates).toBe(0);
   });
 
   it("keeps exact same-name exams paired before classifying a removal", () => {
@@ -158,62 +159,99 @@ describe("diffFutureSchedule", () => {
   });
 });
 
-describe("renderScheduleChangeEmail", () => {
-  it("renders one compact HTML and text email with both sections and escaped content", () => {
-    const diff = diffFutureSchedule(
-      normalizeSchedule({
-        semesterStart: "2026-09-07",
-        courses: [course({ name: "数学 <实验>" })],
-        exams: [exam()],
-      }),
-      normalizeSchedule({
-        semesterStart: "2026-09-07",
-        courses: [course({ name: "数学 <实验>", room: "A102" })],
-        exams: [exam({ seat: 20 })],
-      }),
-      new Date("2026-09-07T00:00:00.000Z"),
-    );
+const now = new Date("2026-09-07T00:00:00Z");
+const render = (oldCourses: ReturnType<typeof course>[], newCourses: ReturnType<typeof course>[], oldExams: ReturnType<typeof exam>[] = [], newExams: ReturnType<typeof exam>[] = []) => renderScheduleChangeEmail(diffFutureSchedule(
+  normalizeSchedule({ semesterStart: "2026-09-07", courses: oldCourses, exams: oldExams }),
+  normalizeSchedule({ semesterStart: "2026-09-07", courses: newCourses, exams: newExams }), now,
+), now);
 
-    const rendered = renderScheduleChangeEmail(diff, new Date("2026-09-07T13:36:00.000Z"));
-    expect(rendered.subject).toBe("课表与考试安排有更新（2项）");
-    expect(rendered.html).toContain('<meta name="color-scheme" content="light dark">');
-    expect(rendered.html).toContain('<meta name="supported-color-schemes" content="light dark">');
-    expect(rendered.html).toContain("color-scheme:light dark");
-    expect(rendered.html).toContain("@media(prefers-color-scheme:dark)");
-    expect(rendered.html).toContain('bgcolor="#ffffff"');
-    expect(rendered.html).toContain("CQU.MOE / 重庆大学课表");
-    expect(rendered.html).toContain("课表有更新");
-    expect(rendered.html).toContain("有 2 项安排变更");
-    expect(rendered.html).toContain("课程表 · 1 项");
-    expect(rendered.html).toContain("考试安排 · 1 项");
-    expect(rendered.html).toContain("9 月 8 日 · 2026 年 · 周二");
-    expect(rendered.html).toContain("地点调整");
-    expect(rendered.html).toContain("同步于 2026 年 9 月 7 日 21:36（北京时间）");
-    expect(rendered.html).toContain("你已开启课表变更通知");
-    expect(rendered.html).toContain("CQU.MOE 是学生维护的非官方服务");
-    expect(rendered.html).toContain("数学 &lt;实验&gt;");
-    expect(rendered.html).not.toContain("数学 <实验>");
-    expect(rendered.text).toContain("课程表");
-    expect(rendered.text).toContain("考试安排");
-    expect(rendered.html).toContain("https://schedule.cqu.moe/");
+describe("renderScheduleChangeEmail", () => {
+  it("compares changed fields without repeating unchanged context or parsing teacher separators", () => {
+    const original = course({ name: "数学 <实验>", position: "虎溪校区", lecturer: "张 · 老师" });
+    const result = render([original], [{ ...original, room: "A102" }]);
+    expect(result.text).toContain("教室：A101 → A102");
+    expect(result.text).not.toContain("老师：张 · 老师 →");
+    expect(result.html.split("张 · 老师")).toHaveLength(2);
+    expect(result.html).toContain("数学 &lt;实验&gt;");
+    expect(result.html).not.toContain("数学 <实验>");
+    expect(result.html).toContain("CQU Schedule");
+    expect(result.html).toContain('scope="col"');
+    expect(result.html).toContain('lang="zh-CN" dir="ltr"');
+    expect(result.html).not.toContain("var(--");
+    expect(result.html).not.toContain("oklch(");
   });
 
-  it("shows at most five concrete dates for one course change", () => {
-    const oldSnapshot = normalizeSchedule({
-      semesterStart: "2026-09-07",
-      courses: [course({ weeks: [1, 2, 3, 4, 5, 6, 7] })],
-      exams: [],
-    });
-    const newSnapshot = normalizeSchedule({
-      semesterStart: "2026-09-07",
-      courses: [course({ weeks: [] })],
-      exams: [],
-    });
-    const rendered = renderScheduleChangeEmail(diffFutureSchedule(
-      oldSnapshot,
-      newSnapshot,
-      new Date("2026-09-07T00:00:00.000Z"),
-    ));
-    expect(rendered.text).toContain("另有 2 个日期");
+  it("shows all eight paired dates for eight consecutive weekly moves", () => {
+    const original = course({ day_of_week: 3, weeks: [1,2,3,4,5,6,7,8], position: "虎溪校区" });
+    const result = render([original], [{ ...original, day_of_week: 5 }]);
+    expect(result.text).toContain("连续8周调课");
+    expect(result.text).toContain("星期：周三 → 周五");
+    expect(result.text).toContain("10月28日（周三） → 10月30日（周五）");
+    expect(result.html).toContain("10月30日");
+    expect(result.text).not.toContain("另有");
+    expect(result.html.match(/data-date-pair/g)).toHaveLength(8);
+  });
+
+  it("does not call sparse weeks consecutive and separates an exceptional adjustment", () => {
+    const original = course({ day_of_week: 3, weeks: [1,3,5] });
+    const sparse = render([original], [{ ...original, day_of_week: 5 }]);
+    expect(sparse.text).not.toContain("连续3周");
+    expect(sparse.text).toContain("共3次调课");
+    const result = render([course({ day_of_week: 3, weeks: [1,2,3] })], [course({ day_of_week: 5, weeks: [1,3] }), course({ day_of_week: 4, weeks: [2] })]);
+    expect(result.text).toContain("周三 → 周五");
+    expect(result.text).toContain("9月17日（周四）");
+  });
+
+  it("reports time and location changes together and keeps both dates", () => {
+    const original = course({ day_of_week: 3, position: "虎溪校区" });
+    const result = render([original], [{ ...original, day_of_week: 5, start_session: 3, end_session: 4, room: "A102" }]);
+    expect(result.text).toContain("日期：9月9日（周三） → 9月11日（周五）");
+    expect(result.text).toContain("时间：08:30–10:10 → 10:30–12:10");
+    expect(result.text).toContain("教室：A101 → A102");
+  });
+
+  it("distinguishes cancellation and addition of individual occurrences", () => {
+    const result = render([course({ name: "英语", weeks: [1,2] })], [course({ name: "英语", weeks: [2] }), course({ name: "程序设计", day_of_week: 6 })]);
+    expect(result.text).toContain("取消1次课");
+    expect(result.text).toContain("新增1次课");
+    expect(result.text).toContain("9月8日（周二）");
+    expect(result.text).toContain("9月12日（周六）");
+    expect(result.text).not.toContain("整门");
+  });
+
+  it("shows exam room and seat changes while preserving teacher-only course changes", () => {
+    const result = render([course()], [course({ lecturer: "李老师" })], [exam()], [exam({ room: "D1237", seat: 20 })]);
+    expect(result.text).toContain("老师：张老师 → 李老师");
+    expect(result.text).toContain("考场：D1137 → D1237");
+    expect(result.text).toContain("座位：18号 → 20号");
+    expect(result.html).toContain("考试");
+  });
+
+  it("retains the years on cross-year exam moves and handles empty diffs", () => {
+    const result = render([], [], [exam({start_time:"2026-12-31T01:00:00Z",end_time:"2026-12-31T03:00:00Z"})], [exam({start_time:"2027-01-01T01:00:00Z",end_time:"2027-01-01T03:00:00Z"})]);
+    expect(result.text).toContain("2026年12月31日");
+    expect(result.text).toContain("2027年1月1日");
+    expect(render([], []).html).toContain("没有新的安排变化");
+  });
+});
+
+describe("notification message sizing", () => {
+  it("preserves a full semester across bounded emails without reusing delivery IDs", () => {
+    const originals = Array.from({ length: 40 }, (_, index) => course({ name: `课程${index}`, day_of_week: 3, weeks: Array.from({ length: 18 }, (_, week) => week + 1) }));
+    const diff = diffFutureSchedule(normalizeSchedule({ semesterStart:"2026-09-07", courses:originals, exams:[] }), normalizeSchedule({ semesterStart:"2026-09-07", courses:originals.map(item=>({...item,day_of_week:5})), exams:[] }), now);
+    const messages = createScheduleNotificationMessages(diff, now, "user-1", "schedule-v1-batch");
+    expect(messages.length).toBeGreaterThan(1);
+    expect(new Set(messages.map(message=>message.notificationId)).size).toBe(messages.length);
+    expect(messages.reduce((count,message)=>count+(message.html.match(/data-date-pair/g)?.length ?? 0),0)).toBe(720);
+    for (const message of messages) {
+      expect(message.html.length).toBeLessThan(100*1024);
+      expect(message.text.length).toBeLessThan(50*1024);
+      expect(new TextEncoder().encode(JSON.stringify(message)).length).toBeLessThan(128*1024);
+    }
+  });
+
+  it("labels a single exam time change as an exam", () => {
+    const result=render([],[],[exam({seat:0})],[exam({seat:0,start_time:"2026-09-10T02:00:00Z",end_time:"2026-09-10T04:00:00Z"})]);
+    expect(result.html).toContain("考试 · 改时间");
   });
 });

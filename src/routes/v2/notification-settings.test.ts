@@ -41,7 +41,7 @@ beforeAll(async () => {
     user_id text PRIMARY KEY NOT NULL,
     enabled integer NOT NULL DEFAULT 0,
     snapshot_json text,
-    snapshot_hash text,
+    snapshot_hash text, pending_notification_json text,
     created_at text NOT NULL,
     updated_at text NOT NULL
   )`).run();

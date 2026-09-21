@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   subscriptions,
   notificationState,
@@ -44,7 +44,8 @@ import {
   hashSchedule,
   normalizeSchedule,
   parseScheduleSnapshot,
-  renderScheduleChangeEmail,
+  createScheduleNotificationMessages,
+  type ScheduleNotificationMessageV1,
 } from "../services/schedule-notifications";
 import { dispatchPendingPersonalSetups } from "../services/personal-setup-dispatch";
 import { personalSubscriptionMode } from "../config/personal-subscription-mode";
@@ -858,6 +859,13 @@ export async function processScheduleSyncBatch(
   );
 }
 
+interface PendingScheduleNotification {
+  snapshotJson: string;
+  snapshotHash: string;
+  messages: ScheduleNotificationMessageV1[];
+  nextIndex: number;
+}
+
 async function processPersonalNotification(
   db: ReturnType<typeof drizzle>,
   env: Env,
@@ -869,73 +877,85 @@ async function processPersonalNotification(
   const snapshot = normalizeSchedule(data);
   const snapshotJson = JSON.stringify(snapshot);
   const snapshotHash = await hashSchedule(snapshot);
-  const state = await db
-    .select()
-    .from(notificationState)
-    .where(eq(notificationState.userId, userId))
-    .get();
+  const state = await db.select().from(notificationState).where(eq(notificationState.userId, userId)).get();
 
+  let previousHash = state?.snapshotHash ?? null;
+  let expectedPending = state?.pendingNotificationJson ?? null;
   const advanceBaseline = async () => {
     const timestamp = now.toISOString();
-    await db
-      .insert(notificationState)
-      .values({
-        userId,
-        enabled: state?.enabled ?? false,
-        snapshotJson,
-        snapshotHash,
-        createdAt: state?.createdAt ?? timestamp,
-        updatedAt: timestamp,
-      })
-      .onConflictDoUpdate({
-        target: notificationState.userId,
-        set: { snapshotJson, snapshotHash, updatedAt: timestamp },
-      });
+    if (!state) {
+      await db.insert(notificationState).values({
+        userId, enabled: false, snapshotJson, snapshotHash, createdAt: timestamp, updatedAt: timestamp,
+      }).onConflictDoNothing();
+      return;
+    }
+    await db.update(notificationState).set({
+      snapshotJson, snapshotHash, pendingNotificationJson: null, updatedAt: timestamp,
+    }).where(and(
+      eq(notificationState.userId, userId),
+      eq(notificationState.enabled, state.enabled),
+      previousHash ? eq(notificationState.snapshotHash, previousHash) : isNull(notificationState.snapshotHash),
+      expectedPending ? eq(notificationState.pendingNotificationJson, expectedPending) : isNull(notificationState.pendingNotificationJson),
+    )).run();
   };
 
-  const previous = parseScheduleSnapshot(state?.snapshotJson ?? null);
-  if (!previous || !state?.snapshotHash) {
-    await advanceBaseline();
-    return;
-  }
-  if (state.snapshotHash === snapshotHash) {
-    await advanceBaseline();
-    return;
-  }
-  if (!state.enabled || caps?.change_notification !== true) {
+  if (!state?.enabled || caps?.change_notification !== true) {
     await advanceBaseline();
     return;
   }
 
+  const flush = async (serialized: string): Promise<PendingScheduleNotification | null> => {
+    try {
+      const pending = JSON.parse(serialized) as PendingScheduleNotification;
+      let expected = serialized;
+      for (let index = pending.nextIndex; index < pending.messages.length; index += 1) {
+        await env.SCHEDULE_NOTIFICATION_QUEUE.send(pending.messages[index]);
+        pending.nextIndex = index + 1;
+        const progress = JSON.stringify(pending);
+        const saved = await db.update(notificationState).set({ pendingNotificationJson: progress })
+          .where(and(eq(notificationState.userId, userId), eq(notificationState.pendingNotificationJson, expected))).run();
+        if (!saved.meta.changes) return null;
+        expected = progress;
+      }
+      const result = await db.update(notificationState).set({
+        snapshotJson: pending.snapshotJson, snapshotHash: pending.snapshotHash,
+        pendingNotificationJson: null, updatedAt: now.toISOString(),
+      }).where(and(eq(notificationState.userId, userId), eq(notificationState.pendingNotificationJson, expected))).run();
+      if (!result.meta.changes) return null;
+      console.log(JSON.stringify({ event: "queue.schedule_notification.enqueued", userId, parts: pending.messages.length }));
+      return pending;
+    } catch {
+      console.error(JSON.stringify({ event: "queue.schedule_notification.enqueue_failed", userId, reason: "queue_send_failed" }));
+      return null;
+    }
+  };
+
+  let previous = parseScheduleSnapshot(state.snapshotJson);
+  if (state.pendingNotificationJson) {
+    const delivered = await flush(state.pendingNotificationJson);
+    if (!delivered) return;
+    previous = parseScheduleSnapshot(delivered.snapshotJson);
+    previousHash = delivered.snapshotHash;
+    expectedPending = null;
+  }
+  if (!previous || !previousHash || previousHash === snapshotHash) {
+    await advanceBaseline();
+    return;
+  }
   const diff = diffFutureSchedule(previous, snapshot, now);
-  if (diff.total === 0) {
+  if (!diff.total) {
     await advanceBaseline();
     return;
   }
 
-  const rendered = renderScheduleChangeEmail(diff, now);
-  const notificationId = await createNotificationId(userId, state.snapshotHash, snapshotHash);
-  try {
-    await env.SCHEDULE_NOTIFICATION_QUEUE.send({
-      version: 1,
-      notificationId,
-      userId,
-      ...rendered,
-      createdAt: now.toISOString(),
-    });
-    await advanceBaseline();
-    console.log(JSON.stringify({
-      event: "queue.schedule_notification.enqueued",
-      notificationId,
-      userId,
-      changes: diff.total,
-    }));
-  } catch {
-    console.error(JSON.stringify({
-      event: "queue.schedule_notification.enqueue_failed",
-      notificationId,
-      userId,
-      reason: "queue_send_failed",
-    }));
-  }
+  const notificationId = await createNotificationId(userId, previousHash, snapshotHash);
+  const pending: PendingScheduleNotification = {
+    snapshotJson, snapshotHash, nextIndex: 0,
+    messages: createScheduleNotificationMessages(diff, now, userId, notificationId),
+  };
+  const serialized = JSON.stringify(pending);
+  // Freeze dates, partitioning and timestamps before the first enqueue so retries reuse identical Resend keys and bodies.
+  const claimed = await db.update(notificationState).set({ pendingNotificationJson: serialized })
+    .where(and(eq(notificationState.userId, userId), eq(notificationState.snapshotHash, previousHash), eq(notificationState.enabled, true), isNull(notificationState.pendingNotificationJson))).run();
+  if (claimed.meta.changes) await flush(serialized);
 }

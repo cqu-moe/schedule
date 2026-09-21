@@ -38,7 +38,7 @@ beforeAll(async () => {
   await env.DB.prepare(
     `CREATE TABLE notification_state (
       user_id text PRIMARY KEY NOT NULL, enabled integer NOT NULL DEFAULT 0,
-      snapshot_json text, snapshot_hash text,
+      snapshot_json text, snapshot_hash text, pending_notification_json text,
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
@@ -112,7 +112,7 @@ function futureCourseFixture(daysAhead = 3) {
     semesterStart: iso(monday),
     dayOfWeek: target.dayOfWeek,
     /** 与邮件渲染相同的「M 月 D 日」标签,用于断言。 */
-    dateLabel: `${target.month} 月 ${target.day} 日`,
+    dateLabel: `${target.month}月${target.day}日`,
   };
 }
 
@@ -221,6 +221,34 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     expect(send.mock.calls[0][0]).not.toHaveProperty("email");
     const state = await db.select().from(notificationState).where(eq(notificationState.userId, "user-1")).get();
     expect(state?.snapshotHash).toBe(await hashSchedule(normalizeSchedule(newData)));
+  });
+
+  it("retries the exact persisted multi-email batch after a partial enqueue failure", async () => {
+    const sid = await insertSub();
+    const fixture = futureCourseFixture();
+    const oldData = { semesterStart: fixture.semesterStart, exams: [], courses: Array.from({length:40}, (_,index)=>({name:`课程${index}`,lecturer:"张老师",position:"虎溪校区",room:"D123",day_of_week:3,start_session:1,end_session:2,weeks:Array.from({length:18},(_,week)=>week+1)})) };
+    const oldSnapshot=normalizeSchedule(oldData);
+    await db.insert(notificationState).values({userId:"user-1",enabled:true,snapshotJson:JSON.stringify(oldSnapshot),snapshotHash:await hashSchedule(oldSnapshot),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    const newData={...oldData,courses:oldData.courses.map(item=>({...item,day_of_week:5}))};
+    vi.spyOn(harvestModule,"fetchPersonalHarvest").mockResolvedValue({ctx:{sessionId:"sess-1",semesterInfo:{id:"sess-1",name:"测试学期",begin_date:fixture.semesterStart,end_date:"2028-01-15"}},data:newData});
+    const firstSend=vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error("queue unavailable"));
+    await processScheduleSyncBatch(makeBatch([{subscriptionId:sid,userId:"user-1"}]).batch,testEnv(firstSend));
+    const firstState=await db.select().from(notificationState).where(eq(notificationState.userId,"user-1")).get();
+    expect(firstState?.pendingNotificationJson).toBeTruthy();
+    const pending=JSON.parse(firstState!.pendingNotificationJson!);
+    expect(pending.messages.length).toBeGreaterThan(1);
+    expect(pending.nextIndex).toBe(1);
+    vi.useFakeTimers({toFake:["Date"]});
+    vi.setSystemTime(Date.now()+8*DAY_MS);
+    try {
+      const retrySend=vi.fn().mockResolvedValue(undefined);
+      await processScheduleSyncBatch(makeBatch([{subscriptionId:sid,userId:"user-1"}]).batch,testEnv(retrySend));
+      expect(retrySend.mock.calls.map(call=>call[0])).toEqual(pending.messages.slice(pending.nextIndex));
+      expect(retrySend.mock.calls.map(call=>call[0].notificationId)).not.toContain(pending.messages[0].notificationId);
+      const state=await db.select().from(notificationState).where(eq(notificationState.userId,"user-1")).get();
+      expect(state?.pendingNotificationJson).toBeNull();
+      expect(state?.snapshotHash).toBe(await hashSchedule(normalizeSchedule(newData)));
+    } finally { vi.useRealTimers(); }
   });
 
   it("keeps the old baseline when notification enqueue fails while the sync still succeeds", async () => {
