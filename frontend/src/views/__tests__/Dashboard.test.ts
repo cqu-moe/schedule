@@ -689,8 +689,104 @@ describe('Dashboard view (v2)', () => {
     wrapper.unmount()
   })
 
-  it('clears "同步中..." when poll detects changed last_synced_at', async () => {
+  it('keeps polling a known run when an older sync changes last_synced_at before that run completes', async () => {
     vi.useFakeTimers()
+    const initial = mockSubscription({
+      id: 'personal-all', last_synced_at: '2026-09-22T06:00:00Z',
+    })
+    const queued = {
+      ...initial,
+      sync_status: 'queued' as const,
+      sync_run_id: 'run-current',
+      last_synced_at: '2026-09-22T06:20:00Z',
+    }
+    const { wrapper } = await mountDashboard([initial])
+    mockApi.refreshPersonalSubscription.mockResolvedValue({
+      status: 'queued', run_id: 'run-current', affected_subscription_ids: [initial.id],
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
+    const syncAll = wrapper.findAll('button').find(button => button.text().includes('同步个人课表'))!
+    await syncAll.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(wrapper.text()).toContain('同步中...')
+    expect(mockToast.success).not.toHaveBeenCalledWith('同步完成')
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([{
+      ...queued, sync_status: 'success', last_synced_at: '2026-09-22T06:31:00Z',
+    }]))
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(4)
+    expect(wrapper.text()).not.toContain('同步中...')
+    expect(mockToast.success).toHaveBeenCalledWith('同步完成')
+  })
+
+  it.each(['focus', 'visibilitychange', 'pageshow'])('reconciles a completed run on %s without waiting for a suspended poll timer', async (eventType) => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({ sync_status: 'running', sync_run_id: 'run-return' })
+    const { wrapper } = await mountDashboard([queued])
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([{
+      ...queued, sync_status: 'success', last_synced_at: '2026-09-22T07:19:58Z',
+    }]))
+    vi.setSystemTime(Date.now() + 90 * 60_000)
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      if (eventType === 'visibilitychange') document.dispatchEvent(new Event(eventType))
+      else window.dispatchEvent(Object.assign(new Event(eventType), { persisted: true }))
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('同步中...')
+      expect(mockToast.success).toHaveBeenCalledWith('同步完成')
+      expect(mockToast.error).not.toHaveBeenCalled()
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('does not report a superseding run as successful completion of the requested run', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({ sync_status: 'queued', sync_run_id: 'run-requested' })
+    const { wrapper } = await mountDashboard([queued])
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([{
+      ...queued, sync_status: 'success', sync_run_id: 'run-other', last_synced_at: '2026-09-22T07:19:58Z',
+    }]))
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(mockToast.success).not.toHaveBeenCalledWith('同步完成')
+    expect(wrapper.text()).toContain('同步中...')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+  })
+
+  it('bounds repeated poll failures and reconciles server success when returning later', async () => {
+    vi.useFakeTimers()
+    const queued = mockSubscription({ sync_status: 'queued', sync_run_id: 'run-offline' })
+    const { wrapper } = await mountDashboard([queued])
+    mockApi.getSubscriptions.mockRejectedValue(new Error('offline'))
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 5000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+    expect(wrapper.findAll('button').some(button => button.text() === '同步中')).toBe(false)
+    const attempts = mockApi.getSubscriptions.mock.calls.length
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(mockApi.getSubscriptions).toHaveBeenCalledTimes(attempts)
+
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([{
+      ...queued, sync_status: 'success', last_synced_at: '2026-09-22T07:19:58Z',
+    }]))
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('同步失败：')
+    expect(wrapper.text()).not.toContain('同步中...')
+  })
+
+  it('uses changed last_synced_at only for a legacy refresh without a run id', async () => {
+    vi.useFakeTimers()
+    mockApi.refreshPersonalSubscription.mockResolvedValue({ status: 'queued', run_id: null })
     const oldSyncedAt = '2026-03-01T10:00:00Z'
     const newSyncedAt = '2026-03-01T11:00:00Z'
     const sub = mockSubscription({ last_synced_at: oldSyncedAt })

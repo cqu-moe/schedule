@@ -598,7 +598,8 @@ function cooldownLabel(seconds: number): string {
 }
 
 function isSubSyncing(sub: Subscription): boolean {
-  return sub.id in pendingRefresh || sub.sync_status === 'queued' || sub.sync_status === 'running'
+  return sub.id in pendingRefresh
+    || (!localSyncErrors[sub.id] && (sub.sync_status === 'queued' || sub.sync_status === 'running'))
 }
 
 function syncErrorMessage(sub: Subscription): string | null {
@@ -841,57 +842,66 @@ async function runSyncPoll() {
       if (rateLimited) {
         rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_BACKOFF_WINDOW)
       }
-      scheduleNextPoll(rateLimited ? undefined : RATE_LIMIT_POLL_INTERVAL)
+      const now = Date.now()
+      const timedOutIds = Object.entries(pendingRefresh)
+        .filter(([, pending]) => pending.unconfirmedSince === null
+          ? now - pending.startedAt >= POLL_ACTIVE_TIMEOUT
+          : now - pending.unconfirmedSince >= POLL_TIMEOUT)
+        .map(([id]) => id)
+      failPendingRefreshes('同步超时，请稍后重试', timedOutIds)
+      if (Object.keys(pendingRefresh).length === 0) stopPolling()
+      else scheduleNextPoll(rateLimited ? undefined : RATE_LIMIT_POLL_INTERVAL)
     }
     return
   }
 
   if (!pollingActive) return
+  reconcilePendingRefreshes()
+}
 
-    const now = Date.now()
-    const timedOutIds: string[] = []
+function reconcilePendingRefreshes() {
+  const now = Date.now()
+  const timedOutIds: string[] = []
 
-    for (const [id, pending] of Object.entries(pendingRefresh)) {
-      const sub = subStore.subscriptions.find(s => s.id === id)
-      if (!sub) {
-        // Sub no longer exists — remove from tracking
-        delete pendingRefresh[id]
-        continue
-      }
-      const isSameRun = !pending.runId || sub.sync_run_id === pending.runId
-      if (isSameRun && sub.sync_status === 'error') {
-        const message = sub.sync_error_message || '同步失败，请稍后重试'
-        localSyncErrors[id] = message
-        toast.error(message)
-        delete pendingRefresh[id]
-        continue
-      }
-      if ((isSameRun && sub.sync_status === 'success') || sub.last_synced_at !== pending.oldSyncedAt) {
-        delete localSyncErrors[id]
-        toast.success('同步完成')
-        delete pendingRefresh[id]
-        continue
-      }
-
-      const backendStillWorking = isSameRun
-        && (sub.sync_status === 'queued' || sub.sync_status === 'running')
-      if (backendStillWorking) {
-        pending.unconfirmedSince = null
-        if (now - pending.startedAt >= POLL_ACTIVE_TIMEOUT) timedOutIds.push(id)
-        continue
-      }
-
-      pending.unconfirmedSince ??= now
-      if (now - pending.unconfirmedSince >= POLL_TIMEOUT) timedOutIds.push(id)
+  for (const [id, pending] of Object.entries(pendingRefresh)) {
+    const sub = subStore.subscriptions.find(s => s.id === id)
+    if (!sub) {
+      // Sub no longer exists — remove from tracking
+      delete pendingRefresh[id]
+      continue
+    }
+    const isSameRun = !pending.runId || sub.sync_run_id === pending.runId
+    if (isSameRun && sub.sync_status === 'error') {
+      const message = sub.sync_error_message || '同步失败，请稍后重试'
+      localSyncErrors[id] = message
+      toast.error(message)
+      delete pendingRefresh[id]
+      continue
+    }
+    const legacyTimestampChanged = !pending.runId && sub.last_synced_at !== pending.oldSyncedAt
+    if ((isSameRun && sub.sync_status === 'success') || legacyTimestampChanged) {
+      delete localSyncErrors[id]
+      toast.success('同步完成')
+      delete pendingRefresh[id]
+      continue
     }
 
-    failPendingRefreshes('同步超时，请稍后重试', timedOutIds)
-
-    if (Object.keys(pendingRefresh).length === 0) {
-      stopPolling()
-    } else {
-      scheduleNextPoll()
+    const backendStillWorking = isSameRun
+      && (sub.sync_status === 'queued' || sub.sync_status === 'running')
+    if (backendStillWorking) {
+      pending.unconfirmedSince = null
+      if (now - pending.startedAt >= POLL_ACTIVE_TIMEOUT) timedOutIds.push(id)
+      continue
     }
+
+    pending.unconfirmedSince ??= now
+    if (now - pending.unconfirmedSince >= POLL_TIMEOUT) timedOutIds.push(id)
+  }
+
+  failPendingRefreshes('同步超时，请稍后重试', timedOutIds)
+
+  if (Object.keys(pendingRefresh).length === 0) stopPolling()
+  else scheduleNextPoll()
 }
 
 function startSyncPolling() {
@@ -1056,7 +1066,13 @@ function refreshFromReturn(): Promise<void> {
     await session.load()
     await loadSubscriptions(true)
     restoreFirstSyncDismissal()
+    for (const sub of subStore.subscriptions) {
+      if (!(sub.id in pendingRefresh) && (sub.sync_status === 'success' || sub.sync_status === 'error')) {
+        delete localSyncErrors[sub.id]
+      }
+    }
     trackCurrentActiveRuns()
+    reconcilePendingRefreshes()
   })()
   returnLoadPromise = request
   const clear = () => {
@@ -1070,6 +1086,10 @@ function handleWindowFocus() {
   void refreshFromReturn().catch(() => undefined)
 }
 
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') handleWindowFocus()
+}
+
 function handlePageShow(event: PageTransitionEvent) {
   if (event.persisted) void refreshFromReturn().catch(() => undefined)
 }
@@ -1077,6 +1097,7 @@ function handlePageShow(event: PageTransitionEvent) {
 onMounted(async () => {
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener('pageshow', handlePageShow)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   cooldownTimer = setInterval(() => {
     cooldownClock.value = Date.now()
   }, 1000)
@@ -1104,6 +1125,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener('pageshow', handlePageShow)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopPolling()
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
