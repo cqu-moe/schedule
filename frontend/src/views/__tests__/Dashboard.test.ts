@@ -614,7 +614,7 @@ describe('Dashboard view (v2)', () => {
       sync_status: 'queued',
       sync_run_id: 'run-rate-budget',
       sync_trigger: 'manual',
-      sync_requested_at: '2026-09-08T00:00:00Z',
+      sync_requested_at: new Date().toISOString(),
     })
     mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
 
@@ -636,7 +636,7 @@ describe('Dashboard view (v2)', () => {
       sync_status: 'queued',
       sync_run_id: 'run-serial-poll',
       sync_trigger: 'manual',
-      sync_requested_at: '2026-09-08T00:00:00Z',
+      sync_requested_at: new Date().toISOString(),
     })
     let resolvePendingPoll!: (value: ReturnType<typeof mockSubscriptionList>) => void
     mockApi.getSubscriptions
@@ -660,7 +660,7 @@ describe('Dashboard view (v2)', () => {
       sync_status: 'queued',
       sync_run_id: 'run-rate-limited',
       sync_trigger: 'manual',
-      sync_requested_at: '2026-09-08T00:00:00Z',
+      sync_requested_at: new Date().toISOString(),
     })
     mockApi.getSubscriptions
       .mockResolvedValueOnce(mockSubscriptionList([queued]))
@@ -878,13 +878,81 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步遇到临时故障，正在自动重试...')
   })
 
-  it('stops a persisted queued run at the hard timeout instead of spinning forever', async () => {
+  it('keeps a confirmed cron run queued across the hourly dispatch window', async () => {
+    vi.useFakeTimers()
+    const requestedAt = Date.now()
+    const queued = mockSubscription({
+      sync_status: 'queued', sync_run_id: 'run-hourly', sync_trigger: 'cron',
+      sync_requested_at: new Date(requestedAt).toISOString(),
+    })
+    const { wrapper } = await mountDashboard([queued])
+    vi.setSystemTime(requestedAt + 30 * 60_000)
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(wrapper.text()).toContain('同步中...')
+    expect(mockToast.error).not.toHaveBeenCalled()
+    vi.setSystemTime(requestedAt + 60 * 60_000)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(wrapper.text()).toContain('同步中...')
+    expect(mockToast.error).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('starts the execution timeout after queueing, with persisted start=%s', async (persistedStart) => {
+    vi.useFakeTimers()
+    const requestedAt = Date.now()
+    const queued = mockSubscription({
+      sync_status: 'queued', sync_run_id: 'run-execution',
+      sync_requested_at: new Date(requestedAt).toISOString(),
+    })
+    const { wrapper } = await mountDashboard([queued])
+    const runningAt = requestedAt + 30 * 60_000
+    vi.setSystemTime(runningAt + 2 * 60_000)
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([{
+      ...queued, sync_status: 'running',
+      sync_started_at: persistedStart ? new Date(runningAt).toISOString() : null,
+    }]))
+    await vi.advanceTimersByTimeAsync(3000)
+    const observedAt = Date.now()
+    expect(wrapper.text()).toContain('同步中...')
+    expect(mockToast.error).not.toHaveBeenCalled()
+
+    vi.setSystemTime((persistedStart ? runningAt : observedAt) + 15 * 60_000)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+  })
+
+  it('gives a new continuous request failure its own budget after healthy queue waiting and resets it after recovery', async () => {
+    vi.useFakeTimers()
+    const requestedAt = Date.now()
+    const queued = mockSubscription({
+      sync_status: 'queued', sync_run_id: 'run-reachable-queue',
+      sync_requested_at: new Date(requestedAt).toISOString(),
+    })
+    const { wrapper } = await mountDashboard([queued])
+    vi.setSystemTime(requestedAt + 16 * 60_000)
+    mockApi.getSubscriptions.mockRejectedValue({ response: { status: 503 } })
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockToast.error).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('同步中...')
+    await vi.advanceTimersByTimeAsync(14 * 60_000)
+    expect(mockToast.error).not.toHaveBeenCalled()
+
+    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
+    await vi.advanceTimersByTimeAsync(5000)
+    mockApi.getSubscriptions.mockRejectedValue({ response: { status: 503 } })
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 3000)
+    expect(mockToast.error).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(13 * 60_000 + 5000)
+    expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
+  })
+
+  it('bounds queued waiting by the persisted two-hour active-run limit', async () => {
     vi.useFakeTimers()
     const queued = mockSubscription({
       sync_status: 'queued',
       sync_run_id: 'run-stuck',
       sync_trigger: 'manual',
-      sync_requested_at: '2026-03-01T10:00:00Z',
+      sync_requested_at: new Date(Date.now() - 2 * 60 * 60_000 + 5000).toISOString(),
     })
     mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([queued]))
 
@@ -894,7 +962,7 @@ describe('Dashboard view (v2)', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('同步中...')
 
-    await vi.advanceTimersByTimeAsync(15 * 60_000 + 5000)
+    await vi.advanceTimersByTimeAsync(8000)
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('同步中...')
@@ -1006,7 +1074,7 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).not.toContain('同步中...')
   })
 
-  it('starts a fresh 30-second grace period when an active run state disappears', async () => {
+  it('keeps the fresh 30-second unknown-state grace period across a later request failure', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-08T00:00:00Z'))
 
@@ -1062,11 +1130,12 @@ describe('Dashboard view (v2)', () => {
     expect(wrapper.text()).toContain('同步中...')
     expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
 
+    mockApi.getSubscriptions.mockRejectedValue(new Error('temporarily offline'))
     await vi.advanceTimersByTimeAsync(28_000)
     await flushPromises()
     expect(wrapper.text()).not.toContain('同步失败：同步超时，请稍后重试')
 
-    await vi.advanceTimersByTimeAsync(4000)
+    await vi.advanceTimersByTimeAsync(6000)
     await flushPromises()
     expect(wrapper.text()).toContain('同步失败：同步超时，请稍后重试')
   })

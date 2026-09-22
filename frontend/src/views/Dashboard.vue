@@ -540,6 +540,8 @@ interface PendingRefresh {
   oldSyncedAt: string | null
   startedAt: number
   unconfirmedSince: number | null
+  runningSince: number | null
+  failureSince: number | null
 }
 const pendingRefresh = reactive<Record<string, PendingRefresh>>({})
 const localSyncErrors = reactive<Record<string, string>>({})
@@ -768,6 +770,8 @@ const RATE_LIMIT_POLL_INTERVAL = 5000
 const RATE_LIMIT_BACKOFF_WINDOW = 60_000
 const POLL_TIMEOUT = 30000
 const POLL_ACTIVE_TIMEOUT = 15 * 60_000
+// Mirrors the backend's active-run limit, including the hourly dispatch window.
+const POLL_QUEUED_TIMEOUT = 2 * 60 * 60_000
 
 function stopPolling() {
   pollingActive = false
@@ -843,11 +847,14 @@ async function runSyncPoll() {
         rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_BACKOFF_WINDOW)
       }
       const now = Date.now()
-      const timedOutIds = Object.entries(pendingRefresh)
-        .filter(([, pending]) => pending.unconfirmedSince === null
-          ? now - pending.startedAt >= POLL_ACTIVE_TIMEOUT
-          : now - pending.unconfirmedSince >= POLL_TIMEOUT)
-        .map(([id]) => id)
+      const timedOutIds: string[] = []
+      for (const [id, pending] of Object.entries(pendingRefresh)) {
+        pending.failureSince ??= now
+        if (now - pending.failureSince >= POLL_ACTIVE_TIMEOUT
+          || (pending.unconfirmedSince !== null && now - pending.unconfirmedSince >= POLL_TIMEOUT)) {
+          timedOutIds.push(id)
+        }
+      }
       failPendingRefreshes('同步超时，请稍后重试', timedOutIds)
       if (Object.keys(pendingRefresh).length === 0) stopPolling()
       else scheduleNextPoll(rateLimited ? undefined : RATE_LIMIT_POLL_INTERVAL)
@@ -864,6 +871,7 @@ function reconcilePendingRefreshes() {
   const timedOutIds: string[] = []
 
   for (const [id, pending] of Object.entries(pendingRefresh)) {
+    pending.failureSince = null
     const sub = subStore.subscriptions.find(s => s.id === id)
     if (!sub) {
       // Sub no longer exists — remove from tracking
@@ -886,11 +894,21 @@ function reconcilePendingRefreshes() {
       continue
     }
 
-    const backendStillWorking = isSameRun
-      && (sub.sync_status === 'queued' || sub.sync_status === 'running')
-    if (backendStillWorking) {
+    if (isSameRun && sub.sync_status === 'queued') {
       pending.unconfirmedSince = null
-      if (now - pending.startedAt >= POLL_ACTIVE_TIMEOUT) timedOutIds.push(id)
+      pending.runningSince = null
+      const requestedAt = Date.parse(sub.sync_requested_at ?? '')
+      const queuedSince = Number.isFinite(requestedAt) && requestedAt <= now
+        ? requestedAt : pending.startedAt
+      if (now - queuedSince >= POLL_QUEUED_TIMEOUT) timedOutIds.push(id)
+      continue
+    }
+    if (isSameRun && sub.sync_status === 'running') {
+      pending.unconfirmedSince = null
+      const startedAt = Date.parse(sub.sync_started_at ?? '')
+      if (Number.isFinite(startedAt) && startedAt <= now) pending.runningSince = startedAt
+      else pending.runningSince ??= now
+      if (now - pending.runningSince >= POLL_ACTIVE_TIMEOUT) timedOutIds.push(id)
       continue
     }
 
@@ -925,6 +943,8 @@ function trackRefresh(runs: Array<{ id: string; runId: string | null }>) {
       oldSyncedAt: sub?.last_synced_at ?? null,
       startedAt,
       unconfirmedSince: null,
+      runningSince: null,
+      failureSince: null,
     }
   }
   startSyncPolling()
