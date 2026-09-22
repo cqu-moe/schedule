@@ -8,6 +8,7 @@ import * as harvestModule from "../services/cqu-harvest";
 import { HarvestError } from "../services/cqu-harvest";
 import type { Env } from "../types";
 import { hashSchedule, normalizeSchedule } from "../services/schedule-notifications";
+import * as telemetry from "../lib/posthog";
 
 const db = drizzle(env.DB);
 
@@ -124,6 +125,41 @@ function futureExamTimes(daysAhead = 4) {
 }
 
 describe("processScheduleSyncBatch — organic harvest personal path", () => {
+  it("reports execution from the accepted running timestamp separately from the full run age", async () => {
+    const requestedAt = 1_800_000_000_000;
+    let now = requestedAt + 40_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: new Date(requestedAt).toISOString(), sessionRecoveryAttempts: 1,
+    });
+    const capture = vi.spyOn(telemetry, "captureScheduleEvent");
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockImplementation(async () => {
+      now += 70_000;
+      return {
+        ctx: { sessionId: "term-1", semesterInfo: { id: "term-1", name: "2026秋", begin_date: "2026-09-01", end_date: "2027-01-31" } },
+        data: { courses: [], exams: [], semesterStart: "2026-09-01" },
+      };
+    });
+    const { batch } = makeBatch([{
+      subscriptionId: sid, userId: "user-1", runId, trigger: "cron",
+    }], 3);
+
+    await processScheduleSyncBatch(batch, { ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled" });
+    await processScheduleSyncBatch(batch, { ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled" });
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith(expect.anything(), undefined, "schedule_sync_completed", "user-1", expect.objectContaining({
+      outcome: "success", duration_ms: 70_000, end_to_end_duration_ms: 110_000,
+      duration_basis: "execution_v2", delivery_attempt: 3,
+      session_recovery_attempts: 1,
+    }));
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row?.syncStartedAt).toBe(new Date(requestedAt + 40_000).toISOString());
+    expect(capture.mock.calls[0][4]).not.toHaveProperty("attempt_duration_ms");
+  });
+
   it("harvests and commits one canonical row for all built-in views", async () => {
     const runId = crypto.randomUUID();
     const sid = await insertSub({
@@ -508,6 +544,25 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     });
     expect(row?.syncErrorMessage).not.toContain("自动重试");
     expect(row?.syncErrorMessage).not.toContain("重新绑定");
+  });
+
+  it.each([45, 46])("ends session recovery on delivery %i before the queue can discard the run", async (attempts) => {
+    const runId = crypto.randomUUID();
+    const sid = await insertSub({
+      sourceType: "personal", sourceId: "user-1", syncStatus: "queued", syncRunId: runId,
+      syncRequestedAt: new Date(Date.now() - 24 * 60_000).toISOString(), icsContent: "OLD",
+    });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("SESSION_INACTIVE"));
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1", runId, trigger: "manual" },
+    ], attempts);
+
+    await processScheduleSyncBatch(batch, { ...testEnv(), PERSONAL_SUBSCRIPTION_MODE: "enabled" });
+
+    expect(messages[0].retry).not.toHaveBeenCalled();
+    expect(messages[0].ack).toHaveBeenCalledOnce();
+    const row = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
+    expect(row).toMatchObject({ syncStatus: "error", syncErrorCode: "SESSION_INACTIVE", icsContent: "OLD" });
   });
 
   it("does not reset recovery when TGT_EXPIRED becomes SESSION_INACTIVE", async () => {

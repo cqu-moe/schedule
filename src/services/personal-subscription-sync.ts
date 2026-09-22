@@ -129,7 +129,8 @@ export async function requestPersonalSync(
           trigger: "manual",
           run_id: claim.runId,
           subscription_id: canonical.id,
-          duration_ms: Math.max(0, Date.now() - Date.parse(claim.requestedAt)),
+          duration_basis: "execution_v2",
+          end_to_end_duration_ms: Math.max(0, Date.now() - Date.parse(claim.requestedAt)),
           error_code: "QUEUE_UNAVAILABLE",
         });
       }

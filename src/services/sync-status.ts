@@ -113,8 +113,12 @@ export async function queueSyncRuns(
   return runId;
 }
 
-export async function markSyncRunning(db: Db, subscriptionId: string, runId: string): Promise<boolean> {
-  const now = new Date().toISOString();
+export async function markSyncRunning(
+  db: Db,
+  subscriptionId: string,
+  runId: string,
+  now = new Date().toISOString(),
+): Promise<boolean> {
   const result = await db.update(subscriptions).set({
     syncStatus: "running",
     syncStartedAt: now,

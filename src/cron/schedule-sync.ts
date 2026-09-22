@@ -13,6 +13,7 @@ import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
 import {
   capacityRetryDelay,
+  CAPACITY_RETRY_MAX_ATTEMPTS,
   CAPACITY_RETRY_CODES,
   sessionRecoveryRetryDelay,
   SESSION_RECOVERY_RETRY_CODES,
@@ -92,6 +93,9 @@ type SyncTerminal = {
   runId: string;
   trigger: NonNullable<ScheduleSyncMessage["trigger"]>;
   requestedAt?: number;
+  executionStartedAt?: number;
+  deliveryAttempt?: number;
+  sessionRecoveryAttempts?: number;
 };
 
 function captureSyncTerminal(
@@ -101,17 +105,28 @@ function captureSyncTerminal(
   outcome: "success" | "failure",
   errorCode?: string,
 ): void {
-  const durationMs = terminal.requestedAt !== undefined
+  const now = Date.now();
+  const endToEndDurationMs = terminal.requestedAt !== undefined
     && Number.isFinite(terminal.requestedAt)
-    && terminal.requestedAt <= Date.now()
-      ? Date.now() - terminal.requestedAt
+    && terminal.requestedAt <= now
+      ? now - terminal.requestedAt
       : undefined;
+  // This accepted running attempt only; earlier attempts and queue wait are
+  // included in end_to_end_duration_ms, never presented as execution time.
+  const durationMs = terminal.executionStartedAt === undefined
+    ? undefined : Math.max(0, now - terminal.executionStartedAt);
   captureScheduleEvent(env, lifecycle, "schedule_sync_completed", terminal.userId, {
     outcome,
     trigger: terminal.trigger,
     run_id: terminal.runId,
     subscription_id: terminal.subscriptionId,
+    duration_basis: "execution_v2",
     ...(durationMs === undefined ? {} : { duration_ms: durationMs }),
+    ...(endToEndDurationMs === undefined ? {} : { end_to_end_duration_ms: endToEndDurationMs }),
+    ...(terminal.deliveryAttempt === undefined ? {} : { delivery_attempt: terminal.deliveryAttempt }),
+    ...(terminal.sessionRecoveryAttempts === undefined ? {} : {
+      session_recovery_attempts: terminal.sessionRecoveryAttempts,
+    }),
     ...(errorCode ? { error_code: errorCode } : {}),
   });
 }
@@ -406,7 +421,7 @@ export async function processScheduleSyncBatch(
     return pending;
   }
 
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     batch.messages.map(async (message) => {
       const { subscriptionId, userId, trigger } = message.body;
       let runId = message.body.runId;
@@ -414,12 +429,17 @@ export async function processScheduleSyncBatch(
       // First request time of THIS sync run (ms epoch), used to bound the
       // capacity wait. NaN when unavailable → the finite retry path is used.
       let runFirstRequestedAt = Number.NaN;
+      let executionStartedAt: number | undefined;
+      let sessionRecoveryAttempts: number | undefined;
       const terminal = (targetId: string): SyncTerminal | null => runId ? {
         subscriptionId: targetId,
         userId,
         runId,
         trigger: trigger ?? "admin",
         requestedAt: runFirstRequestedAt,
+        executionStartedAt,
+        deliveryAttempt: message.attempts ?? 1,
+        sessionRecoveryAttempts,
       } : null;
       const failTarget = async (targetId: string, failure: PublicSyncFailure) => {
         const current = terminal(targetId);
@@ -471,6 +491,9 @@ export async function processScheduleSyncBatch(
           message.ack();
           return;
         }
+        // Retry budgets use the original D1 request time, not redelivery time.
+        runFirstRequestedAt = sub.syncRequestedAt ? Date.parse(sub.syncRequestedAt) : Number.NaN;
+        sessionRecoveryAttempts = sub.sessionRecoveryAttempts;
 
         if (runId && sub.syncRunId !== runId) {
           console.log(JSON.stringify({
@@ -510,20 +533,15 @@ export async function processScheduleSyncBatch(
           runId = await queueSyncRun(db, subscriptionId, trigger ?? "admin");
           // queueSyncRun just stamped syncRequestedAt for this new run.
           runFirstRequestedAt = Date.now();
-        } else {
-          // Bound the capacity wait by the run's FIRST queue time from D1 —
-          // never by this message's (re-)delivery time, which would reset the
-          // 45-minute budget on every retry. Unparseable/missing → NaN → the
-          // original finite retry is used instead of an unbounded wait.
-          runFirstRequestedAt = sub.syncRequestedAt
-            ? Date.parse(sub.syncRequestedAt)
-            : Number.NaN;
+          sessionRecoveryAttempts = 0;
         }
-        if (!(await markSyncRunning(db, sub.id, runId))) {
+        const runningAt = Date.now();
+        if (!(await markSyncRunning(db, sub.id, runId, new Date(runningAt).toISOString()))) {
           if (sub.sourceType === "personal") message.retry({ delaySeconds: 60 });
           else message.ack();
           return;
         }
+        executionStartedAt = runningAt;
 
         const caps = await readCaps(env, userId);
 
@@ -645,7 +663,7 @@ export async function processScheduleSyncBatch(
         await Promise.all(
           syncTargetIds
             .filter(targetId => targetId !== subscriptionId)
-            .map(targetId => markSyncRunning(db, targetId, runId!)),
+            .map(targetId => markSyncRunning(db, targetId, runId!, new Date(runningAt).toISOString())),
         );
 
         const { ctx, data: personalData } = await fetchBatchPersonalHarvest(userId);
@@ -702,19 +720,24 @@ export async function processScheduleSyncBatch(
               message.ack();
               return;
             }
+            sessionRecoveryAttempts = recoveryAttempt;
             const delaySeconds = sessionRecoveryRetryDelay(
               failure.code,
               runFirstRequestedAt,
               Date.now(),
               recoveryAttempt,
             );
-            if (delaySeconds !== null) {
+            // Capacity retries and duplicate deliveries also consume the queue's
+            // retry limit; the separate recovery counter must not outlive it.
+            if (delaySeconds !== null && attempt < CAPACITY_RETRY_MAX_ATTEMPTS) {
               await Promise.all(syncTargetIds.map(targetId =>
                 markSyncRetrying(db, targetId, runId!, failure)));
               console.warn(JSON.stringify({
                 event: "queue.schedule_sync.session_recovery_retry",
                 subscriptionId,
-                attempt: recoveryAttempt,
+                attempt,
+                recoveryAttempt,
+                execution_duration_ms: Date.now() - executionStartedAt!,
                 delaySeconds,
                 error: e.message,
                 message: "CQU session is recovering; scheduling bounded retry",
@@ -730,7 +753,8 @@ export async function processScheduleSyncBatch(
             console.warn(JSON.stringify({
               event: "queue.schedule_sync.session_recovery_exhausted",
               subscriptionId,
-              attempt: recoveryAttempt,
+              attempt,
+              recoveryAttempt,
               error: e.message,
               message: "Session recovery budget exhausted; keeping cached calendar",
             }));
@@ -857,6 +881,20 @@ export async function processScheduleSyncBatch(
       }
     }),
   );
+  // A successful handler implicitly acknowledges every unmarked message.
+  // Give failed state writes an explicit backoff before propagating the error;
+  // the platform's implicit retry otherwise has no delay and can exhaust the
+  // retry budget during a short D1 outage. Other messages keep their decisions.
+  results.forEach((result, index) => {
+    if (result.status !== "rejected") return;
+    const message = batch.messages[index];
+    const delaySeconds = SYNC_RETRY_DELAYS_SECONDS[
+      Math.min((message.attempts ?? 1) - 1, SYNC_RETRY_DELAYS_SECONDS.length - 1)
+    ];
+    message.retry({ delaySeconds });
+  });
+  const rejected = results.find((result) => result.status === "rejected");
+  if (rejected) throw rejected.reason;
 }
 
 interface PendingScheduleNotification {

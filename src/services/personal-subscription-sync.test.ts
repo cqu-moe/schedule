@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyD1Migrations, env } from "cloudflare:test";
 import { resetPersonalData, seedPersonal } from "../../tests/fixtures/personal-subscriptions";
 import type { Env } from "../types";
@@ -8,6 +8,7 @@ import {
   requestPersonalSync,
 } from "./personal-subscription-sync";
 import { claimSubscriptionRun } from "./sync-status";
+import * as telemetry from "../lib/posthog";
 
 const CAPS: CalendarCaps = {
   sync: true,
@@ -28,7 +29,32 @@ beforeEach(async () => {
   await resetPersonalData(env.DB);
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("requestPersonalSync", () => {
+  it("reports enqueue failure without inventing execution time for a run that never started", async () => {
+    const { id } = await seedPersonal(env.DB, "queue-failure-user");
+    const capture = vi.spyOn(telemetry, "captureScheduleEvent");
+    const testEnv = {
+      ...env, PERSONAL_SUBSCRIPTION_MODE: "enabled",
+      SCHEDULE_SYNC_QUEUE: { send: vi.fn().mockRejectedValue(new Error("queue unavailable")) },
+    } as unknown as Env;
+
+    await expect(requestPersonalSync(testEnv, "queue-failure-user", CAPS, "active"))
+      .rejects.toThrow("queue unavailable");
+
+    expect(capture).toHaveBeenCalledOnce();
+    const properties = capture.mock.calls[0][4];
+    expect(properties).toMatchObject({
+      outcome: "failure", duration_basis: "execution_v2", error_code: "QUEUE_UNAVAILABLE",
+      end_to_end_duration_ms: expect.any(Number),
+    });
+    expect(properties).not.toHaveProperty("duration_ms");
+    const row = await env.DB.prepare("SELECT sync_status,sync_started_at,manual_refresh_at FROM subscriptions WHERE id=?")
+      .bind(id).first();
+    expect(row).toEqual({ sync_status: "error", sync_started_at: null, manual_refresh_at: null });
+  });
+
   it("claims one canonical run, sends one message, and returns all view ids", async () => {
     const seeded = await seedPersonal(env.DB, "user-a");
     const send = vi.fn(async () => undefined);

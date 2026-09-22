@@ -111,6 +111,42 @@ async function insertSub(
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("enqueueScheduleSync (producer)", () => {
+  it.each([2, 3])("preserves the hourly spread for %i due users", async (count) => {
+    for (let index = 0; index < count; index++) {
+      const userId = `small-batch-${index}`;
+      await env.CACHE.put(`caps:${userId}`, JSON.stringify(FULL_CAPS));
+      await insertSub({ userId, sourceType: "personal", sourceId: userId });
+    }
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+
+    await enqueueScheduleSync({
+      ...env, PERSONAL_SUBSCRIPTION_MODE: "enabled", SCHEDULE_SYNC_QUEUE: { sendBatch },
+    } as unknown as Env);
+
+    const messages = sendBatch.mock.calls[0][0];
+    expect(messages.map((message: { delaySeconds: number }) => message.delaySeconds))
+      .toEqual(count === 2 ? [0, 1800] : [0, 1200, 2400]);
+    for (const message of messages) {
+      expect(message.body).not.toHaveProperty("plannedQueueDelaySeconds");
+    }
+  });
+
+  it("keeps a large due batch staggered and bounded by the hourly delay cap", async () => {
+    for (let index = 0; index < 365; index++) {
+      await insertSub({ sourceId: `large-batch-${index}` });
+    }
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+
+    const messages = sendBatch.mock.calls.flatMap(([chunk]) => chunk);
+    expect(messages).toHaveLength(365);
+    expect(messages[1].delaySeconds).toBe(10);
+    expect(messages[100].delaySeconds).toBe(1000);
+    expect(messages[359].delaySeconds).toBe(3590);
+    expect(messages[364].delaySeconds).toBe(3600);
+    expect(sendBatch.mock.calls.every(([chunk]) => chunk.length <= 100)).toBe(true);
+  });
+
   it("enqueues only one canonical personal run in enabled mode", async () => {
     const sid = await insertSub({
       sourceType: "personal",
@@ -629,6 +665,27 @@ describe("processScheduleSyncBatch (consumer)", () => {
 
     expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(messages[0].ack).not.toHaveBeenCalled();
+  });
+
+  it.each([[1, 30], [2, 120], [45, 300]])("backs off delivery %i when retry state cannot be persisted before rejecting the batch", async (attempt, delaySeconds) => {
+    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
+    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new HarvestError("WAF_CHALLENGE"));
+    await env.DB.prepare(`CREATE TRIGGER fail_retry_state BEFORE UPDATE ON subscriptions
+      WHEN OLD.sync_status='running' AND NEW.sync_status IN ('queued','error')
+      BEGIN SELECT RAISE(FAIL, 'retry state unavailable'); END`).run();
+    const { batch, messages } = makeBatch([
+      { subscriptionId: sid, userId: "user-1" },
+      { subscriptionId: "deleted", userId: "user-1" },
+    ], attempt);
+
+    try {
+      await expect(processScheduleSyncBatch(batch, env as unknown as Env)).rejects.toThrow();
+      expect(messages[0].ack).not.toHaveBeenCalled();
+      expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds });
+      expect(messages[1].ack).toHaveBeenCalledOnce();
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_retry_state").run();
+    }
   });
 
   // ── Cron idempotency guard (duplicate-enqueue protection) ──────────────────
