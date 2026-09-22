@@ -9,6 +9,10 @@ import {
 import type { CquHarvestResult, HarvestEntry } from "./auth-rpc";
 
 const CLIENT = { CALENDAR_CLIENT_ID: "cid", CALENDAR_CLIENT_SECRET: "csec" };
+const FULL_SESSION_URL = "https://my.cqu.edu.cn/api/resourceapi/session/list";
+const CURRENT_SEMESTER = {
+  id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01", endDate: "2026-01-15",
+};
 
 /** Minimal env stub carrying the credentials + a mock AUTH binding. */
 function envWith(harvest: (args: unknown) => Promise<CquHarvestResult>) {
@@ -41,9 +45,8 @@ describe("buildPersonalHarvestArgs", () => {
     // Capture the auto-fired 课表 + session-list responses by URL substring.
     expect(args.capture).toContain("my-table-detail");
     expect(args.capture).toContain("session/info-detail");
-    // In-page GETs (读豁免): exam list (always) — semester dates are added per-call
-    // in fetchPersonalHarvest once curSessionId is known.
     expect(args.fetch.some((f) => f.url.includes("get-student-exam-list"))).toBe(true);
+    expect(args.fetch).toContainEqual({ method: "GET", url: FULL_SESSION_URL });
     expect(args.fetch.every((f) => f.method === "GET")).toBe(true);
   });
 
@@ -55,75 +58,44 @@ describe("buildPersonalHarvestArgs", () => {
 });
 
 describe("mapHarvestToSessionContext", () => {
-  it("derives sessionId from the captured session/info-detail body", () => {
-    const captures = [
-      entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
-        curSessionId: "sess-9",
-        sessionFinder: [{ id: "sess-9", name: "2025秋" }],
-      }),
-    ];
-    // semester dates come from a session/info/{id} in-page fetch (read豁免).
-    const fetches = [
-      entry("https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9", {
-        data: { id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01 00:00:00", endDate: "2026-01-15 00:00:00" },
-      }),
-    ];
-    const ctx = mapHarvestToSessionContext(captures, fetches);
-    expect(ctx.sessionId).toBe("sess-9");
-    expect(ctx.semesterInfo.id).toBe("sess-9");
-    expect(ctx.semesterInfo.name).toBe("2025秋");
-    expect(ctx.semesterInfo.begin_date).toBe("2025-09-01"); // split on space
-    expect(ctx.semesterInfo.end_date).toBe("2026-01-15");
+  const captures = [entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
+    curSessionId: "sess-9", sessionFinder: [{ id: "sess-9", name: "2025秋" }],
+  })];
+
+  it("selects the exact captured current semester, not the first or active semester", () => {
+    const ctx = mapHarvestToSessionContext(captures, [entry(FULL_SESSION_URL, {
+      sessionVOList: [
+        { ...CURRENT_SEMESTER, id: "sess-90", beginDate: "2026-03-02", endDate: "2026-09-06", active: "Y" },
+        { ...CURRENT_SEMESTER, active: "N" },
+      ],
+    })]);
+    expect(ctx).toEqual({
+      sessionId: "sess-9",
+      semesterInfo: { id: "sess-9", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" },
+    });
+  });
+
+  it("accepts a missing optional end date while preserving the required semester start", () => {
+    const ctx = mapHarvestToSessionContext(captures, [entry(FULL_SESSION_URL, {
+      sessionVOList: [{ ...CURRENT_SEMESTER, endDate: null }],
+    })]);
+    expect(ctx.semesterInfo).toMatchObject({ begin_date: "2025-09-01", end_date: null });
+  });
+
+  it.each([undefined, null, 1060, ""])("rejects an invalid captured curSessionId (%s)", (curSessionId) => {
+    expect(() => mapHarvestToSessionContext([
+      entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", { curSessionId }),
+    ], [entry(FULL_SESSION_URL, { sessionVOList: [CURRENT_SEMESTER] })])).toThrow(HarvestError);
   });
 
   it("throws HarvestError when no session/info-detail capture is present", () => {
     expect(() => mapHarvestToSessionContext([], [])).toThrow(HarvestError);
   });
 
-  it("throws HarvestError when the session/info-detail capture is non-2xx (challenge/error body)", () => {
-    // A 412 瑞数 challenge (or 401/5xx) on the required session capture must NOT
-    // be parsed as a successful (empty) result — that would wipe the cached
-    // session/semester. Treat a non-2xx required capture as a harvest failure.
-    const captures = [
-      entryWithStatus(
-        "https://my.cqu.edu.cn/api/resourceapi/session/info-detail",
-        412,
-        "<html>瑞数 challenge</html>",
-      ),
-    ];
-    expect(() => mapHarvestToSessionContext(captures, [])).toThrow(HarvestError);
-  });
-
-  it("throws HarvestError (not SyntaxError) when the session/info/{id} semester-detail fetch is non-2xx", () => {
-    // The session-list capture is fine (2xx) but the session/info/{id} semester
-    // detail FETCH came back 412/401/5xx with an HTML challenge body. Running
-    // JSON.parse on that HTML would throw a plain SyntaxError → the queue consumer
-    // treats it as a GENERIC failure and RETRIES (amplifying load mid-WAF) instead
-    // of the ack-no-retry HarvestError path. The non-2xx required detail fetch must
-    // surface as a HarvestError.
-    const captures = [
-      entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
-        curSessionId: "sess-9",
-        sessionFinder: [{ id: "sess-9", name: "2025秋" }],
-      }),
-    ];
-    const fetches = [
-      entryWithStatus(
-        "https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9",
-        412,
-        "<html>瑞数 challenge</html>",
-      ),
-    ];
-    let thrown: unknown;
-    try {
-      mapHarvestToSessionContext(captures, fetches);
-    } catch (e) {
-      thrown = e;
-    }
-    expect(thrown).toBeInstanceOf(HarvestError);
-    // Guard the bug precisely: a raw SyntaxError (JSON.parse on HTML) means the
-    // entry parse was NOT routed through the non-2xx guard.
-    expect(thrown).not.toBeInstanceOf(SyntaxError);
+  it("rejects a non-2xx current-session capture", () => {
+    expect(() => mapHarvestToSessionContext([
+      entryWithStatus("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", 412, "<html>challenge</html>"),
+    ], [])).toThrow(HarvestError);
   });
 });
 
@@ -329,193 +301,149 @@ describe("mapHarvestToPersonalData", () => {
 });
 
 describe("fetchPersonalHarvest", () => {
-  /** Phase-1 captures: 课表 + session/info-detail (curSessionId, no dates yet). */
-  function phase1Captures(): HarvestEntry[] {
+  function scheduleCaptures(): HarvestEntry[] {
     return [
       entry("https://my.cqu.edu.cn/api/timetable/class/timetable/student/my-table-detail", {
-        classTimetableVOList: [],
+        classTimetableVOList: [{
+          courseName: "高等数学", instructorName: "张三-1", roomName: "D1144", position: "A区",
+          weekDay: 1, teachingWeek: "11111", period: "11000000000000",
+        }],
       }),
       entry("https://my.cqu.edu.cn/api/resourceapi/session/info-detail", {
-        curSessionId: "sess-9",
-        sessionFinder: [{ id: "sess-9", name: "2025秋" }],
-      }),
-    ];
-  }
-  /** Phase-1 in-page fetches: exam list only (no semester dates yet). */
-  function phase1Fetches(): HarvestEntry[] {
-    return [
-      entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
-        status: "success",
-        data: { content: [] },
+        curSessionId: "sess-9", sessionFinder: [{ id: "sess-9", name: "2025秋" }],
       }),
     ];
   }
 
-  /** A `cquHarvest` mock that resolves Phase 1 then Phase 2 (with semester dates). */
+  function examFetches(): HarvestEntry[] {
+    return [entry("https://my.cqu.edu.cn/api/exam/examTask/get-student-exam-list", {
+      status: "success", data: { content: [] },
+    })];
+  }
+
+  function fullResult() {
+    return {
+      captures: scheduleCaptures(),
+      fetches: [...examFetches(), entry(FULL_SESSION_URL, { sessionVOList: [CURRENT_SEMESTER] })],
+    };
+  }
+
   function happyHarvestMock() {
-    return vi
-      .fn()
-      // Phase 1: 课表 + session-list captured, exam fetched (no dates).
-      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
-      // Phase 2: session/info/{id} GET returns the semester dates.
-      .mockResolvedValueOnce({
-        captures: [],
-        fetches: [
-          entry("https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9", {
-            data: { id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01 00:00:00", endDate: "2026-01-15 00:00:00" },
-          }),
-        ],
-      });
+    return vi.fn().mockResolvedValue(fullResult());
   }
 
-  /** In-memory mock of the CACHE KV binding (get/put only). */
   function mockCache() {
     const store = new Map<string, string>();
     return {
       get: vi.fn(async (key: string) => store.get(key) ?? null),
-      put: vi.fn(async (key: string, value: string) => {
-        store.set(key, value);
-      }),
+      put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
     };
   }
 
-  it("returns typed ctx + data on the happy path (Phase 2 supplies semester dates)", async () => {
+  it("collects courses, exams and exact semester dates in one browser invocation", async () => {
     const cquHarvest = happyHarvestMock();
     const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
-
     const { ctx, data } = await fetchPersonalHarvest(env, "user-1");
+
     expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
     expect(data.semesterStart).toBe("2025-09-01");
-    expect(cquHarvest).toHaveBeenCalledTimes(2);
-    for (const [args] of cquHarvest.mock.calls) {
-      const urls = [args.navUrl, ...args.fetch.map((item) => item.url)];
-      expect(
-        urls.every((url) => new URL(url).origin === "https://my.cqu.edu.cn"),
-      ).toBe(true);
-    }
+    expect(data.courses).toHaveLength(1);
+    expect(data.courses[0].name).toBe("高等数学");
+    expect(data.exams).toEqual([]);
+    expect(cquHarvest).toHaveBeenCalledOnce();
+    expect(cquHarvest.mock.calls[0][0].fetch).toContainEqual({ method: "GET", url: FULL_SESSION_URL });
   });
 
-  it("rejects with HarvestError when Phase 2 errors and semester dates stay missing (止血: no broken-ICS overwrite)", async () => {
-    const cquHarvest = vi
-      .fn()
-      // Phase 1 OK but session/info-detail carries no semester dates → begin_date null.
-      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
-      // Phase 2 transient failure (timeout/WAF/reauth) — dates never arrive.
-      .mockResolvedValueOnce({ error: "CQU_WAF_BLOCKED" });
-    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
+  it.each([
+    ["missing full-list fetch", []],
+    ["non-2xx full list", [entryWithStatus(FULL_SESSION_URL, 412, "<html>challenge</html>")]],
+    ["malformed JSON", [entryWithStatus(FULL_SESSION_URL, 200, "{bad json")]],
+    ["null response", [entry(FULL_SESSION_URL, null)]],
+    ["missing list array", [entry(FULL_SESSION_URL, { sessionVOList: {} })]],
+    ["missing current semester", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, id: "sess-other" }] })]],
+    ["ambiguous current semester", [entry(FULL_SESSION_URL, { sessionVOList: [CURRENT_SEMESTER, CURRENT_SEMESTER] })]],
+    ["missing begin date", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, beginDate: null }] })]],
+    ["invalid begin date", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, beginDate: "not-a-date" }] })]],
+    ["impossible begin date", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, beginDate: "2025-02-30" }] })]],
+    ["invalid end date", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, endDate: "not-a-date" }] })]],
+    ["end before begin", [entry(FULL_SESSION_URL, { sessionVOList: [{ ...CURRENT_SEMESTER, endDate: "2025-08-31" }] })]],
+  ])("rejects %s without a second browser or caching partial data", async (_label, dates) => {
+    const cquHarvest = vi.fn().mockResolvedValue({ captures: scheduleCaptures(), fetches: [...examFetches(), ...dates] });
+    const cache = mockCache();
+    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
 
     await expect(fetchPersonalHarvest(env, "user-1")).rejects.toBeInstanceOf(HarvestError);
-    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    expect(cquHarvest).toHaveBeenCalledOnce();
+    expect(cache.put).not.toHaveBeenCalled();
   });
 
-  it("dedups: a second call for the SAME user reuses the cached harvest (cquHarvest fires ONCE)", async () => {
-    // PERF: when a user owns multiple personal subs (personal_all + personal_courses
-    // + personal_exams) processed close together, each queue message used to launch
-    // its OWN expensive harvest even though the payload is IDENTICAL. The per-user
-    // cache makes the second call hit env.CACHE and skip the harvest entirely.
+  it("deduplicates successful harvests only within the same user", async () => {
     const cquHarvest = happyHarvestMock();
     const cache = mockCache();
     const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
-
     const first = await fetchPersonalHarvest(env, "user-1");
     const second = await fetchPersonalHarvest(env, "user-1");
-
-    // Phase 1 + Phase 2 = 2 cquHarvest calls for the FIRST harvest, ZERO for the second.
+    expect(second).toEqual(first);
+    expect(cquHarvest).toHaveBeenCalledOnce();
+    await fetchPersonalHarvest(env, "user-2");
     expect(cquHarvest).toHaveBeenCalledTimes(2);
-    expect(cache.put).toHaveBeenCalledTimes(1);
     expect(cache.get).toHaveBeenCalledWith("harvest:direct-v1:user-1");
-    // The cached value round-trips byte-identically.
-    expect(second.ctx.semesterInfo.begin_date).toBe(first.ctx.semesterInfo.begin_date);
-    expect(second.data.semesterStart).toBe(first.data.semesterStart);
+    expect(cache.get).toHaveBeenCalledWith("harvest:direct-v1:user-2");
   });
 
-  it("does NOT cache a failed harvest (next call re-harvests)", async () => {
-    // A transient harvest failure must NOT be memoized, or a single 412/timeout would
-    // poison the cache for the whole TTL. Only SUCCESSFUL harvests are cached.
-    const cquHarvest = vi
-      .fn()
-      // First call: Phase 1 OK, Phase 2 fails → HarvestError (no dates) → not cached.
-      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
-      .mockResolvedValueOnce({ error: "CQU_WAF_BLOCKED" })
-      // Second call: full success.
-      .mockResolvedValueOnce({ captures: phase1Captures(), fetches: phase1Fetches() })
-      .mockResolvedValueOnce({
-        captures: [],
-        fetches: [
-          entry("https://my.cqu.edu.cn/api/resourceapi/session/info/sess-9", {
-            data: { id: "sess-9", year: "2025", term: "秋", beginDate: "2025-09-01 00:00:00", endDate: "2026-01-15 00:00:00" },
-          }),
-        ],
-      });
+  it("does not cache missing dates and permits the next complete harvest to succeed", async () => {
+    const cquHarvest = happyHarvestMock()
+      .mockResolvedValueOnce({ captures: scheduleCaptures(), fetches: examFetches() });
     const cache = mockCache();
     const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
-
     await expect(fetchPersonalHarvest(env, "user-1")).rejects.toBeInstanceOf(HarvestError);
-    expect(cache.put).not.toHaveBeenCalled(); // failure not memoized
-
-    // Second call must actually re-harvest (cache miss) and succeed.
+    expect(cache.put).not.toHaveBeenCalled();
     const { ctx } = await fetchPersonalHarvest(env, "user-1");
     expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
-    expect(cquHarvest).toHaveBeenCalledTimes(4); // 2 (failed) + 2 (success)
-    expect(cache.put).toHaveBeenCalledTimes(1); // only the success is cached
+    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    expect(cache.put).toHaveBeenCalledOnce();
   });
 
-  it("a CACHE get/put failure does NOT break the harvest (best-effort)", async () => {
-    // KV is best-effort: a get/put throwing (KV outage) must be caught so the harvest
-    // still completes. The harvest proceeds and returns real data on a get failure.
+  it("keeps a CACHE get/put failure from breaking a complete harvest", async () => {
     const cquHarvest = happyHarvestMock();
     const cache = {
       get: vi.fn(async () => { throw new Error("KV get down"); }),
       put: vi.fn(async () => { throw new Error("KV put down"); }),
     };
-    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
-
-    const { ctx, data } = await fetchPersonalHarvest(env, "user-1");
+    const { ctx } = await fetchPersonalHarvest({ ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never, "user-1");
     expect(ctx.semesterInfo.begin_date).toBe("2025-09-01");
-    expect(data.semesterStart).toBe("2025-09-01");
-    // A get failure means a cache miss → the harvest ran.
-    expect(cquHarvest).toHaveBeenCalledTimes(2);
+    expect(cquHarvest).toHaveBeenCalledOnce();
   });
 
-  it("passes the SAME absolute deadline to both phases and never regenerates it", async () => {
+  it("passes the original absolute deadline to the single browser invocation", async () => {
     const cquHarvest = happyHarvestMock();
-    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
     const deadlineAt = Date.now() + 10 * 60_000;
-
-    await fetchPersonalHarvest(env, "user-1", { deadlineAt });
-
-    expect(cquHarvest).toHaveBeenCalledTimes(2);
-    const [phase1Args, phase2Args] = cquHarvest.mock.calls.map(
-      ([args]) => args as { deadlineAt?: number },
-    );
-    expect(phase1Args.deadlineAt).toBe(deadlineAt);
-    expect(phase2Args.deadlineAt).toBe(deadlineAt);
+    await fetchPersonalHarvest({ ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never, "user-1", { deadlineAt });
+    expect(cquHarvest).toHaveBeenCalledOnce();
+    expect(cquHarvest.mock.calls[0][0].deadlineAt).toBe(deadlineAt);
   });
 
-  it("keeps old callers compatible: without options no deadline field is sent", async () => {
+  it("keeps old callers compatible without sending an invented deadline", async () => {
+    const cquHarvest = happyHarvestMock();
+    await fetchPersonalHarvest({ ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never, "user-1");
+    expect(cquHarvest.mock.calls[0][0]).not.toHaveProperty("deadlineAt");
+  });
+
+  it("does not start another browser for a cache hit with a new deadline", async () => {
     const cquHarvest = happyHarvestMock();
     const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: mockCache() } as never;
-
-    await fetchPersonalHarvest(env, "user-1");
-
-    for (const [args] of cquHarvest.mock.calls) {
-      expect((args as { deadlineAt?: number }).deadlineAt).toBeUndefined();
-    }
+    await fetchPersonalHarvest(env, "user-1", { deadlineAt: Date.now() + 60_000 });
+    await fetchPersonalHarvest(env, "user-1", { deadlineAt: Date.now() + 30_000 });
+    expect(cquHarvest).toHaveBeenCalledOnce();
   });
 
-  it("a cache hit does not start a browser harvest even with a deadline", async () => {
-    const cquHarvest = happyHarvestMock();
+  it("keeps AUTH capability and stable session errors as controlled harvest failures", async () => {
+    await expect(fetchPersonalHarvest(CLIENT as never, "user-1")).rejects.toThrow("AUTH.cquHarvest unavailable");
+    const cquHarvest = vi.fn().mockResolvedValue({ error: "TGT_EXPIRED" });
     const cache = mockCache();
-    const env = { ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never;
-
-    await fetchPersonalHarvest(env, "user-1", {
-      deadlineAt: Date.now() + 60_000,
-    });
-    const second = await fetchPersonalHarvest(env, "user-1", {
-      deadlineAt: Date.now() + 30_000,
-    });
-
-    expect(cquHarvest).toHaveBeenCalledTimes(2);
-    expect(second.ctx.semesterInfo.begin_date).toBe("2025-09-01");
+    await expect(fetchPersonalHarvest({ ...CLIENT, AUTH: { cquHarvest }, CACHE: cache } as never, "user-1"))
+      .rejects.toMatchObject({ name: "HarvestError", message: "TGT_EXPIRED" });
+    expect(cquHarvest).toHaveBeenCalledOnce();
+    expect(cache.put).not.toHaveBeenCalled();
   });
 });

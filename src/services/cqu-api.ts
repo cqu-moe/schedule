@@ -135,6 +135,17 @@ export interface SessionDetailResponse {
   };
 }
 
+/** GET /api/resourceapi/session/list, including dates for every semester. */
+export interface FullSessionListResponse {
+  sessionVOList?: Array<{
+    id?: string;
+    year?: string;
+    term?: string;
+    beginDate?: string | null;
+    endDate?: string | null;
+  }>;
+}
+
 export interface ScheduleResponse {
   classTimetableVOList?: Array<{
     courseName?: string;

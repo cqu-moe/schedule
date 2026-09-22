@@ -9,9 +9,8 @@ import {
   parseExams,
   type ScheduleResponse,
   type SessionListResponse,
-  type SessionDetailResponse,
+  type FullSessionListResponse,
   type ExamListResponse,
-  type SemesterInfo,
 } from "./cqu-api";
 import type { SessionContext, PersonalScheduleData } from "./sync";
 
@@ -25,7 +24,7 @@ import type { SessionContext, PersonalScheduleData } from "./sync";
 const CQU_HARVEST_ORIGIN = "https://my.cqu.edu.cn";
 const NAV_URL = `${CQU_HARVEST_ORIGIN}/workspace/curriculum`;
 const EXAM_URL = `${CQU_HARVEST_ORIGIN}/api/exam/examTask/get-student-exam-list`;
-const SESSION_INFO_URL = `${CQU_HARVEST_ORIGIN}/api/resourceapi/session/info/`;
+const FULL_SESSION_URL = `${CQU_HARVEST_ORIGIN}/api/resourceapi/session/list`;
 
 /** KV key prefix + TTL for the per-user harvest dedup cache (see fetchPersonalHarvest). */
 // Version the cache by recipe so a deployment cannot reuse a successful payload
@@ -92,7 +91,7 @@ function findEntry(entries: HarvestEntry[], needle: string): HarvestEntry | unde
   return entries.find((e) => e.url.includes(needle));
 }
 
-/** 两阶段 RPC 共用同一个绝对 deadline:第二阶段绝不重新生成截止时间。 */
+/** Forward the caller's absolute deadline without extending its budget. */
 function withDeadline(
   args: CquHarvestArgs,
   options?: { deadlineAt?: number },
@@ -172,12 +171,14 @@ function parseEntry<T>(entry: HarvestEntry, opts: { required: boolean }): T | nu
 }
 
 /**
- * Build the personal-schedule harvest recipe. Pure — does not call AUTH. The
- * semester-dates GET is appended later (in {@link fetchPersonalHarvest}) once
- * curSessionId is known; here we only request the always-known exam list.
+ * Fetch exams and the full semester calendar during the same navigation. The
+ * captured curSessionId selects its dates after all required bodies arrive.
  */
 export function buildPersonalHarvestArgs(env: Env, userId: string): CquHarvestArgs {
-  const fetch: HarvestFetchSpec[] = [{ method: "GET", url: EXAM_URL }];
+  const fetch: HarvestFetchSpec[] = [
+    { method: "GET", url: EXAM_URL },
+    { method: "GET", url: FULL_SESSION_URL },
+  ];
   return {
     clientId: env.CALENDAR_CLIENT_ID,
     clientSecret: env.CALENDAR_CLIENT_SECRET,
@@ -188,11 +189,19 @@ export function buildPersonalHarvestArgs(env: Env, userId: string): CquHarvestAr
   };
 }
 
+function parseSemesterDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const date = value.split(" ")[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const timestamp = Date.parse(date);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === date
+    ? date : null;
+}
+
 /**
  * Derive a {@link SessionContext} from harvest output.
  *  - sessionId comes from the captured `session/info-detail` body (curSessionId).
- *  - semester dates come from a `session/info/{id}` in-page GET (read豁免), whose
- *    shape matches the existing {@link SessionDetailResponse} exactly.
+ *  - semester dates come from the matching sessionVOList entry in the full list.
  */
 export function mapHarvestToSessionContext(
   captures: HarvestEntry[],
@@ -202,35 +211,37 @@ export function mapHarvestToSessionContext(
   // failure, not a legitimately-empty session (which would clobber cached data).
   const listEntry = requireEntry(captures, CAPTURE_SESSION_LIST, "session/info-detail");
   const list = parseEntry<SessionListResponse>(listEntry, { required: true });
-  const sessionId = list.curSessionId ?? "";
-
-  // Match curSessionId's display name from the finder list (best-effort).
-  const finderName = (list.sessionFinder ?? []).find((s) => s?.id === sessionId)?.name;
-
-  const detailEntry = findEntry(fetches, `session/info/${sessionId}`)
-    ?? findEntry(fetches, "session/info/");
-  let semesterInfo: SemesterInfo;
-  if (detailEntry) {
-    // REQUIRED when present: a non-2xx (412 challenge / 401 / 5xx) or unparseable
-    // semester-detail body must surface as a HarvestError (ack-no-retry), NOT a raw
-    // SyntaxError from JSON.parse-ing challenge HTML (which the consumer would treat
-    // as a generic failure and RETRY mid-WAF).
-    const detail = parseEntry<SessionDetailResponse>(detailEntry, { required: true }).data ?? {};
-    const beginDate = detail.beginDate ?? "";
-    const endDate = detail.endDate ?? "";
-    semesterInfo = {
-      id: detail.id ?? sessionId ?? null,
-      name: `${detail.year ?? ""}${detail.term ?? ""}` || finderName || "",
-      begin_date: beginDate ? beginDate.split(" ")[0] : null,
-      end_date: endDate ? endDate.split(" ")[0] : null,
-    };
-  } else {
-    // No semester-detail fetch (e.g. recipe without dates yet): degrade to a
-    // name-only context; begin_date null → ICS uses no semester offset.
-    semesterInfo = { id: sessionId || null, name: finderName ?? "", begin_date: null, end_date: null };
+  const sessionId = list?.curSessionId;
+  if (typeof sessionId !== "string" || !sessionId) {
+    throw new HarvestError("harvest missing current semester id");
   }
 
-  return { sessionId, semesterInfo };
+  const fullListEntry = requireEntry(fetches, FULL_SESSION_URL, "session/list");
+  const sessions = parseEntry<FullSessionListResponse>(fullListEntry, { required: true })?.sessionVOList;
+  if (!Array.isArray(sessions)) {
+    throw new HarvestError("harvest missing sessionVOList array");
+  }
+  const matching = sessions.filter((session) => session?.id === sessionId);
+  if (matching.length !== 1) {
+    throw new HarvestError("harvest missing or ambiguous current semester dates");
+  }
+  const semester = matching[0];
+  const beginDate = parseSemesterDate(semester.beginDate);
+  const endDate = parseSemesterDate(semester.endDate);
+  if (!beginDate || (semester.endDate != null && (!endDate || endDate < beginDate))) {
+    throw new HarvestError("harvest missing or invalid semester dates");
+  }
+  const finderName = Array.isArray(list.sessionFinder)
+    ? list.sessionFinder.find((session) => session?.id === sessionId)?.name : undefined;
+  return {
+    sessionId,
+    semesterInfo: {
+      id: sessionId,
+      name: `${semester.year ?? ""}${semester.term ?? ""}` || finderName || "",
+      begin_date: beginDate,
+      end_date: endDate,
+    },
+  };
 }
 
 /**
@@ -270,12 +281,11 @@ export function mapHarvestToPersonalData(
 
 /**
  * End-to-end personal harvest: one AUTH.cquHarvest call → typed SessionContext +
- * PersonalScheduleData. Does the two-phase semester-date fetch by re-using the
- * captured curSessionId.
+ * PersonalScheduleData, including the captured current semester's dates.
  *
  * A user owning multiple personal subs (personal_all + personal_courses +
  * personal_exams) processed close together would otherwise launch ONE expensive
- * harvest (up to 2 browser navigations) PER queue message even though the
+ * browser navigation PER queue message even though the
  * course/exam payload is IDENTICAL for all personal types. A short-lived per-user
  * KV cache ({@link HARVEST_CACHE_PREFIX}+userId, {@link HARVEST_CACHE_TTL_SECONDS})
  * lets subs of the same user reuse ONE harvest. Only SUCCESSFUL harvests are
@@ -302,45 +312,21 @@ export async function fetchPersonalHarvest(
   const cached = await readHarvestCache(env, cacheKey);
   if (cached) return cached;
 
-  // Phase 1: navigate + capture 课表/session-list + fetch exam list.
+  // One navigation captures the timetable/current semester and fetches both lists.
   const recipe = buildPersonalHarvestArgs(env, userId);
-  const r1 = await env.AUTH.cquHarvest(withDeadline(recipe, options));
-  if ("error" in r1) throw new HarvestError(r1.error);
+  const harvest = await env.AUTH.cquHarvest(withDeadline(recipe, options));
+  if ("error" in harvest) throw new HarvestError(harvest.error);
+  const ctx = mapHarvestToSessionContext(harvest.captures, harvest.fetches);
 
-  const ctxPartial = mapHarvestToSessionContext(r1.captures, r1.fetches);
-
-  // Phase 2: if we have a sessionId but no semester dates yet, fetch them
-  // (read豁免 GET) in a second harvest call so begin_date is populated.
-  let ctx = ctxPartial;
-  if (ctxPartial.sessionId && ctxPartial.semesterInfo.begin_date === null) {
-    const r2 = await env.AUTH.cquHarvest(withDeadline({
-      clientId: env.CALENDAR_CLIENT_ID,
-      clientSecret: env.CALENDAR_CLIENT_SECRET,
-      userId,
-      navUrl: NAV_URL,
-      capture: [CAPTURE_SESSION_LIST],
-      fetch: [{ method: "GET", url: `${SESSION_INFO_URL}${ctxPartial.sessionId}` }],
-    }, options));
-    if (!("error" in r2)) {
-      ctx = mapHarvestToSessionContext(r1.captures, [...r1.fetches, ...r2.fetches]);
-    }
-  }
-
-  // 止血 invariant: never return data without a real semester begin_date. If
-  // Phase 2 errored (transient timeout/WAF/reauth) or returned no usable
-  // session/info, begin_date stays null → the consumer's ICS would use
-  // semesterStart="" (new Date("") is Invalid) → courses can't be dated → an
-  // empty/broken ICS would OVERWRITE the user's previously-valid calendar while
-  // marking it synced. Treat missing dates as a harvest failure so the consumer
-  // acks WITHOUT retry and leaves the existing calendar untouched.
+  // Never materialize or cache a timetable without a usable semester start.
   if (ctx.semesterInfo.begin_date === null) {
     throw new HarvestError("harvest missing semester dates");
   }
 
   const data = mapHarvestToPersonalData(
-    r1.captures,
-    r1.fetches,
-    ctx.semesterInfo.begin_date ?? "",
+    harvest.captures,
+    harvest.fetches,
+    ctx.semesterInfo.begin_date,
   );
   // SUCCESS only: cache so the same user's other personal subs (processed close
   // together) reuse this harvest. Any failure above threw HarvestError before here,
