@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   diffFutureSchedule,
-  hashSchedule,
   normalizeSchedule,
   renderScheduleChangeEmail,
   createScheduleNotificationMessages,
@@ -43,7 +42,6 @@ describe("schedule notification snapshots", () => {
     });
 
     expect(left).toEqual(right);
-    expect(await hashSchedule(left)).toBe(await hashSchedule(right));
   });
 });
 

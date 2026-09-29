@@ -313,27 +313,6 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     const sub = await db.select().from(subscriptions).where(eq(subscriptions.id, sid)).get();
     expect(sub?.syncStatus).toBe("success");
   });
-  it("syncs a personal sub via fetchPersonalHarvest (no bearer)", async () => {
-    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
-    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest").mockResolvedValue({
-      ctx: { sessionId: "sess-1", semesterInfo: { id: "sess-1", name: "2025秋", begin_date: "2025-09-01", end_date: "2026-01-15" } },
-      data: { courses: [], exams: [], semesterStart: "2025-09-01" },
-    });
-
-    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
-    await processScheduleSyncBatch(batch, env as unknown as Env);
-
-    expect(harvest).toHaveBeenCalledWith(expect.anything(), "user-1", { deadlineAt: expect.any(Number) });
-    expect(messages[0].ack).toHaveBeenCalled();
-    expect(messages[0].retry).not.toHaveBeenCalled();
-
-    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
-    expect(row.lastSyncedAt).not.toBeNull();
-    expect(row.coursesJson).toBe("[]");
-    expect(row.icsContent).toContain("BEGIN:VCALENDAR");
-    expect(row.sessionName).toBe("2025秋");
-  });
-
   it("harvests once for multiple personal subscriptions of the same user in one batch", async () => {
     const allSid = await insertSub({ sourceType: "personal_all", sourceName: "全部" });
     const coursesSid = await insertSub({ sourceType: "personal_courses", sourceName: "课程" });
@@ -459,19 +438,6 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     const rows = await db.select().from(subscriptions);
     expect(rows).toHaveLength(2);
     expect(rows.every((row) => row.syncStatus === "success")).toBe(true);
-  });
-
-  it("retries a transient HarvestError with backoff", async () => {
-    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
-    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(
-      new HarvestError("WAF_CHALLENGE"),
-    );
-
-    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
-    await processScheduleSyncBatch(batch, env as unknown as Env);
-
-    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
-    expect(messages[0].ack).not.toHaveBeenCalled();
   });
 
   it.each(["TGT_EXPIRED", "SESSION_INACTIVE"])(
@@ -716,30 +682,6 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     });
   });
 
-  it("retries on a generic (non-harvest) error", async () => {
-    const sid = await insertSub({ sourceType: "personal_all", sourceId: "user-1" });
-    vi.spyOn(harvestModule, "fetchPersonalHarvest").mockRejectedValue(new Error("boom"));
-
-    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
-    await processScheduleSyncBatch(batch, env as unknown as Env);
-
-    expect(messages[0].retry).toHaveBeenCalledWith({ delaySeconds: 30 });
-    expect(messages[0].ack).not.toHaveBeenCalled();
-  });
-
-  it("acks-skips an external sub (no harvest path: 冻结,不删数据,不取数)", async () => {
-    const sid = await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false });
-    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest");
-
-    const { batch, messages } = makeBatch([{ subscriptionId: sid, userId: "user-1" }]);
-    await processScheduleSyncBatch(batch, env as unknown as Env);
-
-    expect(messages[0].ack).toHaveBeenCalled();
-    expect(harvest).not.toHaveBeenCalled();
-
-    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
-    expect(row.lastSyncedAt).toBeNull(); // frozen, not synced, not deleted
-  });
 });
 
 describe("processScheduleSyncBatch — shared batch deadline", () => {

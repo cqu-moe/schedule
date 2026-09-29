@@ -14,12 +14,6 @@ describe('QrcodeModal', () => {
     expect(wrapper.text()).toContain('扫码订阅')
   })
 
-  it('QrcodeVue stub renders with data-testid="qrcode"', () => {
-    const wrapper = mount(QrcodeModal, { props: defaultProps })
-
-    expect(wrapper.find('[data-testid="qrcode"]').exists()).toBe(true)
-  })
-
   it('does not render content when modelValue is false', () => {
     const wrapper = mount(QrcodeModal, {
       props: { ...defaultProps, modelValue: false },

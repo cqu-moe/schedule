@@ -146,16 +146,10 @@ export interface RotateLinkResult {
   url?: string
 }
 
-// ── app config & health ───────────────────────────────────────────────────────
+// ── app config ────────────────────────────────────────────────────────────────
 
 export interface AppConfig {
   public_url: string
-}
-
-export interface HealthStatus {
-  status: string
-  commit?: string
-  date?: string
 }
 
 // ── calendar / view page types (unchanged; used by Calendar.vue / FE-4) ──────

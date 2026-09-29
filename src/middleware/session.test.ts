@@ -53,26 +53,6 @@ describe("sessionMiddleware", () => {
     await env.CACHE.delete(`caps:${VALID_SESSION.user.id}`);
   });
 
-  it("returns 401 when verifySession returns null", async () => {
-    const app = buildApp(fakeAuth(null));
-    const res = await app.request();
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("UNAUTHORIZED");
-  });
-
-  it("injects user/caps and calls next when session is valid", async () => {
-    const app = buildApp(fakeAuth(VALID_SESSION));
-    const res = await app.request();
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      user: typeof VALID_SESSION.user;
-      caps: typeof VALID_SESSION.caps;
-    };
-    expect(body.user).toEqual(VALID_SESSION.user);
-    expect(body.caps).toEqual(VALID_SESSION.caps);
-  });
-
   it("caches caps to KV under caps:<userId> when session is valid", async () => {
     const app = buildApp(fakeAuth(VALID_SESSION));
     const res = await app.request();

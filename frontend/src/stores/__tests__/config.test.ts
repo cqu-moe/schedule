@@ -17,7 +17,6 @@ const mockApi = vi.hoisted(() => ({
   searchExternal: vi.fn(),
   getDepartments: vi.fn(),
   getViewData: vi.fn(),
-  getHealth: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({ default: mockApi }))

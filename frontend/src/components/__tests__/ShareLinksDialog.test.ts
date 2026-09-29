@@ -21,7 +21,6 @@ const { mockApi, mockToast } = vi.hoisted(() => {
     searchExternal: vi.fn(),
     getDepartments: vi.fn(),
     getViewData: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
   }
   return { mockApi, mockToast }
 })
@@ -584,26 +583,41 @@ describe('ShareLinksDialog', () => {
   // ── I-2: closing the outer dialog resets inner dialog open flags ──────────────
 
   it('resets inner confirm open flags when the outer dialog is closed', async () => {
-    const { wrapper } = await mountDialog([makeDefaultLink(), makeShareLink()])
+    const links = [makeDefaultLink(), makeShareLink()]
+    const sub = mockSubscription({ links })
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [sub], count: 1 })
 
-    // Note: the AlertDialog stub always renders its slot regardless of `open`,
-    // so we verify the internal reactive state via vm.$.setupState.
-    const setupState = (wrapper.vm as any).$.setupState
+    const { wrapper } = await mountWithContext(ShareLinksDialog, {
+      props: { open: true, subscription: sub },
+      global: {
+        stubs: {
+          // Local stub mirrors the real AlertDialog: content only renders while open.
+          AlertDialog: { template: '<div v-if="open"><slot /></div>', props: ['open'] },
+        },
+      },
+      pinia: {
+        initialState: {
+          session: DEFAULT_SESSION,
+          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
+          subscriptions: { subscriptions: [sub] },
+        },
+      },
+    })
+    await flushPromises()
 
     // Open the rotate confirm by clicking the rotate trigger
     const rotateBtn = wrapper.findAll('button').find(b => b.text().trim() === '轮换')
     await rotateBtn!.trigger('click')
     await flushPromises()
-    // rotateConfirm should now be open
-    expect(setupState.rotateConfirm.open).toBe(true)
+    expect(wrapper.text()).toContain('确认轮换链接 Token')
 
-    // Close the outer dialog
+    // Close the outer dialog, then reopen it
     await wrapper.setProps({ open: false })
     await flushPromises()
+    await wrapper.setProps({ open: true })
+    await flushPromises()
 
-    // The watch resets all inner open flags
-    expect(setupState.rotateConfirm.open).toBe(false)
-    expect(setupState.deleteConfirm.open).toBe(false)
-    expect(setupState.linkForm.open).toBe(false)
+    // The reset inner flags keep the confirm hidden after reopening
+    expect(wrapper.text()).not.toContain('确认轮换链接 Token')
   })
 })

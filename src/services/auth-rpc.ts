@@ -117,18 +117,6 @@ export interface AuthService {
   cquHarvest?(args: CquHarvestArgs): Promise<CquHarvestResult>;
 }
 
-/** 缺省/兜底 caps：未授予时的安全保守值（全部拒绝、零配额、最长间隔） */
-export const DENY_CAPS: CalendarCaps = {
-  sync: false,
-  external: false,
-  share: false,
-  change_notification: false,
-  sub_limit: 0,
-  share_limit: 0,
-  sync_interval: 1440,
-  manual_refresh: 0,
-};
-
 /**
  * 把配额值解析为可比较的数值：null（明确无限）→ Infinity，正常数字原样返回，
  * 其余（undefined/NaN 等残缺 caps）→ 0（fail closed），绝不因字段缺失而放行。

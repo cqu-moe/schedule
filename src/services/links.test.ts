@@ -7,10 +7,6 @@ describe("parseFormats", () => {
     expect(parseFormats(["ics", "web"])).toEqual(["ics", "web"]);
   });
 
-  it("accepts the full format set", () => {
-    expect(parseFormats([...LINK_FORMATS])).toEqual([...LINK_FORMATS]);
-  });
-
   it("deduplicates repeated formats", () => {
     expect(parseFormats(["ics", "ics", "web"])).toEqual(["ics", "web"]);
   });

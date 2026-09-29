@@ -3,7 +3,7 @@ import { createTestingPinia, type TestingOptions } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { vi } from 'vitest'
 import type { Component } from 'vue'
-import type { Subscription, SubscriptionList, SearchResult, SessionUser, CalendarCaps, MeResponse, PersonalSetupSummary } from '@/types/api'
+import type { Subscription, SubscriptionList, SessionUser, CalendarCaps, MeResponse, PersonalSetupSummary } from '@/types/api'
 import { RouteNames } from '@/router'
 
 // ---- Mock data factories ----
@@ -81,39 +81,6 @@ export function mockSubscriptionList(
   personalSetup: PersonalSetupSummary | null = null,
 ): SubscriptionList {
   return { subscriptions: subs, count: count ?? subs.length, personal_setup: personalSetup }
-}
-
-export function mockSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
-  return {
-    id: 'result-1',
-    name: '高等数学',
-    extra: '数学学院',
-    ...overrides,
-  }
-}
-
-// ---- Mock API ----
-
-export function createMockApi() {
-  return {
-    // v2 API
-    getMe: vi.fn().mockResolvedValue(mockMeResponse()),
-    getSubscriptions: vi.fn().mockResolvedValue(mockSubscriptionList([])),
-    getSubscription: vi.fn(),
-    createSubscription: vi.fn(),
-    deleteSubscription: vi.fn(),
-    refreshSubscription: vi.fn(),
-    getLinks: vi.fn(),
-    createLink: vi.fn(),
-    patchLink: vi.fn(),
-    deleteLink: vi.fn(),
-    rotateLink: vi.fn(),
-    searchExternal: vi.fn(),
-    getDepartments: vi.fn().mockResolvedValue({ departments: [] }),
-    getViewData: vi.fn().mockResolvedValue({ semester: '2025秋', semester_start: '2025-09-01', generated_at: new Date().toISOString(), events: [] }),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
-    getConfig: vi.fn().mockResolvedValue({ public_url: 'https://schedule.cqu.moe' }),
-  }
 }
 
 // ---- Router for tests ----
