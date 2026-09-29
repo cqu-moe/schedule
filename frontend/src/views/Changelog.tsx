@@ -1,11 +1,13 @@
-import { PageHeader, PageState } from '@cqu-moe/ui'
+import { PageHeader } from '@cqu-moe/ui'
+
+const changelogHtml = __CHANGELOG_HTML__.replace(/^<h1[^>]*>.*?<\/h1>\s*/i, '')
 
 export default function Changelog() {
   return (
-    <>
-      <PageHeader title="更新日志" description="页面迁移中。" />
-      <PageState state="empty" title="正在接入 CQU Moe Design" description="该页面正在从 Vue 迁移。" />
-    </>
+    <div style={{ maxWidth: '48rem' }}>
+      <PageHeader title="更新日志" description="版本更新记录" />
+      {/* Build-time generated from CHANGELOG.md, same trust level as the previous v-html. */}
+      <div className="markdown-content" dangerouslySetInnerHTML={{ __html: changelogHtml }} />
+    </div>
   )
 }
-

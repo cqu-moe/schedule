@@ -1,4 +1,11 @@
-import { createBrowserRouter, isRouteErrorResponse, Link, useRouteError } from 'react-router'
+import {
+  createBrowserRouter,
+  isRouteErrorResponse,
+  Link,
+  redirect,
+  type RouteObject,
+  useRouteError,
+} from 'react-router'
 import { Button, ContentContainer, PageHeader, PageState } from '@cqu-moe/ui'
 import Layout from '@/layout'
 
@@ -42,7 +49,7 @@ const NotFound = (
   </>
 )
 
-export const router = createBrowserRouter([
+export const appRoutes: RouteObject[] = [
   {
     element: <Layout />,
     errorElement: <RouteError />,
@@ -82,11 +89,12 @@ export const router = createBrowserRouter([
         path: 'calendar/:sub_token',
         loader: ({ params, request }) => {
           const url = new URL(request.url)
-          const target = `/view/${params.sub_token}${url.search}`
-          throw new Response(target, { status: 302, headers: { Location: target } })
+          return redirect(`/view/${params.sub_token}${url.search}`, 302)
         },
       },
       { path: '*', element: NotFound },
     ],
   },
-])
+]
+
+export const router = createBrowserRouter(appRoutes)

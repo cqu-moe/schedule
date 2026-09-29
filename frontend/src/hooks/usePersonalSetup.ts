@@ -20,15 +20,11 @@ export interface PersonalSetupController {
 export function usePersonalSetup(): PersonalSetupController {
   const location = useLocation()
   const navigate = useNavigate()
-  const session = useSession()
+  const { reloadSession } = useSession()
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [startedThisVisit, setStartedThisVisit] = useState(false)
   const inFlight = useRef<Promise<void> | null>(null)
-  const canNow = useRef(session.can)
-  const unboundNow = useRef(session.isCquUnbound)
-  canNow.current = session.can
-  unboundNow.current = session.isCquUnbound
 
   const removeSetupQuery = useCallback(
     async (goToDashboard = false) => {
@@ -43,26 +39,33 @@ export function usePersonalSetup(): PersonalSetupController {
     [location.search, location.pathname, location.hash, navigate],
   )
 
+  const currentUrl = useCallback(
+    () =>
+      window.location.origin +
+      location.pathname +
+      location.search +
+      location.hash,
+    [location.pathname, location.search, location.hash],
+  )
+
   const runSetup = useCallback(async () => {
     setError(null)
+    let me
     try {
-      await session.reloadSession()
+      me = await reloadSession()
     } catch {
       setError('暂时无法确认登录状态，请重试。')
       return
     }
 
-    if (!canNow.current('sync')) {
+    if (!me.caps.calendar.sync) {
       await removeSetupQuery()
       return
     }
 
-    if (unboundNow.current) {
-      redirect.fn(
-        authCquBindUrl(
-          window.location.origin + location.pathname + location.search + location.hash,
-        ),
-      )
+    const status = me.cquBindStatus
+    if (status !== undefined && status !== 'active') {
+      redirect.fn(authCquBindUrl(currentUrl()))
       return
     }
 
@@ -79,7 +82,7 @@ export function usePersonalSetup(): PersonalSetupController {
     } finally {
       setPreparing(false)
     }
-  }, [session, removeSetupQuery, location.pathname, location.search, location.hash])
+  }, [reloadSession, removeSetupQuery, currentUrl, location.pathname])
 
   const begin = useCallback((): Promise<void> => {
     if (new URLSearchParams(location.search).get('setup') !== '1') {
