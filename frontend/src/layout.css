@@ -74,8 +74,13 @@
   color: var(--foreground);
 }
 
-/* 固定顶栏（top 16 + 高度约 52）下方留出呼吸空间 */
+/* 固定顶栏下方留出呼吸空间；手机端导航换行 + 触屏 44px 目标使顶栏更高 */
 .page-body {
-  padding-top: 6.5rem;
+  padding-top: 8rem;
 }
 
+@media (min-width: 640px) {
+  .page-body {
+    padding-top: 6.5rem;
+  }
+}
