@@ -2,17 +2,15 @@
   min-height: 100vh;
 }
 
-/* 原 v1 结构：固定浮动顶栏（圆角、边框、毛玻璃），内容在下方居中 */
 .site-header {
-  position: fixed;
+  position: sticky;
   top: var(--space-4);
-  left: var(--space-4);
-  right: var(--space-4);
+  margin: var(--space-4);
   z-index: 50;
 }
 
 .site-header-inner {
-  max-width: 80rem;
+  max-width: var(--content-standard);
   margin: 0 auto;
   display: flex;
   flex-wrap: wrap;
@@ -74,13 +72,14 @@
   color: var(--foreground);
 }
 
-/* 固定顶栏下方留出呼吸空间；手机端导航换行 + 触屏 44px 目标使顶栏更高 */
 .page-body {
-  padding-top: 8rem;
+  padding-top: var(--space-6);
 }
 
-@media (min-width: 640px) {
-  .page-body {
-    padding-top: 6.5rem;
+@media (pointer: coarse) {
+  .site-nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
   }
 }

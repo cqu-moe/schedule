@@ -1,6 +1,6 @@
 .home-hero {
   text-align: center;
-  padding: var(--space-8) 0 var(--space-20);
+  padding: var(--space-8) 0 var(--space-12);
 }
 
 .home-hero h1 {
@@ -42,7 +42,7 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-8);
-  margin: var(--space-20) 0;
+  margin: var(--space-12) 0;
 }
 
 @media (min-width: 768px) {

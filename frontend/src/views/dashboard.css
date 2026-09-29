@@ -265,6 +265,11 @@
 
 /* ── Share links dialog ────────────────────────────────────────────────── */
 
+.share-dialog {
+  width: calc(100% - var(--space-8));
+  max-width: 56rem;
+}
+
 .share-dialog-body {
   display: flex;
   flex-direction: column;
@@ -272,6 +277,7 @@
 }
 
 .share-dialog-header {
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
@@ -287,7 +293,7 @@
 
 .share-table {
   width: 100%;
-  min-width: 45rem;
+  min-width: 0;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: var(--text-sm);
@@ -298,11 +304,11 @@
 }
 
 .share-col-format {
-  width: 4.6rem;
+  width: 4rem;
 }
 
 .share-col-actions {
-  width: 10.5rem;
+  width: 9rem;
 }
 
 .share-table th {
@@ -358,7 +364,7 @@
   z-index: 2;
 }
 
-.share-link-cell {
+.share-table .share-link-cell {
   text-align: left;
   padding-inline: var(--space-4);
 }
@@ -410,7 +416,8 @@
 
 .share-footer {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
   border-top: 1px solid var(--border);
   padding-top: var(--space-4);
@@ -477,19 +484,98 @@
   color: var(--destructive);
 }
 
-.table-scroll-hint {
+.dash-copy-button {
+  min-width: 7.5rem;
+}
+
+.share-format-label {
   display: none;
 }
 
 @media (max-width: 767px) {
-  .table-scroll-hint {
+  .share-dialog {
+    padding: var(--space-4);
+  }
+
+  .share-table-wrap {
+    overflow: visible;
+    border: 0;
+  }
+
+  .share-table,
+  .share-table tbody {
     display: block;
-    margin: 0 0 var(--space-2);
+  }
+
+  .share-table colgroup,
+  .share-table thead {
+    display: none;
+  }
+
+  .share-table tbody {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .share-table tr {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .share-table td {
+    border: 0;
+    padding: var(--space-2) 0;
+    min-width: 0;
+  }
+
+  .share-table .share-sticky-left,
+  .share-table .share-sticky-right,
+  .share-empty-cell {
+    position: static;
+    grid-column: 1 / -1;
+    background: transparent;
+  }
+
+  .share-table .share-link-cell {
+    text-align: left;
+    padding-top: 0;
+  }
+
+  .share-link-name {
+    flex-wrap: wrap;
+  }
+
+  .share-link-name span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .share-format-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .share-format-label {
+    display: block;
     font-size: var(--text-xs);
     color: var(--muted-foreground);
   }
 
+  .share-unavailable {
+    min-height: 2.75rem;
+  }
+
+  .share-actions {
+    justify-content: flex-end;
+  }
+
   .share-footer {
+    flex-direction: column;
     align-items: stretch;
   }
 }

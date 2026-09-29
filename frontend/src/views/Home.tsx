@@ -1,5 +1,4 @@
 import { Link, useLocation } from 'react-router'
-import type { ReactElement } from 'react'
 import { Button } from '@cqu-moe/ui'
 import { Calendar, Lock, RefreshCw } from 'lucide-react'
 import { authCquBindUrl } from '@/config/auth'
@@ -69,18 +68,19 @@ function HomeCta({
   isCquBound: boolean
   location: { pathname: string; search: string; hash: string }
 }) {
-  let content: ReactElement
   if (isAuthenticated && isCquBound) {
-    content = (
-      <Button asChild size="lg">
-        <Link to="/dashboard?setup=1">开始使用</Link>
-      </Button>
+    return (
+      <div className="home-cta">
+        <Button asChild size="lg">
+          <Link to="/dashboard?setup=1">开始使用</Link>
+        </Button>
+      </div>
     )
   } else {
     const bindHref = authCquBindUrl(
       window.location.origin + location.pathname + location.search + location.hash,
     )
-    content = (
+    return (
       <div className="home-cta">
         <Button asChild size="lg">
           <a href={bindHref}>开始使用</a>
@@ -89,5 +89,4 @@ function HomeCta({
       </div>
     )
   }
-  return <div className="home-cta">{content}</div>
 }
