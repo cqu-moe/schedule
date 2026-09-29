@@ -235,7 +235,7 @@ export default function ShareLinksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
+        <DialogContent className="share-dialog">
           <div className="share-dialog-body">
             <DialogHeader className="share-dialog-header">
               <DialogTitle>管理共享链接</DialogTitle>
@@ -243,7 +243,6 @@ export default function ShareLinksDialog({
             </DialogHeader>
 
             <div className="share-dialog-scroll">
-              <p className="table-scroll-hint">左右滑动查看完整链接表</p>
               <div className="share-table-wrap">
                 <Table className="share-table">
                   <colgroup>
@@ -281,11 +280,14 @@ export default function ShareLinksDialog({
                         </TableCell>
 
                         {ALL_FORMATS.map((fmt) => (
-                          <TableCell key={fmt}>
+                          <TableCell key={fmt} className="share-format-cell">
+                            <span className="share-format-label" aria-hidden="true">
+                              {FORMAT_META[fmt].headerLabel}
+                            </span>
                             {link.formats.includes(fmt) ? (
                               <Button
                                 variant="outline"
-                                size="icon"
+                                size="icon-sm"
                                 title={`复制 ${FORMAT_META[fmt].label}`}
                                 aria-label={`复制 ${FORMAT_META[fmt].label}`}
                                 onClick={() => void handleCopy(link, fmt)}
@@ -312,7 +314,7 @@ export default function ShareLinksDialog({
                           <div className="share-actions">
                             <Button
                               variant="outline"
-                              size="icon"
+                              size="icon-sm"
                               title="轮换"
                               aria-label="轮换"
                               onClick={() => setRotateConfirm({ open: true, linkId: link.id })}
@@ -321,7 +323,7 @@ export default function ShareLinksDialog({
                             </Button>
                             <Button
                               variant="outline"
-                              size="icon"
+                              size="icon-sm"
                               title="修改"
                               aria-label="修改"
                               disabled={link.is_default}
@@ -331,7 +333,7 @@ export default function ShareLinksDialog({
                             </Button>
                             <Button
                               variant="outline"
-                              size="icon"
+                              size="icon-sm"
                               title="删除"
                               aria-label="删除"
                               disabled={link.is_default}

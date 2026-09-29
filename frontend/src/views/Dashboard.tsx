@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import {
-  ActionButton,
   Button,
   Dialog,
   DialogContent,
@@ -20,6 +19,8 @@ import {
   toast,
 } from '@cqu-moe/ui'
 import {
+  Check,
+  CircleAlert,
   Download,
   Ellipsis,
   ExternalLink,
@@ -777,12 +778,19 @@ export default function Dashboard() {
         description={`${count}${subLimit !== null ? ` / ${subLimit}` : ''} 个订阅`}
         actions={
           <div className="dash-header-actions">
-            <ActionButton
+            <Button
               type="button"
               variant="outline"
               size="sm"
-              state={syncAllButtonState}
-              labels={{
+              aria-busy={syncAllButtonState === 'loading'}
+              aria-live="polite"
+              disabled={
+                syncAllButtonState === 'loading' || personalSubs.length === 0 ||
+                !canManualRefresh || syncAllCooldownSeconds > 0
+              }
+              onClick={() => void handleSyncAll()}
+            >
+              {{
                 idle:
                   syncAllCooldownSeconds > 0
                     ? cooldownLabel(syncAllCooldownSeconds)
@@ -790,12 +798,8 @@ export default function Dashboard() {
                 loading: '同步中…',
                 success: '已同步',
                 error: '同步失败，重试',
-              }}
-              disabled={
-                personalSubs.length === 0 || !canManualRefresh || syncAllCooldownSeconds > 0
-              }
-              onClick={() => void handleSyncAll()}
-            />
+              }[syncAllButtonState]}
+            </Button>
             {atLimit ? (
               <Button variant="outline" size="sm" disabled title="已达订阅上限">
                 添加订阅
@@ -905,39 +909,51 @@ export default function Dashboard() {
                 </div>
 
                 <div className="dash-card-actions">
-                  <ActionButton
+                  <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    state={refreshButtonState(sub)}
-                    labels={{
+                    aria-busy={refreshButtonState(sub) === 'loading'}
+                    aria-live="polite"
+                    disabled={
+                      refreshButtonState(sub) === 'loading' ||
+                      !canManualRefresh || isRefreshCoolingDown(sub)
+                    }
+                    onClick={() => void handleRefreshSub(sub.id)}
+                  >
+                    {{
                       idle: refreshCooldownSeconds(sub) > 0
                         ? cooldownLabel(refreshCooldownSeconds(sub))
                         : '同步',
                       loading: '同步中',
                       success: '已刷新',
                       error: isFirstSyncCard(sub) ? '重试同步' : '失败',
-                    }}
-                    disabled={!canManualRefresh || isRefreshCoolingDown(sub)}
-                    onClick={() => void handleRefreshSub(sub.id)}
-                  />
+                    }[refreshButtonState(sub)]}
+                  </Button>
 
                   {link && (
                     <>
-                      <ActionButton
+                      <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        state={copyFeedback.stateOf(sub.id)}
-                        labels={{
+                        className="dash-copy-button"
+                        aria-busy={copyFeedback.stateOf(sub.id) === 'loading'}
+                        aria-live="polite"
+                        disabled={
+                          copyFeedback.stateOf(sub.id) === 'loading' || firstSyncLinkUnavailable(sub)
+                        }
+                        onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
+                      >
+                        {copyFeedback.stateOf(sub.id) === 'success' && <Check aria-hidden="true" />}
+                        {copyFeedback.stateOf(sub.id) === 'error' && <CircleAlert aria-hidden="true" />}
+                        {{
                           idle: '复制订阅链接',
                           loading: '正在复制…',
                           success: '已复制',
                           error: '复制失败',
-                        }}
-                        disabled={firstSyncLinkUnavailable(sub)}
-                        onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
-                      />
+                        }[copyFeedback.stateOf(sub.id)]}
+                      </Button>
                       <Button
                         variant="outline"
                         size="icon-sm"
