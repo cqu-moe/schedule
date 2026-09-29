@@ -12,7 +12,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  PageHeader,
   PageState,
 } from '@cqu-moe/ui'
 import { Clock, FlaskConical, MapPin, User } from 'lucide-react'
@@ -197,7 +196,6 @@ export default function Calendar() {
 
   return (
     <>
-      <PageHeader title={title} description="通过分享链接查看的公开课表。" />
       {loading ? (
         <PageState state="loading" title="正在加载课表" description="正在获取分享的课表数据，请稍候。" />
       ) : error ? (
@@ -213,6 +211,7 @@ export default function Calendar() {
         />
       ) : (
         <div className="cal-calendar">
+          <h2 className="cal-title">{title}</h2>
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin]}
             initialView={initialView}

@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router'
-import { Button, PageHeader } from '@cqu-moe/ui'
+import type { ReactElement } from 'react'
+import { Button } from '@cqu-moe/ui'
 import { Calendar, Lock, RefreshCw } from 'lucide-react'
 import { authCquBindUrl } from '@/config/auth'
 import { useSession } from '@/providers/app'
@@ -29,17 +30,15 @@ export default function Home() {
 
   return (
     <div>
-      <PageHeader
-        title="重庆大学课表日历订阅"
-        description="自动同步课表到你的日历应用，随时随地查看课程安排"
-        actions={
-          <HomeCta
-            isAuthenticated={isAuthenticated}
-            isCquBound={isCquBound}
-            location={location}
-          />
-        }
-      />
+      <section className="home-hero">
+        <h1>重庆大学课表日历订阅</h1>
+        <p>自动同步课表到你的日历应用，随时随地查看课程安排</p>
+        <HomeCta
+          isAuthenticated={isAuthenticated}
+          isCquBound={isCquBound}
+          location={location}
+        />
+      </section>
       <section className="home-features" aria-label="功能特性">
         {features.map(({ icon: Icon, title, description }) => (
           <div key={title} className="home-feature">
@@ -70,23 +69,25 @@ function HomeCta({
   isCquBound: boolean
   location: { pathname: string; search: string; hash: string }
 }) {
+  let content: ReactElement
   if (isAuthenticated && isCquBound) {
-    return (
+    content = (
       <Button asChild size="lg">
         <Link to="/dashboard?setup=1">开始使用</Link>
       </Button>
     )
+  } else {
+    const bindHref = authCquBindUrl(
+      window.location.origin + location.pathname + location.search + location.hash,
+    )
+    content = (
+      <div className="home-cta">
+        <Button asChild size="lg">
+          <a href={bindHref}>开始使用</a>
+        </Button>
+        <p className="home-cta-hint">将前往统一认证中心 auth.cqu.moe，完成后自动返回本站</p>
+      </div>
+    )
   }
-
-  const bindHref = authCquBindUrl(
-    window.location.origin + location.pathname + location.search + location.hash,
-  )
-  return (
-    <div className="home-cta">
-      <Button asChild size="lg">
-        <a href={bindHref}>开始使用</a>
-      </Button>
-      <p className="home-cta-hint">将前往统一认证中心 auth.cqu.moe，完成后自动返回本站</p>
-    </div>
-  )
+  return <div className="home-cta">{content}</div>
 }

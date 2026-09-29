@@ -2,6 +2,12 @@
   margin-top: var(--space-2);
 }
 
+.cal-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
 .cal-detail {
   display: flex;
   flex-direction: column;
