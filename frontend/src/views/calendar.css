@@ -1,0 +1,68 @@
+.cal-calendar {
+  margin-top: var(--space-2);
+}
+
+.cal-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.cal-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.cal-detail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.cal-detail-row svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted-foreground);
+}
+
+.cal-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  width: fit-content;
+}
+
+.cal-badge-course {
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.cal-badge-exam {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+}
+
+.cal-event-location {
+  font-size: var(--text-xs);
+  opacity: 0.6;
+  margin-top: var(--space-1);
+  font-weight: 400;
+}
+
+.semester-week {
+  font-size: 0.75em;
+  margin-left: 0.5em;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.cal-week-num {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}

@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>重庆大学课表订阅 | CQU Schedule</title>
   <meta name="description" content="自动同步重庆大学课表到你的日历应用，支持 Apple 日历、Google Calendar、Outlook 等主流客户端">
   <meta name="robots" content="index, follow">
@@ -43,8 +44,8 @@
   </script>
 </head>
 <body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
   <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "c73f512a41ce40aebe59e8679764cdf0"}'></script>
 </body>
 </html>

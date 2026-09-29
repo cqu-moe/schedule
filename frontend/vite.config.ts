@@ -2,13 +2,23 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, type PluginOption } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { marked } from 'marked'
 import posthog from '@posthog/rollup-plugin'
+import { themeInitScript } from '@cqu-moe/theme'
 
 export default defineConfig(async () => {
-  const plugins: PluginOption[] = [vue(), tailwindcss()]
+  const plugins: PluginOption[] = [
+    react(),
+    tailwindcss(),
+    {
+      name: 'theme-init',
+      transformIndexHtml: () => [
+        { tag: 'script', children: themeInitScript, injectTo: 'head-prepend' },
+      ],
+    },
+  ]
 
   const sourceMapUpload = process.env.POSTHOG_CLI_API_KEY && process.env.POSTHOG_CLI_PROJECT_ID
     ? posthog({
@@ -42,32 +52,23 @@ export default defineConfig(async () => {
     },
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url))
-      }
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
     },
     base: '/',
     build: {
       sourcemap: Boolean(sourceMapUpload),
       outDir: 'dist',
       assetsDir: 'assets',
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            vendor: ['vue', 'vue-router', 'pinia', 'axios'],
-            ui: ['reka-ui', 'lucide-vue-next', 'class-variance-authority', 'clsx', 'tailwind-merge'],
-            fullcalendar: ['@fullcalendar/core', '@fullcalendar/vue3', '@fullcalendar/daygrid', '@fullcalendar/timegrid'],
-          },
-        },
-      },
     },
     server: {
       port: 5173,
       proxy: {
         '/api/': {
           target: 'http://127.0.0.1:8787',
-          changeOrigin: true
-        }
-      }
-    }
+          changeOrigin: true,
+        },
+      },
+    },
   }
 })

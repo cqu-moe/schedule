@@ -1,0 +1,47 @@
+@import 'tailwindcss' source(none);
+@source './';
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+svg {
+  flex-shrink: 0;
+}
+
+/* Markdown content (changelog) rendered from CHANGELOG.md */
+.markdown-content h2 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: var(--space-8) 0 var(--space-3);
+}
+.markdown-content h3 {
+  font-size: var(--text-base);
+  font-weight: 600;
+  margin: var(--space-6) 0 var(--space-2);
+}
+.markdown-content p {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  margin-bottom: var(--space-4);
+}
+.markdown-content ul {
+  list-style: disc inside;
+  margin-bottom: var(--space-4);
+}
+.markdown-content li {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.markdown-content strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}

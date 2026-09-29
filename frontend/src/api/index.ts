@@ -19,7 +19,7 @@ import { authCquBindUrl } from '@/config/auth'
 
 // Augment axios config to support per-request auth-redirect suppression.
 declare module 'axios' {
-  interface InternalAxiosRequestConfig {
+  interface AxiosRequestConfig<D = any, P = any> {
     /** When true, a 401 response will NOT trigger a redirect to the login page. */
     suppressAuthRedirect?: boolean
   }
