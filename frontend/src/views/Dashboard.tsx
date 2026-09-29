@@ -783,7 +783,7 @@ export default function Dashboard() {
               variant="outline"
               size="sm"
               aria-busy={syncAllButtonState === 'loading'}
-              aria-live="polite"
+              aria-live={syncAllButtonState === 'idle' ? 'off' : 'polite'}
               disabled={
                 syncAllButtonState === 'loading' || personalSubs.length === 0 ||
                 !canManualRefresh || syncAllCooldownSeconds > 0
@@ -914,7 +914,7 @@ export default function Dashboard() {
                     variant="outline"
                     size="sm"
                     aria-busy={refreshButtonState(sub) === 'loading'}
-                    aria-live="polite"
+                    aria-live={refreshButtonState(sub) === 'idle' ? 'off' : 'polite'}
                     disabled={
                       refreshButtonState(sub) === 'loading' ||
                       !canManualRefresh || isRefreshCoolingDown(sub)
