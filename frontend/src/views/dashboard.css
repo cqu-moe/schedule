@@ -484,10 +484,6 @@
   color: var(--destructive);
 }
 
-.dash-copy-button {
-  min-width: 7.5rem;
-}
-
 .share-format-label {
   display: none;
 }
@@ -588,6 +584,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sync-icon-spin,
+  .dash-icon-spin,
   .dash-sync-progress svg {
     animation: none;
   }
