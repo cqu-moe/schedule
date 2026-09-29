@@ -10,7 +10,6 @@ import type {
   SearchResult,
   DepartmentNode,
   AppConfig,
-  HealthStatus,
   CalendarData,
   SyncQueuedResponse,
   NotificationSettings,
@@ -215,12 +214,7 @@ export default {
     return response.data
   },
 
-  // ── Health & config ───────────────────────────────────────────────────────
-
-  async getHealth(): Promise<HealthStatus> {
-    const response = await client.get<HealthStatus>('/health')
-    return response.data
-  },
+  // ── Config ─────────────────────────────────────────────────────────────────
 
   async getConfig(): Promise<AppConfig> {
     const response = await client.get<AppConfig>('/config')

@@ -79,41 +79,6 @@ export async function fetchSessionContextCached(
   return ctx;
 }
 
-const PERSONAL_CACHE_TTL = 300; // 5 minutes
-
-/** Fetch personal schedule with KV cache to deduplicate across requests */
-export async function fetchPersonalScheduleCached(
-  api: CQUAPIClient,
-  studentId: string,
-  ctx: SessionContext,
-  kv: KVNamespace,
-): Promise<PersonalScheduleData> {
-  const cacheKey = `sync:personal:${studentId}`;
-  const cached = await kv.get(cacheKey, "json");
-  if (cached) return cached as PersonalScheduleData;
-
-  const data = await fetchPersonalSchedule(api, studentId, ctx);
-  kv.put(cacheKey, JSON.stringify(data), { expirationTtl: PERSONAL_CACHE_TTL }).catch(() => {});
-  return data;
-}
-
-/** Fetch personal schedule (courses + exams) */
-export async function fetchPersonalSchedule(
-  api: CQUAPIClient,
-  studentId: string,
-  ctx: SessionContext,
-): Promise<PersonalScheduleData> {
-  const [courses, exams] = await Promise.all([
-    api.getSchedule(studentId, ctx.sessionId),
-    api.getExams(),
-  ]);
-  return {
-    courses,
-    exams,
-    semesterStart: ctx.semesterInfo.begin_date ?? "",
-  };
-}
-
 export interface PreGeneratedIcs {
   coursesIcs: string;
   examsIcs: string | null;

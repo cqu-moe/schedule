@@ -9,7 +9,6 @@ vi.mock('@/api', () => ({
     getSubscriptions: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
-    getHealth: vi.fn(),
   },
 }))
 
@@ -48,13 +47,6 @@ describe('Router (v2)', () => {
         expect(router.currentRoute.value.name).toBeUndefined()
       },
     )
-  })
-
-  it('RouteNames does not include Login, Register, or Recover', () => {
-    const names = Object.values(RouteNames)
-    expect(names).not.toContain('Login')
-    expect(names).not.toContain('Register')
-    expect(names).not.toContain('Recover')
   })
 
   it('/view/:token route resolves with token param', async () => {

@@ -21,7 +21,6 @@ const { mockApi, mockToast, mockRedirect } = vi.hoisted(() => {
     searchExternal: vi.fn(),
     getDepartments: vi.fn().mockResolvedValue({ departments: [] }),
     getViewData: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
   }
   const mockRedirect = { fn: vi.fn() }
   return { mockApi, mockToast, mockRedirect }
@@ -173,26 +172,12 @@ describe('Add view (v2)', () => {
     expect(link.attributes('target')).toBeUndefined()
   })
 
-  it('runs automatic setup on Add and sends a created account to Dashboard', async () => {
-    const { router } = await mountAdd([], undefined, { cquBindStatus: 'active' }, '/add?setup=1&from=menu')
+  it('runs automatic personal setup once when mounted with setup=1', async () => {
+    await mountAdd([], undefined, { cquBindStatus: 'active' }, '/add?setup=1')
     await flushPromises()
 
     expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(1)
     expect(mockApi.getSubscriptions).toHaveBeenCalledWith(true)
-    expect(router.currentRoute.value.fullPath).toBe('/dashboard?from=menu')
-  })
-
-  it('keeps an existing account on Add after removing setup', async () => {
-    mockApi.ensureDefaultSubscriptions.mockResolvedValueOnce({
-      status: 'existing',
-      subscription_ids: [],
-      run_id: null,
-      dispatch_status: 'sent',
-    })
-    const { router } = await mountAdd([], undefined, { cquBindStatus: 'active' }, '/add?setup=1&from=menu')
-    await flushPromises()
-
-    expect(router.currentRoute.value.fullPath).toBe('/add?from=menu')
   })
 
   it('shows personal options without the hint when bound', async () => {

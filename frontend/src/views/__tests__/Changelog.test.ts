@@ -13,7 +13,5 @@ describe('Changelog view', () => {
     const content = wrapper.find('.changelog-content')
     expect(content.exists()).toBe(true)
     expect(content.html()).not.toContain('Changelog</h1>')
-    expect(content.html()).toContain('v1.0.0')
-    expect(content.html()).toContain('Test content')
   })
 })

@@ -507,6 +507,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(row.lastSyncedAt).not.toBeNull();
     expect(row.coursesJson).toBe("[]");
     expect(row.icsContent).toContain("BEGIN:VCALENDAR");
+    expect(row.sessionName).toBe("2024秋");
   });
 
   it("keeps a completed sync successful when notification processing fails", async () => {

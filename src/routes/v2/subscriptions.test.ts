@@ -627,23 +627,6 @@ describe("POST /api/v2/subscriptions", () => {
     expect(app.send).not.toHaveBeenCalled();
   });
 
-  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): creating an
-  // external (instructor) sub now short-circuits with 503 before is_personal
-  // derivation. The personal-type derivation is still covered by the test below.
-  it.skip("derives is_personal from sourceType, ignoring a conflicting client value", async () => {
-    const app = buildApp("userA");
-    // Client lies: an external type (instructor) but claims isPersonal=true.
-    const res = await app.request(
-      "/",
-      jsonBody({ sourceType: "instructor", sourceId: "T-1", sourceName: "张老师", isPersonal: true }),
-    );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; is_personal: boolean };
-    expect(body.is_personal).toBe(false); // instructor → external → not personal
-    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, body.id));
-    expect(row.isPersonal).toBe(false);
-  });
-
   it("rejects a personal type even if the client sends isPersonal=false", async () => {
     const app = buildApp("userA");
     const res = await app.request(
@@ -662,26 +645,6 @@ describe("POST /api/v2/subscriptions", () => {
     );
     expect(res.status).toBe(403);
     expect(await db.select().from(subscriptions)).toHaveLength(0);
-  });
-
-  // SKIPPED while EXTERNAL_DISABLED=true (external-availability.ts): adding an
-  // external sub now returns 503 before the row is written; restore when external
-  // re-enables.
-  it.skip("keeps the client-supplied sourceId for external source types", async () => {
-    const app = buildApp("userA");
-    const res = await app.request(
-      "/",
-      jsonBody({ sourceType: "instructor", sourceId: "T-42", sourceName: "张老师" }),
-    );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; source_id: string };
-    expect(body.source_id).toBe("T-42");
-
-    const [row] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.id, body.id));
-    expect(row.sourceId).toBe("T-42");
   });
 
   it("rejects invalid sourceType → 400 INVALID_INPUT", async () => {
@@ -715,21 +678,6 @@ describe("POST /api/v2/subscriptions", () => {
     const res = await app.request(
       "/",
       jsonBody({ ...VALID_CREATE, sessionName: "x".repeat(201) }),
-    );
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { detail: { error: { code: string } } };
-    expect(body.detail.error.code).toBe("PERSONAL_SUBSCRIPTION_MANAGED");
-  });
-
-  // SKIPPED while EXTERNAL_DISABLED=true (see external-availability.ts): external
-  // add now short-circuits with 503 EXTERNAL_UNAVAILABLE *before* the `external`
-  // cap check, so this 403 path is unreachable. The dedicated soft-disabled test
-  // below covers the new behavior; restore (.skip → it) when external re-enables.
-  it.skip("external source without `external` cap → 403", async () => {
-    const app = buildApp("userA", capsWith({ external: false }));
-    const res = await app.request(
-      "/",
-      jsonBody({ sourceType: "instructor", sourceId: "T1", sourceName: "张老师" }),
     );
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };

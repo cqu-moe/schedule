@@ -11,7 +11,6 @@ const { mockApi } = vi.hoisted(() => {
     getSubscriptions: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
-    getHealth: vi.fn(),
     // v2: getViewData replaces getCalendarData
     getViewData: vi.fn(),
   }

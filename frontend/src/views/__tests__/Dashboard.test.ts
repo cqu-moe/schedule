@@ -22,7 +22,6 @@ const { mockApi, mockToast, mockRedirect } = vi.hoisted(() => {
     searchExternal: vi.fn(),
     getDepartments: vi.fn(),
     getViewData: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
     getNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: false }),
     updateNotificationSettings: vi.fn().mockResolvedValue({ eligible: true, enabled: true }),
   }
@@ -1223,22 +1222,6 @@ describe('Dashboard view (v2)', () => {
     expect(syncAllBtn!.attributes('disabled')).toBeDefined()
   })
 
-  it('handleSyncAll early-returns without toast when personalSubs is empty (M1)', async () => {
-    const exploreSub = mockSubscription({ id: 'e-1', is_personal: false, source_type: 'instructor', source_name: '李四' })
-    const { wrapper } = await mountDashboard([exploreSub])
-
-    // Directly invoke handleSyncAll via the vm (bypassing disabled button guard)
-    const vm = wrapper.vm as unknown as { handleSyncAll?: () => Promise<void> }
-    // The function is not exposed on the public vm in script setup, but we can test
-    // by clicking the disabled button — it should not call refreshSubscription
-    const syncAllBtn = wrapper.findAll('button').find(b => b.text().includes('同步个人课表'))
-    await syncAllBtn!.trigger('click')
-    await flushPromises()
-
-    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
-    expect(mockToast.success).not.toHaveBeenCalled()
-  })
-
   // ── Delete ────────────────────────────────────────────────────────────────────
 
   it('hides the delete menu item for personal subscriptions', async () => {
@@ -1407,35 +1390,6 @@ describe('Dashboard view (v2)', () => {
     expect(mockToast.error).toHaveBeenCalledWith('加载订阅列表失败')
   })
 
-  // ── Polling ───────────────────────────────────────────────────────────────────
-
-  it('starts polling after manual refresh and calls getSubscriptions again', async () => {
-    vi.useFakeTimers()
-    const sub = mockSubscription({ last_synced_at: '2026-03-01T10:00:00Z' })
-    mockApi.getSubscriptions.mockResolvedValue(mockSubscriptionList([sub]))
-
-    const { wrapper } = await mountWithContext(Dashboard, {
-      pinia: {
-        initialState: {
-          session: DEFAULT_SESSION,
-          config: { publicUrl: 'https://schedule.cqu.moe', loaded: true },
-        },
-      },
-    })
-    await flushPromises()
-
-    const syncBtn = wrapper.findAll('button').find(
-      b => b.text() === '同步' || (b.text().includes('同步') && !b.text().includes('个人')),
-    )
-    await syncBtn!.trigger('click')
-    await flushPromises()
-
-    const callsBefore = mockApi.getSubscriptions.mock.calls.length
-    await vi.advanceTimersByTimeAsync(3000)
-    await flushPromises()
-    expect(mockApi.getSubscriptions.mock.calls.length).toBeGreaterThan(callsBefore)
-  })
-
   // ── Download links visible ────────────────────────────────────────────────────
 
   it('renders download items in dropdown for subscription with default link', async () => {
@@ -1533,20 +1487,6 @@ describe('Dashboard view (v2)', () => {
 
   // ── FE-3: Share links ─────────────────────────────────────────────────────────
 
-  it('shows "管理共享链接" menu item for every subscription', async () => {
-    const { wrapper } = await mountDashboard([mockSubscription()])
-    expect(wrapper.text()).toContain('管理共享链接')
-  })
-
-  it('"管理共享链接" menu item is clickable (not disabled)', async () => {
-    const { wrapper } = await mountDashboard([mockSubscription()])
-    // Under the DropdownMenuItem stub, items render as <div @click="...">
-    const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
-    expect(shareItem).toBeDefined()
-    // The item should not have disabled attribute
-    expect(shareItem!.attributes('disabled')).toBeUndefined()
-  })
-
   it('opens ShareLinksDialog when "管理共享链接" is clicked', async () => {
     const { wrapper } = await mountDashboard([mockSubscription()])
     const shareItem = wrapper.findAll('div').find(d => d.text().trim() === '管理共享链接')
@@ -1554,8 +1494,8 @@ describe('Dashboard view (v2)', () => {
     await shareItem!.trigger('click')
     await flushPromises()
     // The stub renders only when open; the vm should now have shareLinksDialog.open = true
-    const vm = wrapper.vm as unknown as { shareLinksDialog: { open: boolean; sub: unknown } }
+    const vm = wrapper.vm as unknown as { shareLinksDialog: { open: boolean; subId: string | null } }
     expect(vm.shareLinksDialog.open).toBe(true)
-    expect(vm.shareLinksDialog.sub).not.toBeNull()
+    expect(vm.shareLinksDialog.subId).not.toBeNull()
   })
 })

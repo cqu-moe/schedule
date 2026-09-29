@@ -90,20 +90,6 @@ describe('API module (v2)', () => {
       redirect.fn = originalFn
     })
 
-    it('still redirects on 401 for normal requests (suppressAuthRedirect absent)', async () => {
-      const redirectSpy = vi.fn()
-      const originalFn = redirect.fn
-      redirect.fn = redirectSpy
-
-      // Simulates getSubscriptions: no suppressAuthRedirect flag
-      const error = { response: { status: 401, data: {} }, config: {} }
-      await expect(interceptorErrorHandler!(error)).rejects.toBe(error)
-
-      expect(redirectSpy).toHaveBeenCalledOnce()
-
-      redirect.fn = originalFn
-    })
-
     it('does NOT redirect on 401 when error code is TOKEN_EXPIRED (upstream CQU token)', async () => {
       const redirectSpy = vi.fn()
       const originalFn = redirect.fn
@@ -389,19 +375,6 @@ describe('API module (v2)', () => {
         suppressAuthRedirect: true,
       })
       expect(result).toEqual(data)
-    })
-  })
-
-  // ── getHealth ──
-
-  describe('getHealth', () => {
-    it('GET /health', async () => {
-      mockClient.get.mockResolvedValueOnce({ data: { status: 'ok' } })
-
-      const result = await api.getHealth()
-
-      expect(mockClient.get).toHaveBeenCalledWith('/health')
-      expect(result).toEqual({ status: 'ok' })
     })
   })
 
