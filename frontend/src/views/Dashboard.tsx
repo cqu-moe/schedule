@@ -790,6 +790,9 @@ export default function Dashboard() {
               }
               onClick={() => void handleSyncAll()}
             >
+              {syncAllButtonState === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
+              {syncAllButtonState === 'success' && <Check aria-hidden="true" />}
+              {syncAllButtonState === 'error' && <CircleAlert aria-hidden="true" />}
               {{
                 idle:
                   syncAllCooldownSeconds > 0
@@ -921,6 +924,9 @@ export default function Dashboard() {
                     }
                     onClick={() => void handleRefreshSub(sub.id)}
                   >
+                    {refreshButtonState(sub) === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
+                    {refreshButtonState(sub) === 'success' && <Check aria-hidden="true" />}
+                    {refreshButtonState(sub) === 'error' && <CircleAlert aria-hidden="true" />}
                     {{
                       idle: refreshCooldownSeconds(sub) > 0
                         ? cooldownLabel(refreshCooldownSeconds(sub))
@@ -937,7 +943,6 @@ export default function Dashboard() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="dash-copy-button"
                         aria-busy={copyFeedback.stateOf(sub.id) === 'loading'}
                         aria-live="polite"
                         disabled={
@@ -945,11 +950,12 @@ export default function Dashboard() {
                         }
                         onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
                       >
+                        {copyFeedback.stateOf(sub.id) === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
                         {copyFeedback.stateOf(sub.id) === 'success' && <Check aria-hidden="true" />}
                         {copyFeedback.stateOf(sub.id) === 'error' && <CircleAlert aria-hidden="true" />}
                         {{
-                          idle: '复制订阅链接',
-                          loading: '正在复制…',
+                          idle: '复制链接',
+                          loading: '复制中',
                           success: '已复制',
                           error: '复制失败',
                         }[copyFeedback.stateOf(sub.id)]}

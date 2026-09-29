@@ -213,7 +213,7 @@ describe('Dashboard view (v2)', () => {
 
   it('copies the ICS URL to clipboard with feedback', async () => {
     await mountDashboard([mockSubscription({ links: [defaultLink('tok-abc')] })])
-    const copyButton = screen.getByRole('button', { name: '复制订阅链接' })
+    const copyButton = screen.getByRole('button', { name: '复制链接' })
     await userEvent.click(copyButton)
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -302,7 +302,7 @@ describe('Dashboard view (v2)', () => {
       expect(screen.getByText('3 个订阅')).toBeInTheDocument()
       expect(screen.getByText('我的全部课表')).toBeInTheDocument()
 
-      const copyButtons = screen.getAllByRole('button', { name: '复制订阅链接' })
+      const copyButtons = screen.getAllByRole('button', { name: '复制链接' })
       expect(copyButtons).toHaveLength(3)
       for (const button of copyButtons) expect(button).toBeDisabled()
       for (const button of screen.getAllByRole('button', { name: '二维码' })) {
@@ -321,7 +321,7 @@ describe('Dashboard view (v2)', () => {
 
       expect(screen.getByText('课表已同步')).toBeInTheDocument()
       expect(screen.getAllByText('刚刚同步')).toHaveLength(3)
-      for (const button of screen.getAllByRole('button', { name: '复制订阅链接' })) {
+      for (const button of screen.getAllByRole('button', { name: '复制链接' })) {
         expect(button).toBeEnabled()
       }
 
