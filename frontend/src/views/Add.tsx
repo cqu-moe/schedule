@@ -106,12 +106,9 @@ export default function Add() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSeq = useRef(0)
-  const setupRef = useRef(setup)
-  const sessionRef = useRef(session)
-  setupRef.current = setup
-  sessionRef.current = session
-
   const { reloadSession } = session
+  const { begin: beginPersonalSetup } = setup
+  const setupRequested = new URLSearchParams(location.search).get('setup') === '1'
 
   useEffect(() => {
     let active = true
@@ -124,24 +121,13 @@ export default function Add() {
   }, [reloadSession])
 
   useEffect(() => {
-    let active = true
-    void (async () => {
-      try {
-        await setup.begin()
-      } catch {
-        return
-      }
-      if (!active) return
-      const current = setupRef.current
-      if (current.startedThisVisit || current.error || sessionRef.current.isCquUnbound) return
-      subs.load().catch(() => toast.error('加载订阅列表失败'))
-    })()
-    return () => {
-      active = false
-    }
-    // 仅需在挂载时执行一次；setup.begin / subs.load 均为稳定引用。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    void beginPersonalSetup()
+  }, [beginPersonalSetup])
+
+  useEffect(() => {
+    if (setupRequested || session.isCquUnbound) return
+    void subs.load().catch(() => toast.error('加载订阅列表失败'))
+  }, [setupRequested, session.isCquUnbound, subs.load])
 
   useEffect(
     () => () => {

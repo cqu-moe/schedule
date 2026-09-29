@@ -174,7 +174,6 @@ export default function Dashboard() {
 
   const [notificationEnabled, setNotificationEnabled] = useState(false)
   const [notificationLoading, setNotificationLoading] = useState(false)
-  const notificationLoadedRef = useRef(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [qrModal, setQrModal] = useState<{ open: boolean; url: string; token: string }>({
     open: false,
@@ -439,6 +438,7 @@ export default function Dashboard() {
   const atShareLimit = shareLimit !== null && shareLinkCount >= shareLimit
   const personalSubs = subscriptions.filter((s) => s.is_personal)
   const canManualRefresh = session.quota('manual_refresh') !== 0
+  const canChangeNotification = session.can('change_notification')
 
   const firstSyncTargetIds =
     data.personalSetup?.status === 'created' ? data.personalSetup.subscription_ids : []
@@ -749,8 +749,7 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
-    if (!session.can('change_notification') || notificationLoadedRef.current) return
-    notificationLoadedRef.current = true
+    if (!canChangeNotification) return
     let active = true
     setNotificationLoading(true)
     api
@@ -767,7 +766,7 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [session])
+  }, [canChangeNotification, session.user?.id])
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -815,7 +814,7 @@ export default function Dashboard() {
           <span className="dash-status-dot" aria-hidden="true" />
           {session.can('sync') ? '自动同步已开启' : '自动同步未开通'}
         </p>
-        {session.can('change_notification') && (
+        {canChangeNotification && (
           <div className="dash-notification">
             <Switch
               id="notification-settings"

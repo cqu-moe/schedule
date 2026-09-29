@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Add, { externalSubscriptions } from '@/views/Add'
 import { mockSubscription, renderWithApp } from '@/test-utils'
+import type { DefaultSubscriptionsResponse } from '@/types/api'
 
 const { mockApi, mockRedirect, mockToast } = vi.hoisted(() => ({
   mockApi: {
@@ -193,6 +194,9 @@ describe('Add view (React)', () => {
   })
 
   it('shows the setup error with a working retry after ?setup=1 fails', async () => {
+    mockApi.getSubscriptions.mockResolvedValue({
+      subscriptions: [mockSubscription()], count: 1,
+    })
     mockApi.ensureDefaultSubscriptions
       .mockRejectedValueOnce({
         response: { data: { detail: { error: { code: 'X', message: '准备失败' } } } },
@@ -208,6 +212,28 @@ describe('Add view (React)', () => {
     expect(await screen.findByText('准备失败')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('button', { name: '已订阅' })).toBeDisabled()
+  })
+
+  it('loads existing subscriptions and quota after setup stays on Add', async () => {
+    let resolveSetup!: (result: DefaultSubscriptionsResponse) => void
+    mockApi.ensureDefaultSubscriptions.mockReturnValueOnce(
+      new Promise<DefaultSubscriptionsResponse>((resolve) => { resolveSetup = resolve }),
+    )
+    mockApi.getSubscriptions.mockResolvedValue({
+      subscriptions: [mockSubscription()], count: 1,
+    })
+    renderWithApp(<Add />, {
+      routerEntries: ['/add?setup=1'],
+      session: { quota: (key) => key === 'sub_limit' ? 1 : null },
+    })
+    await waitFor(() => expect(mockApi.ensureDefaultSubscriptions).toHaveBeenCalled())
+    await act(async () => resolveSetup({
+      status: 'existing', subscription_ids: ['sub-1'], run_id: null, dispatch_status: 'none',
+    }))
+    expect(await screen.findByRole('button', { name: '已订阅' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '订阅我的课程' })).toBeDisabled()
+    expect(screen.getByText('已达订阅上限，请先删除不需要的订阅')).toBeInTheDocument()
   })
 
   it('toasts when the initial subscription list fails to load', async () => {

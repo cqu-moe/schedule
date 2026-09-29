@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { MemoryRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
-import type { AppContextValue } from '@/providers/app'
-import { mockSubscription, renderWithApp } from '@/test-utils'
-import type { PersonalSetupSummary, Subscription, SubscriptionList } from '@/types/api'
+import { AppProvider, type AppContextValue } from '@/providers/app'
+import { mockMeResponse, mockSubscription, renderWithApp } from '@/test-utils'
+import type { AppConfig, NotificationSettings, PersonalSetupSummary, Subscription, SubscriptionList } from '@/types/api'
 
 const { mockApi, mockToast } = vi.hoisted(() => {
   const mockToast = { error: vi.fn(), success: vi.fn(), info: vi.fn() }
@@ -371,5 +373,31 @@ describe('Dashboard view (v2)', () => {
       'aria-checked',
       'true',
     )
+  })
+
+  it.each(['config', 'session'])('finishes notification loading across a %s update', async (update) => {
+    let resolveConfig!: (config: AppConfig) => void
+    let resolveSettings!: (settings: NotificationSettings) => void
+    mockApi.getMe.mockResolvedValue(mockMeResponse())
+    mockApi.getConfig.mockReturnValue(new Promise<AppConfig>((resolve) => { resolveConfig = resolve }))
+    mockApi.getNotificationSettings.mockReturnValue(
+      new Promise<NotificationSettings>((resolve) => { resolveSettings = resolve }),
+    )
+    render(
+      <StrictMode>
+        <AppProvider>
+          <MemoryRouter initialEntries={['/dashboard']}><Dashboard /></MemoryRouter>
+        </AppProvider>
+      </StrictMode>,
+    )
+    await waitFor(() => expect(mockApi.getNotificationSettings).toHaveBeenCalled())
+    await act(async () => {
+      if (update === 'config') resolveConfig({ public_url: 'https://schedule.cqu.moe' })
+      else fireEvent.focus(window)
+    })
+    await act(async () => resolveSettings({ eligible: true, enabled: true }))
+    const toggle = screen.getByRole('switch', { name: '课表变更通知' })
+    expect(toggle).toBeEnabled()
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 })
