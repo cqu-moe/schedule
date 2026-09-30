@@ -1196,10 +1196,15 @@ app.post("/:sid/links/:lid/rotations", async (c) => {
   const token = await generateUniqueToken((t) => linkTokenExists(db, t));
   const now = new Date().toISOString();
 
-  await db
+  // Optimistic lock on the read-time token: concurrent rotations of the same
+  // link must not both "succeed" while only the last UPDATE lands.
+  const rotated = await db
     .update(calendarLinks)
     .set({ token, updatedAt: now })
-    .where(eq(calendarLinks.id, lid));
+    .where(and(eq(calendarLinks.id, lid), eq(calendarLinks.token, link.token)));
+  if ((rotated.meta?.changes ?? 0) === 0) {
+    return errorResponse("LINK_TOKEN_CONFLICT", "Token 刚被其他请求轮换，请重试", 409);
+  }
 
   console.log(
     JSON.stringify({
