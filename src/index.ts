@@ -55,8 +55,12 @@ app.use(
       if (publicUrl && origin === publicUrl) return origin;
       // Allow schedule.cqu.moe alongside beta
       if (origin === "https://schedule.cqu.moe") return origin;
-      // Allow localhost for dev
-      if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+      // Allow localhost for dev only — production must never echo a local origin
+      // (#90: localhost CORS was allowed in every environment).
+      if (
+        c.env.ENVIRONMENT !== "production" &&
+        (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))
+      ) {
         return origin;
       }
       return "";

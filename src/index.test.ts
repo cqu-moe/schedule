@@ -64,10 +64,15 @@ function uniqueIp(): string {
  * Issue a request against the top-level app with an explicit AUTH binding so the
  * dev-mock injection (`!c.env.AUTH`) never kicks in.
  */
-function request(path: string, auth: AuthService, init: RequestInit = {}) {
+function request(
+  path: string,
+  auth: AuthService,
+  init: RequestInit = {},
+  envOverrides: Partial<typeof env> = {},
+) {
   const headers = new Headers(init.headers);
   headers.set("CF-Connecting-IP", uniqueIp());
-  const testEnv = { ...env, AUTH: auth };
+  const testEnv = { ...env, AUTH: auth, ...envOverrides };
   return app.request(path, { ...init, headers }, testEnv);
 }
 
@@ -244,25 +249,61 @@ describe("AUTH_LIMITER on authenticated v2 routes", () => {
 
 describe("CORS preflight", () => {
   it("OPTIONS to a link path with PATCH method → allows PATCH", async () => {
-    const res = await request("/api/v2/subscriptions/x/links/y", fakeAuth("userA", FULL_CAPS), {
-      method: "OPTIONS",
-      headers: {
-        Origin: "http://localhost:5173",
-        "Access-Control-Request-Method": "PATCH",
+    const res = await request(
+      "/api/v2/subscriptions/x/links/y",
+      fakeAuth("userA", FULL_CAPS),
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:5173",
+          "Access-Control-Request-Method": "PATCH",
+        },
       },
-    });
+      // Shared test env inherits ENVIRONMENT=production; these preflight
+      // cases exercise the dev-origin path.
+      { ENVIRONMENT: "development" },
+    );
     const allowMethods = res.headers.get("access-control-allow-methods") ?? "";
     expect(allowMethods).toContain("PATCH");
   });
 
   it("OPTIONS to notification settings allows PUT", async () => {
-    const res = await request("/api/v2/notification-settings", fakeAuth("userA", FULL_CAPS), {
-      method: "OPTIONS",
-      headers: {
-        Origin: "http://localhost:5173",
-        "Access-Control-Request-Method": "PUT",
+    const res = await request(
+      "/api/v2/notification-settings",
+      fakeAuth("userA", FULL_CAPS),
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:5173",
+          "Access-Control-Request-Method": "PUT",
+        },
       },
-    });
+      { ENVIRONMENT: "development" },
+    );
     expect(res.headers.get("access-control-allow-methods") ?? "").toContain("PUT");
+  });
+});
+
+describe("CORS localhost policy (#90)", () => {
+  it("production: localhost and 127.0.0.1 origins get no ACAO header", async () => {
+    for (const origin of ["http://localhost:3000", "http://127.0.0.1:3000"]) {
+      const res = await request(
+        "/api/v2/health",
+        fakeAuth("userA", FULL_CAPS),
+        { headers: { Origin: origin } },
+        { ENVIRONMENT: "production" },
+      );
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  });
+
+  it.each(["development", "preview"])("%s: localhost origin still allowed", async (environment) => {
+    const res = await request(
+      "/api/v2/health",
+      fakeAuth("userA", FULL_CAPS),
+      { headers: { Origin: "http://localhost:5173" } },
+      { ENVIRONMENT: environment },
+    );
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
   });
 });
