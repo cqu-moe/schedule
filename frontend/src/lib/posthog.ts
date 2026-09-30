@@ -88,7 +88,6 @@ const host = import.meta.env.VITE_POSTHOG_HOST?.trim() || "https://p.cqu.moe";
 const environment = import.meta.env.PROD ? "production" : import.meta.env.MODE === "test" ? "test" : "development";
 const release = import.meta.env.VITE_RELEASE?.trim() || "development";
 let initialized = false;
-let identifiedUserId: string | null | undefined = undefined;
 
 function clearLegacyPostHogCookie(projectToken: string): void {
   const encodedToken = projectToken.replace(/\+/g, "PL").replace(/\//g, "SL").replace(/=/g, "EQ");
@@ -150,13 +149,14 @@ export function initPostHog(): boolean {
 
 export function syncPostHogIdentity(userId: string | null): void {
   if (!initialized) return;
-  if (userId) {
-    if (typeof identifiedUserId === "string" && identifiedUserId !== userId) posthog.reset();
-    posthog.identify(userId);
-  } else if (typeof identifiedUserId === "string") {
+  // posthog-js persists "$user_id" across page loads; a module-level flag
+  // misses it after reload and identify() would merge the previous account's
+  // person into the new user.
+  const persistedUserId = posthog.get_property("$user_id");
+  if (typeof persistedUserId === "string" && persistedUserId !== userId) {
     posthog.reset();
   }
-  identifiedUserId = userId;
+  if (userId) posthog.identify(userId);
 }
 
 export function captureSchedulePageview(pathname: string): void {
