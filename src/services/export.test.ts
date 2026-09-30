@@ -98,31 +98,31 @@ describe("generateCsv", () => {
     );
   });
 
-  it("should sanitize CSV injection", () => {
-    const events = generateFormattedEvents(
-      [
-        {
-          name: "=cmd",
-          lecturer: "+evil",
-          room: "-bad",
-          position: "",
-          day_of_week: 1,
-          start_session: 1,
-          end_session: 1,
-          weeks: [1],
-        },
-      ],
-      "2025-02-24",
-    );
 
-    const csv = generateCsv(events);
-    expect(csv).toContain("'=cmd");
-    expect(csv).toContain("'+evil");
-    // The start_time begins with - from the negative prefix sanitization test;
-    // but real times won't trigger this. Let's check for actual data.
-    expect(csv).not.toContain("\n=");
-    expect(csv).not.toContain("\n+");
-  });
+  it.each(["=", "+", "-", "@", "\t", "\r"])(
+    "should sanitize CSV injection from %j prefix",
+    (prefix) => {
+      const events = generateFormattedEvents(
+        [
+          {
+            name: `${prefix}cmd`,
+            lecturer: "",
+            room: "",
+            position: "",
+            day_of_week: 1,
+            start_session: 1,
+            end_session: 1,
+            weeks: [1],
+          },
+        ],
+        "2025-02-24",
+      );
+
+      const csv = generateCsv(events);
+      expect(csv).toContain(`'${prefix}cmd`);
+      expect(csv).not.toContain(`\n${prefix}cmd`);
+    },
+  );
 
   it("should escape fields with commas", () => {
     const events = [
