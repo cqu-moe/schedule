@@ -1131,6 +1131,29 @@ describe("POST /api/v2/subscriptions/:sid/links/:lid/rotations", () => {
     expect(body.token).not.toBe("default-old");
   });
 
+  it("concurrent rotations: exactly one wins, the other gets 409 (#99)", async () => {
+    const subId = await insertSub("userA");
+    const lid = await insertLink(subId, { token: "race-old" });
+    const app = buildApp("userA");
+    const [a, b] = await Promise.all([
+      app.request(`/${subId}/links/${lid}/rotations`, { method: "POST" }),
+      app.request(`/${subId}/links/${lid}/rotations`, { method: "POST" }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+    const winner = a.status === 201 ? a : b;
+    const winnerBody = (await winner.json()) as { token: string };
+    const [row] = await db
+      .select()
+      .from(calendarLinks)
+      .where(eq(calendarLinks.id, lid));
+    expect(row.token).toBe(winnerBody.token);
+
+    const loser = a.status === 201 ? b : a;
+    const loserBody = (await loser.json()) as { detail: { error: { code: string } } };
+    expect(loserBody.detail.error.code).toBe("LINK_TOKEN_CONFLICT");
+  });
+
   it("returns 404 rotating another user's link", async () => {
     const subId = await insertSub("userB");
     const lid = await insertLink(subId);
