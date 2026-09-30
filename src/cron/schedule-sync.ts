@@ -1,7 +1,8 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   subscriptions,
+  calendarLinks,
   notificationState,
   PERSONAL_SOURCE_TYPES,
   EXTERNAL_SOURCE_TYPES,
@@ -228,6 +229,22 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
         .update(subscriptions)
         .set({ isActive: entitled, updatedAt: new Date().toISOString() })
         .where(eq(subscriptions.id, sub.id));
+    }
+
+    // Reconcile non-default links from caps.share (issue #89): revoked share →
+    // the link stops serving (public 403 LINK_INACTIVE); re-granted → it resumes.
+    // Default links are NOT touched — their gate is subscriptions.isActive above.
+    // Same fail-safe as is_active: null caps (transient outage) skips to avoid
+    // flapping; the ne() guard makes already-matching rows a no-op.
+    if (caps !== null) {
+      await db
+        .update(calendarLinks)
+        .set({ isActive: caps.share, updatedAt: new Date().toISOString() })
+        .where(and(
+          eq(calendarLinks.subscriptionId, sub.id),
+          eq(calendarLinks.isDefault, false),
+          ne(calendarLinks.isActive, caps.share),
+        ));
     }
 
     // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部

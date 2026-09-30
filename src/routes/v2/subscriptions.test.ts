@@ -179,6 +179,7 @@ beforeAll(async () => {
       formats text NOT NULL,
       personal_view_type text,
       is_default integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -1342,6 +1343,32 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(row.isActive).toBe(false);
     // Quota counter untouched.
     expect(await env.CACHE.get(`refresh:userA:${dayKey()}`)).toBeNull();
+  });
+
+  it("manual refresh with caps.share=false reconciles non-default links inactive (default untouched)", async () => {
+    // issue #89: revoking share must reclaim EXISTING links, not just block new
+    // ones. The reconcile runs before any short-circuit, so the public link 403s
+    // immediately instead of waiting for the hourly cron.
+    const sid = await insertSub("userA");
+    await insertLink(sid, { token: "share-link", isDefault: false });
+    await insertLink(sid, { token: "default-link", isDefault: true });
+    const app = buildSyncApp("userA", capsWith({ share: false }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    const rows = await db.select().from(calendarLinks);
+    const byToken = new Map(rows.map((row) => [row.token, row.isActive]));
+    expect(byToken.get("share-link")).toBe(false);
+    expect(byToken.get("default-link")).toBe(true);
+  });
+
+  it("manual refresh with caps.share restored reactivates reconciled links", async () => {
+    const sid = await insertSub("userA");
+    await insertLink(sid, { token: "revived", isDefault: false, isActive: false });
+    const app = buildSyncApp("userA"); // FULL_CAPS → share regained
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    const [row] = await db.select().from(calendarLinks).where(eq(calendarLinks.token, "revived"));
+    expect(row.isActive).toBe(true);
   });
 
   it("returns 429 when the daily manual_refresh quota is exhausted", async () => {

@@ -180,6 +180,16 @@ export const calendarLinks = sqliteTable(
     formats: text("formats").notNull(),
     personalViewType: text("personal_view_type").$type<PersonalViewType>(),
     isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    /**
+     * Whether this link may serve publicly. Reconciled from caps.share for
+     * NON-DEFAULT links by the cron producer and manual refresh (mirrors
+     * subscriptions.isActive): revoked share → inactive (public 403
+     * LINK_INACTIVE), re-granted → active again. Default links are never
+     * reconciled here; their serving gate is the subscription's isActive.
+     */
+    isActive: integer("is_active", { mode: "boolean" })
+      .notNull()
+      .default(true),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

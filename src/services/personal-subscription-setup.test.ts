@@ -87,6 +87,7 @@ beforeAll(async () => {
     formats text NOT NULL,
     personal_view_type text,
     is_default integer NOT NULL DEFAULT 0,
+    is_active integer NOT NULL DEFAULT 1,
     created_at text NOT NULL,
     updated_at text NOT NULL
   )`).run();

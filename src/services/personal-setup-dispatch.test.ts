@@ -61,7 +61,8 @@ beforeAll(async () => {
     subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     token text NOT NULL UNIQUE, label text, formats text NOT NULL,
     personal_view_type text,
-    is_default integer NOT NULL DEFAULT 0, created_at text NOT NULL, updated_at text NOT NULL
+    is_default integer NOT NULL DEFAULT 0, is_active integer NOT NULL DEFAULT 1,
+    created_at text NOT NULL, updated_at text NOT NULL
   )`).run();
   await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
     user_id TEXT PRIMARY KEY NOT NULL,
