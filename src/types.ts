@@ -24,7 +24,6 @@ export interface Env {
   AUTH: import("./services/auth-rpc").AuthService;
 
   // Secrets
-  ADMIN_SECRET: string;
   /** OAuth client id of this app's auth client (auth auto-generates it, e.g.
    *  "YKJBemj…"; NOT the literal "calendar"). Used as clientId in AUTH RPC calls. */
   CALENDAR_CLIENT_ID: string;
