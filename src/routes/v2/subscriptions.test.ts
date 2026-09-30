@@ -788,6 +788,20 @@ describe("DELETE /api/v2/subscriptions/:sid", () => {
       .where(eq(subscriptions.id, subId));
     expect(still).toHaveLength(1);
   });
+
+  it("clears the user's harvest KV cache on delete (issue #97)", async () => {
+    const app = buildApp("userA");
+    const id = await insertSub("userA", {
+      sourceType: "course",
+      sourceId: "external-course",
+      isPersonal: false,
+    });
+    await env.CACHE.put("harvest:direct-v1:userA", JSON.stringify({ cached: true }));
+
+    const res = await app.request(`/${id}`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+    expect(await env.CACHE.get("harvest:direct-v1:userA")).toBeNull();
+  });
 });
 
 // ── E2: GET /:sid/links and /:sid/links/:lid ─────────────────────────────────

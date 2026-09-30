@@ -38,6 +38,7 @@ import {
   ManualRefreshCooldownError,
   requestPersonalSync,
 } from "../../services/personal-subscription-sync";
+import { clearHarvestCache } from "../../services/cqu-harvest";
 
 const app = new Hono<SessionEnv>();
 
@@ -582,6 +583,9 @@ app.delete("/:sid", async (c) => {
     c.env.DB.prepare("DELETE FROM subscriptions WHERE id=? AND user_id=?")
       .bind(sub.id, user.id),
   ]);
+  // The per-user harvest cache (KV, 10 min TTL) outlives the subscription unless
+  // cleared here — best-effort, the delete above already succeeded (issue #97).
+  await clearHarvestCache(c.env, user.id);
 
   console.log(
     JSON.stringify({
