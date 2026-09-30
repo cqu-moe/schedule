@@ -5,8 +5,15 @@ import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+import { JSDOM } from 'jsdom'
 import posthog from '@posthog/rollup-plugin'
 import { themeInitScript } from '@cqu-moe/theme'
+
+export function renderChangelogHtml(markdown: string): string {
+  const purify = DOMPurify(new JSDOM('').window)
+  return purify.sanitize(marked.parse(markdown, { async: false }))
+}
 
 export default defineConfig(async () => {
   const plugins: PluginOption[] = [
@@ -47,7 +54,7 @@ export default defineConfig(async () => {
         JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf-8')).version
       ),
       __CHANGELOG_HTML__: JSON.stringify(
-        marked.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8'), { async: false })
+        renderChangelogHtml(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8'))
       ),
     },
     resolve: {

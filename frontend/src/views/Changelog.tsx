@@ -6,7 +6,7 @@ export default function Changelog() {
   return (
     <div style={{ maxWidth: '48rem' }}>
       <PageHeader title="更新日志" description="版本更新记录" />
-      {/* Build-time generated from CHANGELOG.md, same trust level as the previous v-html. */}
+      {/* Build-time generated from CHANGELOG.md and sanitized with DOMPurify. */}
       <div className="markdown-content" dangerouslySetInnerHTML={{ __html: changelogHtml }} />
     </div>
   )
