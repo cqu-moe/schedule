@@ -125,13 +125,7 @@ export function generateFormattedEvents(
 }
 
 function sanitizeCsvValue(value: string): string {
-  if (
-    value &&
-    (value[0] === "=" ||
-      value[0] === "+" ||
-      value[0] === "-" ||
-      value[0] === "@")
-  ) {
+  if (/^[=+\-@\t\r]/.test(value)) {
     return `'${value}`;
   }
   return value;
@@ -163,4 +157,3 @@ export function generateCsv(events: FormattedEvent[]): string {
 
   return BOM + lines.join("\r\n");
 }
-
