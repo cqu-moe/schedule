@@ -1200,6 +1200,36 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(result.affected_subscription_ids.sort()).toEqual(owner.viewIds.sort());
   });
 
+  describe.each(["personal", "view"] as const)("%s refresh share reconciliation", (endpoint) => {
+    it.each([
+      { share: false, sync: true, binding: "active", status: 202 },
+      { share: true, sync: true, binding: "active", status: 202 },
+      { share: false, sync: false, binding: "active", status: 403 },
+      { share: true, sync: true, binding: null, status: 503 },
+    ] as const)("reconciles share=$share before returning $status", async ({ share, sync, binding, status }) => {
+      const owner = await insertCanonicalPersonal("userA");
+      const other = await insertCanonicalPersonal("userB");
+      await env.DB.prepare("UPDATE subscriptions SET manual_refresh_at=NULL WHERE id=?")
+        .bind(owner.id).run();
+      const linkId = await insertLink(owner.id, {
+        personalViewType: "personal_all", isActive: !share,
+      });
+      const otherLinkId = await insertLink(other.id, {
+        personalViewType: "personal_all", isActive: !share,
+      });
+      const app = buildApp("userA", capsWith({ share, sync }), binding, env.DB, "enabled");
+      const path = endpoint === "personal" ? "/personal/syncs" : `/${owner.viewIds[0]}/syncs`;
+
+      const response = await app.request(path, { method: "POST" });
+
+      expect(response.status).toBe(status);
+      const links = await db.select().from(calendarLinks);
+      expect(links.find(link => link.id === linkId)?.isActive).toBe(share);
+      expect(links.find(link => link.id === otherLinkId)?.isActive).toBe(!share);
+      expect(links.filter(link => link.isDefault).every(link => link.isActive)).toBe(true);
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
