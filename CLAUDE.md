@@ -131,10 +131,9 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - `src/db/schema.ts` — Drizzle ORM 表定义 (users, subscriptions)；还导出 `SourceType` union、`PERSONAL_SOURCE_TYPES`/`EXPLORE_SOURCE_TYPES` 集合；`sourceType` 列用 `.$type<SourceType>()` 让 Drizzle 推断正确类型
 - `src/services/` — 核心服务 (crypto, cqu-api, ics, export, auth, captcha, sync)
 - `src/middleware/` — 中间件 (auth, rate-limit, security-headers)
-- `src/routes/` — API 路由 (config, users, subscriptions, explore, admin)
+- `src/routes/` — API 路由 (config, users, subscriptions, explore)
 - `src/routes/config.ts` — 配置路由 (health check, merged config, captcha)
 - `src/routes/config.test.ts` — config 路由测试 (health, merged config, captcha compat)
-- `src/routes/admin.ts` — 管理端点 (Bearer token auth middleware + personal-subscription-migration)
 - `src/routes/validation.test.ts` — 输入验证测试
 - `src/cron/` — 定时任务 producer + queue consumer (token-refresh, schedule-sync)
 - `src/types/` — 类型声明补充 (headers.d.ts: Workers runtime API 类型)

@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./types";
 import configRoutes from "./routes/config";
-import adminRoutes from "./routes/admin";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
 import { rateLimit } from "./middleware/rate-limit";
@@ -66,10 +65,8 @@ app.use(
 );
 
 // Mount routes (v2 topology①: everything lives under /api/v2; /api/v1 is gone).
-// config (health + config) and admin keep their own auth: config is public,
-// admin uses its own ADMIN_SECRET bearer middleware (NOT sessionMiddleware).
+// config (health + config) is public.
 app.route("/api/v2", configRoutes);
-app.route("/api/v2/admin", adminRoutes);
 
 // v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
 // the AUTH service binding before exposing the current user's subscriptions.
