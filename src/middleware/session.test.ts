@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
-import { sessionMiddleware, type SessionEnv } from "./session";
+import { sessionMiddleware, CAPS_TTL, type SessionEnv } from "./session";
 import type { AuthService, VerifiedSession } from "../services/auth-rpc";
 
 const VALID_SESSION: VerifiedSession = {
@@ -55,11 +55,27 @@ describe("sessionMiddleware", () => {
 
   it("caches caps to KV under caps:<userId> when session is valid", async () => {
     const app = buildApp(fakeAuth(VALID_SESSION));
-    const res = await app.request();
+    // Record the TTL the middleware actually writes — it is the first term of
+    // the documented revocation SLO (10min; issue #87 decision doc).
+    const putTtls: number[] = [];
+    const recordingCache = Object.create(env.CACHE) as typeof env.CACHE;
+    recordingCache.put = (key, value, opts) => {
+      if (key.startsWith("caps:") && typeof opts?.expirationTtl === "number") {
+        putTtls.push(opts.expirationTtl);
+      }
+      return env.CACHE.put(key, value, opts);
+    };
+    const res = await app.request({
+      ...env,
+      AUTH: fakeAuth(VALID_SESSION),
+      CACHE: recordingCache,
+    });
     expect(res.status).toBe(200);
 
     const cached = await env.CACHE.get(`caps:${VALID_SESSION.user.id}`);
     expect(cached).not.toBeNull();
     expect(JSON.parse(cached!)).toEqual(VALID_SESSION.caps.calendar);
+    expect(CAPS_TTL).toBe(600);
+    expect(putTtls).toEqual([CAPS_TTL]);
   });
 });

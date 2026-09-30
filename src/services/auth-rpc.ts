@@ -11,7 +11,7 @@ export interface CalendarCaps {
   change_notification: boolean;
   sub_limit: number | null; // null = 无限
   share_limit: number | null;
-  sync_interval: number | null; // 分钟；自动同步由每小时 cron 驱动，故 1h 是有效下限，<60 实际等同每小时（非分钟级）
+  sync_interval: number | null; // 分钟；自动同步由 15 分钟 cron 驱动，故 15min 是有效下限，<15 实际等同每 15 分钟
   manual_refresh: number | null; // 次/天
 }
 

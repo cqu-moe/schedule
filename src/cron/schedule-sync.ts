@@ -10,6 +10,7 @@ import {
 } from "../db/schema";
 import type { Env } from "../types";
 import type { CalendarCaps } from "../services/auth-rpc";
+import { CAPS_TTL } from "../middleware/session";
 import { spreadEnqueue, SpreadEnqueueError } from "../utils/queue";
 import { fetchPersonalHarvest, HarvestError } from "../services/cqu-harvest";
 import {
@@ -60,8 +61,8 @@ export interface ScheduleSyncMessage {
   userId: string;
   /**
    * What enqueued this message. `"cron"` messages are re-checked for due-ness in
-   * the consumer — the hourly producer spreads each due batch over
-   * {@link SYNC_SPREAD_SECONDS} (> the 1h cron period), so intervening cron runs
+   * the consumer — the producer spreads each due batch over
+   * {@link SYNC_SPREAD_SECONDS} (> the 15min cron period), so intervening cron runs
    * re-enqueue subscriptions whose delayed message has not executed yet.
    * `"manual"` (user refresh), `"initial"` (just-created subscription), and
    * legacy/undefined always sync, bypassing the due re-check.
@@ -74,18 +75,15 @@ export interface ScheduleSyncMessage {
 /** Default sync interval (minutes) when caps are missing/unparseable. */
 const DEFAULT_SYNC_INTERVAL_MINUTES = 1440;
 
-/** TTL (seconds) for the caps:<userId> KV cache; mirrors the session middleware. */
-const CAPS_CACHE_TTL_SECONDS = 3600;
-
 /**
  * Spread window (seconds) over which to scatter enqueued sync messages, AND the
- * hard per-message delay cap. Set to the 1h cron period so each batch is fully
- * delivered before the next hourly run — spreading beyond the cron period would
+ * hard per-message delay cap. Set to the cron period (15min) so each batch is
+ * fully delivered before the next run — spreading beyond the cron period would
  * re-enqueue not-yet-executed subscriptions every intervening run (the source of
  * the duplicate-sync churn; the consumer's due re-check is the backstop, staying
- * within 1h avoids the churn entirely).
+ * within the period avoids the churn entirely).
  */
-const SYNC_SPREAD_SECONDS = 3600;
+const SYNC_SPREAD_SECONDS = 900;
 const SYNC_RETRY_DELAYS_SECONDS = [30, 120, 300] as const;
 
 type SyncTerminal = {
@@ -164,11 +162,10 @@ async function markTerminalSuccess(
  * default is used. A subscription is due when it has never synced (`lastSyncedAt`
  * null) or `now - lastSyncedAt >= interval`.
  *
- * NOTE: this producer only runs on the hourly cron, so the cron period (1h) is
- * the hard FLOOR on effective auto-refresh frequency. `sync_interval` therefore
- * only differentiates tiers at or above 1h (hourly / 6h / daily…); any value
- * below 60 min still resolves to once per hour — it does NOT yield sub-hourly
- * refresh. Genuine sub-hourly refresh would require a higher-frequency cron.
+ * NOTE: the cron runs every 15 minutes, so the cron period (15min) is the hard
+ * FLOOR on effective auto-refresh frequency. Successful syncs respect each
+ * user's sync_interval; failed runs can restart at most once per hour. The
+ * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
@@ -249,7 +246,7 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
 
     // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部
     // 课表的 harvest 路径(该能力已在本 PR 移除),外部订阅永不入队同步。若仍入队,
-    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 hourly cron 又因"due"重新入队
+    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 cron 又因"due"重新入队
     // → 永不停止的空转入队 + 日志刷屏。放在 is_active 对账之后,故被吊销 external 权益
     // 的外部订阅仍会被对账成 inactive(吊销照常生效),只是不入队。EXTERNAL_DISABLED
     // 不参与此处判断,仅控制面向用户的提示/守卫。
@@ -257,6 +254,9 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
+
+    // Preserve the hourly failure-retry floor while reconciling caps every 15min.
+    if (sub.syncStatus === "error" && !isDue(sub.syncRequestedAt, 60, now)) continue;
 
     const activeRunAge = sub.syncRequestedAt ? now - Date.parse(sub.syncRequestedAt) : Infinity;
     const hasActiveRun = (sub.syncStatus === "queued" || sub.syncStatus === "running")
@@ -298,7 +298,7 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       (m) => ({ body: m }),
       SYNC_SPREAD_SECONDS,
       10,
-      SYNC_SPREAD_SECONDS, // hard-cap every delay at 1h so nothing spills past the next cron
+      SYNC_SPREAD_SECONDS, // hard-cap every delay at the cron period so nothing spills past the next run
     );
   } catch (error) {
     const enqueued = error instanceof SpreadEnqueueError ? error.enqueued : 0;
@@ -330,7 +330,7 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
  * Read a user's calendar caps for offline (cron) scheduling + entitlement.
  *
  * Fast path: the `caps:<userId>` KV entry written by the session middleware on
- * login. On a cache miss (the 1h caps TTL expired while the user was inactive)
+ * login. On a cache miss (the 10min caps TTL expired while the user was inactive)
  * refresh from the auth RPC ({@link AuthService.getCaps}) and re-cache, so a
  * configured short interval (and a revoked flag) keep being honored offline.
  * Returns `null` only when no caps are resolvable at all.
@@ -351,7 +351,7 @@ async function readCaps(env: Env, userId: string): Promise<CalendarCaps | null> 
     });
     if (caps?.calendar) {
       await env.CACHE.put(`caps:${userId}`, JSON.stringify(caps.calendar), {
-        expirationTtl: CAPS_CACHE_TTL_SECONDS,
+        expirationTtl: CAPS_TTL,
       }).catch(() => {});
       return caps.calendar;
     }
@@ -593,8 +593,8 @@ export async function processScheduleSyncBatch(
           return;
         }
 
-        // Idempotency guard for cron-triggered syncs: the hourly producer spreads
-        // each due batch over SYNC_SPREAD_SECONDS (> the 1h cron period), so
+        // Idempotency guard for cron-triggered syncs: the producer spreads
+        // each due batch over SYNC_SPREAD_SECONDS (> the 15min cron period), so
         // intervening cron runs re-enqueue a subscription whose delayed message
         // has not executed yet. Re-check due-ness here so only the first delivery
         // syncs and later duplicates no-op — preventing a subscription from being

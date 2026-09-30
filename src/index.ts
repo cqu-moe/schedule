@@ -143,7 +143,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     switch (controller.cron) {
-      case "0 * * * *":
+      case "*/15 * * * *":
         await enqueueScheduleSync(env, ctx);
         captureScheduleEvent(env, ctx, "service_heartbeat", crypto.randomUUID(), {
           trigger: "cron",

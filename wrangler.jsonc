@@ -118,11 +118,12 @@
   ],
 
   // Cron Triggers
-  // "0 * * * *" 每小时挑选到期订阅入队 schedule-sync（按各用户 caps.sync_interval 档位）。
+  // "*/15 * * * *" 每 15 分钟对账权限并挑选到期订阅；失败任务至少隔 1h 才自动重试。
+  // issue #87：AUTH 返回明确 caps 时 is_active 翻转 ≤25min；null 的例外见 SLO 文档。
   // 修改此表达式时须同步 src/index.ts scheduled switch 的 case（见 CLAUDE.md）。
   "triggers": {
     "crons": [
-      "0 * * * *"
+      "*/15 * * * *"
     ]
   }
 }
