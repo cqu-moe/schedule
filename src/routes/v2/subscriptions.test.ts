@@ -179,6 +179,7 @@ beforeAll(async () => {
       formats text NOT NULL,
       personal_view_type text,
       is_default integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -1199,6 +1200,36 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(result.affected_subscription_ids.sort()).toEqual(owner.viewIds.sort());
   });
 
+  describe.each(["personal", "view"] as const)("%s refresh share reconciliation", (endpoint) => {
+    it.each([
+      { share: false, sync: true, binding: "active", status: 202 },
+      { share: true, sync: true, binding: "active", status: 202 },
+      { share: false, sync: false, binding: "active", status: 403 },
+      { share: true, sync: true, binding: null, status: 503 },
+    ] as const)("reconciles share=$share before returning $status", async ({ share, sync, binding, status }) => {
+      const owner = await insertCanonicalPersonal("userA");
+      const other = await insertCanonicalPersonal("userB");
+      await env.DB.prepare("UPDATE subscriptions SET manual_refresh_at=NULL WHERE id=?")
+        .bind(owner.id).run();
+      const linkId = await insertLink(owner.id, {
+        personalViewType: "personal_all", isActive: !share,
+      });
+      const otherLinkId = await insertLink(other.id, {
+        personalViewType: "personal_all", isActive: !share,
+      });
+      const app = buildApp("userA", capsWith({ share, sync }), binding, env.DB, "enabled");
+      const path = endpoint === "personal" ? "/personal/syncs" : `/${owner.viewIds[0]}/syncs`;
+
+      const response = await app.request(path, { method: "POST" });
+
+      expect(response.status).toBe(status);
+      const links = await db.select().from(calendarLinks);
+      expect(links.find(link => link.id === linkId)?.isActive).toBe(share);
+      expect(links.find(link => link.id === otherLinkId)?.isActive).toBe(!share);
+      expect(links.filter(link => link.isDefault).every(link => link.isActive)).toBe(true);
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -1342,6 +1373,32 @@ describe("POST /api/v2/subscriptions/:sid/syncs", () => {
     expect(row.isActive).toBe(false);
     // Quota counter untouched.
     expect(await env.CACHE.get(`refresh:userA:${dayKey()}`)).toBeNull();
+  });
+
+  it("manual refresh with caps.share=false reconciles non-default links inactive (default untouched)", async () => {
+    // issue #89: revoking share must reclaim EXISTING links, not just block new
+    // ones. The reconcile runs before any short-circuit, so the public link 403s
+    // immediately instead of waiting for the hourly cron.
+    const sid = await insertSub("userA");
+    await insertLink(sid, { token: "share-link", isDefault: false });
+    await insertLink(sid, { token: "default-link", isDefault: true });
+    const app = buildSyncApp("userA", capsWith({ share: false }));
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    const rows = await db.select().from(calendarLinks);
+    const byToken = new Map(rows.map((row) => [row.token, row.isActive]));
+    expect(byToken.get("share-link")).toBe(false);
+    expect(byToken.get("default-link")).toBe(true);
+  });
+
+  it("manual refresh with caps.share restored reactivates reconciled links", async () => {
+    const sid = await insertSub("userA");
+    await insertLink(sid, { token: "revived", isDefault: false, isActive: false });
+    const app = buildSyncApp("userA"); // FULL_CAPS → share regained
+    const res = await app.request(`/${sid}/syncs`);
+    expect(res.status).toBe(202);
+    const [row] = await db.select().from(calendarLinks).where(eq(calendarLinks.token, "revived"));
+    expect(row.isActive).toBe(true);
   });
 
   it("returns 429 when the daily manual_refresh quota is exhausted", async () => {

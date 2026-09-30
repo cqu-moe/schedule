@@ -54,6 +54,13 @@ export async function requestPersonalSync(
       "个人课表尚未完成升级",
     );
   }
+  // Both personal refresh routes reconcile share access before refresh can be denied.
+  await env.DB.prepare(`UPDATE calendar_links SET is_active=?,updated_at=?
+    WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id=? AND source_type='personal')
+      AND is_default=0 AND is_active<>?`)
+    .bind(Number(caps.share), new Date().toISOString(), userId, Number(caps.share))
+    .run();
+
   if (!caps.sync) {
     await env.DB.prepare(`UPDATE subscriptions SET is_active=0,updated_at=?
       WHERE user_id=? AND source_type='personal'`)

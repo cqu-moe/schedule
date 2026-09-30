@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vite
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { subscriptions } from "../db/schema";
+import { subscriptions, calendarLinks } from "../db/schema";
 import {
   enqueueScheduleSync,
   processScheduleSyncBatch,
@@ -46,6 +46,17 @@ beforeAll(async () => {
       updated_at text NOT NULL
     )`,
   ).run();
+  await env.DB.prepare(
+    `CREATE TABLE calendar_links (
+      id text PRIMARY KEY NOT NULL,
+      subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+      token text NOT NULL UNIQUE, label text, formats text NOT NULL,
+      personal_view_type text,
+      is_default integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
+      created_at text NOT NULL, updated_at text NOT NULL
+    )`,
+  ).run();
   await env.DB.prepare("DROP TABLE IF EXISTS notification_state").run();
   await env.DB.prepare(
     `CREATE TABLE notification_state (
@@ -73,6 +84,7 @@ const FULL_CAPS = {
 
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
+  await env.DB.prepare("DELETE FROM calendar_links").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
   await env.DB.prepare("DELETE FROM notification_state").run();
   // Clear any cached student IDs so each test resolves from its own bearer.
@@ -99,6 +111,25 @@ async function insertSub(
     sourceType: "personal_all",
     sourceId: "20210001",
     sourceName: "我的课表",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  return id;
+}
+
+/** Insert a calendar_links fixture directly into D1. */
+async function insertLink(
+  subscriptionId: string,
+  overrides: Partial<typeof calendarLinks.$inferInsert> = {},
+): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(calendarLinks).values({
+    id,
+    subscriptionId,
+    token: `tok-${id}`,
+    formats: JSON.stringify(["ics"]),
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -375,6 +406,36 @@ describe("enqueueScheduleSync (producer)", () => {
 
     const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
     expect(row.isActive).toBe(true);
+  });
+
+  it("reconciles non-default links is_active → false when caps.share is revoked (default untouched)", async () => {
+    // issue #89: revoking share reclaims EXISTING links via the hourly producer.
+    const sid = await insertSub({ userId: "user-share-rev", isActive: true, lastSyncedAt: null });
+    const shareLid = await insertLink(sid, { isDefault: false });
+    const defaultLid = await insertLink(sid, { isDefault: true });
+    await env.CACHE.put(
+      "caps:user-share-rev",
+      JSON.stringify({ ...FULL_CAPS, share: false }),
+    );
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+    await env.CACHE.delete("caps:user-share-rev");
+
+    const rows = await db.select().from(calendarLinks);
+    const byId = new Map(rows.map((row) => [row.id, row.isActive]));
+    expect(byId.get(shareLid)).toBe(false);
+    expect(byId.get(defaultLid)).toBe(true);
+  });
+
+  it("leaves link is_active untouched when caps are unresolvable (no flap)", async () => {
+    const sid = await insertSub({ userId: "user-link-nocaps", isActive: true, lastSyncedAt: null });
+    const lid = await insertLink(sid, { isDefault: false, isActive: false });
+    await env.CACHE.delete("caps:user-link-nocaps");
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await enqueueScheduleSync({ ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env);
+
+    const [row] = await db.select().from(calendarLinks).where(eq(calendarLinks.id, lid));
+    expect(row.isActive).toBe(false);
   });
 
   it("fails closed: does NOT enqueue when caps are unresolvable (null)", async () => {

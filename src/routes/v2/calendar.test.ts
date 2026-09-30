@@ -154,6 +154,7 @@ beforeAll(async () => {
       formats text NOT NULL,
       personal_view_type text,
       is_default integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
       created_at text NOT NULL,
       updated_at text NOT NULL
     )`,
@@ -219,6 +220,30 @@ describe("default (all-format) link", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { detail: { error: { code: string } } };
     expect(body.detail.error.code).toBe("SUBSCRIPTION_INACTIVE");
+  });
+
+  it("GET /:token/calendar.ics → 403 LINK_INACTIVE when a non-default link was reconciled inactive (share revoked)", async () => {
+    const sid = await insertSub();
+    const token = await insertLink(sid, [...LINK_FORMATS], {
+      token: "share-revoked",
+      isDefault: false,
+      isActive: false,
+    });
+    const res = await buildApp().request(`/${token}/calendar.ics`);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("LINK_INACTIVE");
+  });
+
+  it("GET /:token/calendar.ics → 200 for a DEFAULT link regardless of link is_active (gated by the subscription)", async () => {
+    const sid = await insertSub();
+    const token = await insertLink(sid, [...LINK_FORMATS], {
+      token: "default-link-state",
+      isDefault: true,
+      isActive: false,
+    });
+    const res = await buildApp().request(`/${token}/calendar.ics`);
+    expect(res.status).toBe(200);
   });
 
   it("GET /:token/calendar.ics → EMPTY_ICS when icsContent is null", async () => {

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, desc, asc, sql, inArray, isNull, lte, or } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import {
   subscriptions,
   calendarLinks,
@@ -54,6 +54,7 @@ interface LinkSummaryRow {
   label: string | null;
   formats: string;
   isDefault: boolean;
+  isActive: boolean;
 }
 function toLinkSummary(link: LinkSummaryRow) {
   let formats: string[];
@@ -68,6 +69,7 @@ function toLinkSummary(link: LinkSummaryRow) {
     label: link.label,
     formats,
     is_default: link.isDefault,
+    is_active: link.isActive,
   };
 }
 
@@ -538,6 +540,7 @@ app.post("/", async (c) => {
           label: null,
           formats: formatsJson,
           isDefault: true,
+          isActive: true,
         }),
       ],
     },
@@ -689,6 +692,20 @@ app.post("/:sid/syncs", async (c) => {
       .set({ isActive: true, updatedAt: new Date().toISOString() })
       .where(eq(subscriptions.id, sid));
   }
+
+  // Share-cap link reconcile (issue #89): follow the CONFIRMED caps.share for
+  // this subscription's non-default links — revoked stops them serving (public
+  // 403 LINK_INACTIVE), re-granted resumes them. Mirrors the is_active reconcile
+  // above (runs before any 403/503 short-circuit); default links are the
+  // subscription's own delivery channel and stay governed by isActive.
+  await db
+    .update(calendarLinks)
+    .set({ isActive: caps.share, updatedAt: new Date().toISOString() })
+    .where(and(
+      eq(calendarLinks.subscriptionId, sid),
+      eq(calendarLinks.isDefault, false),
+      ne(calendarLinks.isActive, caps.share),
+    ));
 
   // 外部订阅软禁用:停止接受外部订阅的手动刷新(不入队、不消耗配额、不暴露 WAF)。
   // 已有数据保持冻结。个人订阅照常。放在 is_active 对账之后:被吊销 external 权益的
@@ -1034,7 +1051,14 @@ app.post("/:sid/links", async (c) => {
   );
 
   return c.json(
-    toLinkSummary({ id: linkId, token, label, formats: formatsJson, isDefault: false }),
+    toLinkSummary({
+      id: linkId,
+      token,
+      label,
+      formats: formatsJson,
+      isDefault: false,
+      isActive: true,
+    }),
     201,
     { Location: `/api/v2/subscriptions/${sid}/links/${linkId}` },
   );
@@ -1112,6 +1136,7 @@ app.patch("/:sid/links/:lid", async (c) => {
       label: updates.label !== undefined ? (updates.label ?? null) : link.label,
       formats: updates.formats ?? link.formats,
       isDefault: link.isDefault,
+      isActive: link.isActive,
     }),
   );
 });

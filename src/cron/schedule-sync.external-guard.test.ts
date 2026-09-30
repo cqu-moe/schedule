@@ -46,6 +46,17 @@ beforeAll(async () => {
       created_at text NOT NULL, updated_at text NOT NULL
     )`,
   ).run();
+  await env.DB.prepare(
+    `CREATE TABLE calendar_links (
+      id text PRIMARY KEY NOT NULL,
+      subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+      token text NOT NULL UNIQUE, label text, formats text NOT NULL,
+      personal_view_type text,
+      is_default integer NOT NULL DEFAULT 0,
+      is_active integer NOT NULL DEFAULT 1,
+      created_at text NOT NULL, updated_at text NOT NULL
+    )`,
+  ).run();
   await env.DB.prepare(`CREATE TABLE personal_subscription_setup (
     user_id TEXT PRIMARY KEY NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('created','existing')),
@@ -58,6 +69,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM personal_subscription_setup").run();
+  await env.DB.prepare("DELETE FROM calendar_links").run();
   await env.DB.prepare("DELETE FROM subscriptions").run();
   await env.CACHE.put("caps:user-1", JSON.stringify(FULL_CAPS));
 });

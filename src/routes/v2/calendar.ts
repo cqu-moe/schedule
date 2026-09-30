@@ -34,6 +34,8 @@ const app = new Hono<{ Bindings: Env }>();
 interface ResolvedLink {
   formats: string;
   isActive: boolean;
+  isDefault: boolean;
+  linkIsActive: boolean;
   icsContent: string | null;
   coursesJson: string | null;
   examsJson: string | null;
@@ -56,6 +58,8 @@ async function resolveLink(
     .select({
       formats: calendarLinks.formats,
       isActive: subscriptions.isActive,
+      isDefault: calendarLinks.isDefault,
+      linkIsActive: calendarLinks.isActive,
       icsContent: subscriptions.icsContent,
       coursesJson: subscriptions.coursesJson,
       examsJson: subscriptions.examsJson,
@@ -85,6 +89,12 @@ async function resolveLinkOr404(
   // Hard revocation: the owner's required calendar cap was revoked → the cron
   // producer / manual refresh flipped is_active false. Stop serving the link.
   if (!link.isActive) return errorResponse("SUBSCRIPTION_INACTIVE", "该订阅已停用", 403);
+  // Share revocation (issue #89): the owner lost caps.share → the cron producer /
+  // manual refresh reconciled non-default links inactive. Default links keep
+  // serving; their gate is the subscription isActive check above.
+  if (!link.isDefault && !link.linkIsActive) {
+    return errorResponse("LINK_INACTIVE", "该链接已停用", 403);
+  }
   const view = link.sourceType === "personal" ? link.personalViewType : null;
   if (link.sourceType === "personal" && !view) {
     return errorResponse("NOT_FOUND", "链接不存在", 404);
