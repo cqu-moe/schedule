@@ -96,6 +96,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -295,6 +296,36 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
+  it.each(["personal", "personal_all"] as const)("retries failed %s syncs no more than hourly", async (sourceType) => {
+    await insertSub({ sourceType, sourceId: "user-1", lastSyncedAt: null });
+    const harvest = vi.spyOn(harvestModule, "fetchPersonalHarvest")
+      .mockRejectedValue(new HarvestError("NEEDS_REAUTH"));
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = {
+      ...env,
+      PERSONAL_SUBSCRIPTION_MODE: sourceType === "personal" ? "enabled" : "legacy",
+      SCHEDULE_SYNC_QUEUE: { sendBatch },
+    } as unknown as Env;
+    const start = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"] });
+
+    for (const minutes of [0, 15, 30, 45, 59, 60]) {
+      vi.setSystemTime(start + minutes * 60_000);
+      await enqueueScheduleSync(testEnv);
+      expect(sendBatch).toHaveBeenCalledTimes(minutes < 60 ? 1 : 2);
+      if (minutes === 0 || minutes === 60) {
+        const queued = sendBatch.mock.calls.at(-1)![0] as { body: ScheduleSyncMessage }[];
+        const { batch, messages } = makeBatch(queued.map((entry) => entry.body));
+        await processScheduleSyncBatch(batch, testEnv);
+        expect(messages[0].ack).toHaveBeenCalledOnce();
+        const [row] = await db.select().from(subscriptions);
+        expect(row.syncStatus).toBe("error");
+        expect(row.lastSyncedAt).toBeNull();
+      }
+    }
+    expect(harvest).toHaveBeenCalledTimes(2);
+  });
+
   it("enqueues subscriptions past the default interval", async () => {
     // Synced 2 days ago → past default 24h interval → due.
     const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -371,7 +402,10 @@ describe("enqueueScheduleSync (producer)", () => {
   });
 
   it("reconciles is_active → false when the cap is revoked", async () => {
-    const sid = await insertSub({ userId: "user-rev2", isActive: true, lastSyncedAt: null });
+    const sid = await insertSub({
+      userId: "user-rev2", isActive: true, lastSyncedAt: null,
+      syncStatus: "error", syncRequestedAt: new Date().toISOString(),
+    });
     await env.CACHE.put(
       "caps:user-rev2",
       JSON.stringify({

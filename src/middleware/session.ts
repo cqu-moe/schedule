@@ -23,8 +23,9 @@ export type SessionEnv = {
 /**
  * TTL (seconds) for the caps:<userId> KV cache. First half of the revocation
  * SLO (issue #87): a stale entry lives at most 10min and the reconcile cron
- * runs every 15min, so is_active flips within ~25min of revocation (public
- * links within ~30min incl. the 5min edge cache). See
+ * runs every 15min. When AUTH returns explicit calendar caps, is_active flips
+ * within ~25min (public links ~30min incl. edge cache). Null/error responses
+ * have no finite revocation bound; see
  * docs/decisions/2026-09-30-caps-revocation-slo.md.
  */
 export const CAPS_TTL = 600;

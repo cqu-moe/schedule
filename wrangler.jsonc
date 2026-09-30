@@ -118,8 +118,8 @@
   ],
 
   // Cron Triggers
-  // "*/15 * * * *" 每 15 分钟运行：挑选到期订阅入队（caps.sync_interval 档位均 ≥60min，
-  // due-gating 保证不会多入队）+ 对账撤销的 is_active（issue #87 SLO：翻转 ≤25min）。
+  // "*/15 * * * *" 每 15 分钟对账权限并挑选到期订阅；失败任务至少隔 1h 才自动重试。
+  // issue #87：AUTH 返回明确 caps 时 is_active 翻转 ≤25min；null 的例外见 SLO 文档。
   // 修改此表达式时须同步 src/index.ts scheduled switch 的 case（见 CLAUDE.md）。
   "triggers": {
     "crons": [

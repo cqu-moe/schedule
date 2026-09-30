@@ -163,10 +163,9 @@ async function markTerminalSuccess(
  * null) or `now - lastSyncedAt >= interval`.
  *
  * NOTE: the cron runs every 15 minutes, so the cron period (15min) is the hard
- * FLOOR on effective auto-refresh frequency. All documented sync_interval tiers
- * (student preset 360min) sit far above it, so due-gating keeps enqueue volume
- * unchanged by the faster cadence — the cadence exists for the revocation
- * reconcile (issue #87), not for faster syncs.
+ * FLOOR on effective auto-refresh frequency. Successful syncs respect each
+ * user's sync_interval; failed runs can restart at most once per hour. The
+ * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
@@ -255,6 +254,9 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
+
+    // Preserve the hourly failure-retry floor while reconciling caps every 15min.
+    if (sub.syncStatus === "error" && !isDue(sub.syncRequestedAt, 60, now)) continue;
 
     const activeRunAge = sub.syncRequestedAt ? now - Date.parse(sub.syncRequestedAt) : Infinity;
     const hasActiveRun = (sub.syncStatus === "queued" || sub.syncStatus === "running")
