@@ -358,3 +358,16 @@ async function writeHarvestCache(env: Env, key: string, value: CachedHarvest): P
     /* best-effort: harvest already succeeded; a cache write failure is non-fatal */
   }
 }
+
+/** Best-effort per-user harvest cache clear. Called on ANY subscription delete
+ *  (issue #97) so the cached harvest cannot outlive the deletion. Personal subs
+ *  are managed (never deletable via the route), so this fires on external
+ *  deletes — over-clearing is harmless (worst case one extra harvest within the
+ *  10-min dedup window). A KV failure is swallowed: the delete already succeeded. */
+export async function clearHarvestCache(env: Env, userId: string): Promise<void> {
+  try {
+    await env.CACHE?.delete(`${HARVEST_CACHE_PREFIX}${userId}`);
+  } catch {
+    /* best-effort: never fail a subscription delete on a KV outage */
+  }
+}
