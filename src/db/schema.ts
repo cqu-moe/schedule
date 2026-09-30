@@ -149,17 +149,6 @@ export const personalSubscriptionViews = sqliteTable(
   ],
 );
 
-export const personalSubscriptionMigrationBackups = sqliteTable(
-  "personal_subscription_migration_backups",
-  {
-    userId: text("user_id").primaryKey(),
-    subscriptionsJson: text("subscriptions_json").notNull(),
-    linksJson: text("links_json").notNull(),
-    setupJson: text("setup_json"),
-    migratedAt: text("migrated_at").notNull(),
-  },
-);
-
 // ── Calendar links（一个订阅的多条链接，统一同构）─────────────────────────────
 
 export const LINK_FORMATS = ["ics", "origin_json", "data_json", "csv", "web"] as const;
@@ -260,5 +249,3 @@ export type NewCalendarLink = typeof calendarLinks.$inferInsert;
 export type PersonalSubscriptionSetup = typeof personalSubscriptionSetup.$inferSelect;
 export type PersonalSubscriptionView = typeof personalSubscriptionViews.$inferSelect;
 export type NewPersonalSubscriptionView = typeof personalSubscriptionViews.$inferInsert;
-export type PersonalSubscriptionMigrationBackup =
-  typeof personalSubscriptionMigrationBackups.$inferSelect;

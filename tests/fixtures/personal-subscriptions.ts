@@ -52,7 +52,6 @@ export async function resetPersonalData(db: D1Database): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM calendar_links"),
     db.prepare("DELETE FROM personal_subscription_views"),
-    db.prepare("DELETE FROM personal_subscription_migration_backups"),
     db.prepare("DELETE FROM personal_subscription_setup"),
     db.prepare("DELETE FROM subscriptions"),
   ]);
