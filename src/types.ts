@@ -36,6 +36,8 @@ export interface Env {
   GIT_COMMIT: string;
   GIT_DATE: string;
   PERSONAL_SUBSCRIPTION_MODE?: "legacy" | "migration" | "enabled";
+  /** Dev-only: "1" 时允许在 localhost 且缺少 AUTH binding 的情况下注入 mock auth。 */
+  DEV_AUTH_MOCK?: string;
   POSTHOG_PROJECT_TOKEN?: string;
   POSTHOG_HOST?: string;
   ENVIRONMENT?: "production" | "preview" | "development";

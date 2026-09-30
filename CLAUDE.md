@@ -98,6 +98,7 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - 项目本地 worktree 目录: `.worktrees/`（已 gitignore）
 - Git worktree 中 `frontend/dist` 不存在（gitignore），需 `mkdir -p frontend/dist` 后才能运行后端测试
 - Git worktree 中 `.dev.vars` 不存在（gitignore），需从主仓库 `cp .dev.vars .worktrees/<name>/.dev.vars` 后才能运行 `npm run dev`
+- 离线后端开发（本地 `wrangler dev` 无 AUTH service binding）需在 `.dev.vars` 中设置 `DEV_AUTH_MOCK=1` 才会注入 mock 用户；未设置时任何 hostname（含 localhost）都 fail-closed 500（issue #86）
 - Git commit 签名依赖 1Password SSH agent；若 1Password 未解锁会报 "failed to fill whole buffer"，此时用 `-c commit.gpgsign=false` 暂时跳过，待 1Password 可用后用 `git rebase --exec 'git commit --amend --no-edit -S' HEAD~N` 补签
 - 用户要求"创建 PR"时：先 `git checkout -b fix/xxx`，commit 后 `gh pr create`，不要用 `/ship`（ship 直接推 main）
 
