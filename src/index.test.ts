@@ -160,11 +160,14 @@ describe("GET /api/v2/me", () => {
 });
 
 describe("GET /api/v2/health", () => {
-  it("→ 200 (config now mounted under /api/v2)", async () => {
+  it("→ 200 (config now mounted under /api/v2); production hides build identifiers (#100)", async () => {
     const res = await request("/api/v2/health", fakeAuth("userA", FULL_CAPS));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string };
+    // Shared test env inherits ENVIRONMENT=production from wrangler.jsonc.
+    const body = (await res.json()) as { status: string; commit?: string; date?: string };
     expect(body.status).toBe("ok");
+    expect(body.commit).toBeUndefined();
+    expect(body.date).toBeUndefined();
   });
 });
 

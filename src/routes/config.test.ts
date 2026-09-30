@@ -12,15 +12,25 @@ function get(path: string, env = mockEnv) {
 }
 
 describe("GET /health", () => {
-  it("returns status ok with commit info", async () => {
-    const res = await get("/health");
+  it.each(["development", "preview", undefined])(
+    "non-production (%s) returns status ok with commit info",
+    async (environment) => {
+      const res = await get("/health", { ...mockEnv, ENVIRONMENT: environment });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({
+        status: "ok",
+        commit: "abc123",
+        date: "2026-03-01",
+      });
+    },
+  );
+
+  it("production omits build identifiers (issue #100)", async () => {
+    const res = await get("/health", { ...mockEnv, ENVIRONMENT: "production" });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({
-      status: "ok",
-      commit: "abc123",
-      date: "2026-03-01",
-    });
+    expect(body).toEqual({ status: "ok" });
   });
 });
 
