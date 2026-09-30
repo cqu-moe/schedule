@@ -287,6 +287,29 @@ describe("processScheduleSyncBatch — organic harvest personal path", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("issue #98: stops remaining shards when notifications are disabled after the batch is claimed", async () => {
+    const sid = await insertSub();
+    const fixture = futureCourseFixture();
+    const oldData = { semesterStart: fixture.semesterStart, exams: [], courses: Array.from({length:40},(_,index)=>({name:`课程${index}`,lecturer:"张老师",position:"虎溪校区",room:"D123",day_of_week:3,start_session:1,end_session:2,weeks:Array.from({length:18},(_,week)=>week+1)})) };
+    const oldSnapshot = normalizeSchedule(oldData);
+    await db.insert(notificationState).values({userId:"user-1",enabled:true,snapshotJson:JSON.stringify(oldSnapshot),snapshotHash:await hashSchedule(oldSnapshot),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    const newData={...oldData,courses:oldData.courses.map(item=>({...item,day_of_week:5}))};
+    vi.spyOn(harvestModule,"fetchPersonalHarvest").mockResolvedValue({ctx:{sessionId:"sess-1",semesterInfo:{id:"sess-1",name:"测试学期",begin_date:fixture.semesterStart,end_date:"2028-01-15"}},data:newData});
+    // Disable lands after the first shard is enqueued but before its progress CAS.
+    const send = vi.fn().mockImplementation(async () => {
+      if (send.mock.calls.length === 1) {
+        await env.DB.prepare("UPDATE notification_state SET enabled = 0 WHERE user_id = 'user-1'").run();
+      }
+    });
+
+    await processScheduleSyncBatch(makeBatch([{subscriptionId:sid,userId:"user-1"}]).batch,testEnv(send));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const state = await db.select().from(notificationState).where(eq(notificationState.userId,"user-1")).get();
+    expect(state?.enabled).toBe(false);
+    expect(state?.pendingNotificationJson).toBeTruthy();
+  });
+
   it("keeps the old baseline when notification enqueue fails while the sync still succeeds", async () => {
     const sid = await insertSub();
     const fixture = futureCourseFixture();

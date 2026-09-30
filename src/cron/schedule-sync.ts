@@ -968,7 +968,14 @@ async function processPersonalNotification(
         pending.nextIndex = index + 1;
         const progress = JSON.stringify(pending);
         const saved = await db.update(notificationState).set({ pendingNotificationJson: progress })
-          .where(and(eq(notificationState.userId, userId), eq(notificationState.pendingNotificationJson, expected))).run();
+          .where(and(
+            eq(notificationState.userId, userId),
+            eq(notificationState.pendingNotificationJson, expected),
+            // issue #98: a disable that lands after the batch was claimed must stop
+            // the remaining shards; the CAS guards on enabled, caps are re-checked
+            // at the entry gate of every (re)run.
+            eq(notificationState.enabled, true),
+          )).run();
         if (!saved.meta.changes) return null;
         expected = progress;
       }
