@@ -22,18 +22,20 @@ export const app = new Hono<{ Bindings: Env }>();
 app.get("/api/v2/telemetry/reset", (c) =>
   postHogCookieResetResponse(c.env.POSTHOG_PROJECT_TOKEN));
 
-// Dev-only: localhost 未配 AUTH service binding 时注入 mock，方便离线开发。
+// Dev-only: 未配 AUTH service binding 时，仅当显式设置 DEV_AUTH_MOCK=1 且请求
+// 来自 localhost 才注入 mock（hostname 只是双保险，真正的开关是环境变量，
+// 不设置它则任何 hostname 都 fail-closed，不依赖 Host 头派生判断）。
 // 生产环境 binding 必然存在；若缺失则属配置错误，必须 fail-closed 返回 500，
 // 绝不能把 mock 当成真用户放行（否则等于认证绕过：所有请求都成了固定 dev 用户）。
 app.use("*", async (c, next) => {
   if (!c.env.AUTH) {
     const hostname = new URL(c.req.url).hostname;
     const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-    if (!isLocal) {
+    if (c.env.DEV_AUTH_MOCK !== "1" || !isLocal) {
       console.error(JSON.stringify({
         event: "auth.binding_missing",
         hostname,
-        message: "AUTH service binding missing on a non-local host; failing closed",
+        message: "AUTH service binding missing and dev mock not enabled (requires DEV_AUTH_MOCK=1 and local host); failing closed",
       }));
       return errorResponse("INTERNAL_ERROR", "认证服务暂不可用", 500);
     }

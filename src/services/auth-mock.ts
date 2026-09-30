@@ -1,4 +1,5 @@
-// auth-mock —— 仅本地开发用。localhost 收不到 .cqu.moe 跨子域 cookie，
+// auth-mock —— 仅本地开发用。localhost 收不到 .cqu.moe 跨子域 cookie。
+// 只有 DEV_AUTH_MOCK=1 且 localhost 时才会被注入（见 src/index.ts），
 // 生产环境 `env.AUTH` service binding 存在故不会用到此 mock。
 import type { AuthService, VerifiedSession, GetCquTicketResult } from "./auth-rpc";
 

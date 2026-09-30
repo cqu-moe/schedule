@@ -163,12 +163,25 @@ describe("AUTH binding fail-closed (security)", () => {
     expect(body.detail.error.code).toBe("INTERNAL_ERROR");
   });
 
-  it("missing AUTH on localhost → dev mock injected (200)", async () => {
+  it("missing AUTH on localhost without DEV_AUTH_MOCK → 500, NOT a fail-open mock session", async () => {
     const headers = new Headers({ "CF-Connecting-IP": uniqueIp() });
     const res = await app.request(
       "http://localhost/api/v2/me",
       { headers },
       envWithoutAuth(),
+    );
+    // Acceptance for #86: without the explicit env var, no hostname injects mock.
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { detail: { error: { code: string } } };
+    expect(body.detail.error.code).toBe("INTERNAL_ERROR");
+  });
+
+  it("missing AUTH on localhost with DEV_AUTH_MOCK=1 → dev mock injected (200)", async () => {
+    const headers = new Headers({ "CF-Connecting-IP": uniqueIp() });
+    const res = await app.request(
+      "http://localhost/api/v2/me",
+      { headers },
+      { ...envWithoutAuth(), DEV_AUTH_MOCK: "1" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { user: { id: string } };
