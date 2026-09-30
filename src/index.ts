@@ -19,9 +19,6 @@ import { postHogCookieResetResponse } from "./lib/posthog-cookie";
 
 export const app = new Hono<{ Bindings: Env }>();
 
-app.get("/api/v2/telemetry/reset", (c) =>
-  postHogCookieResetResponse(c.env.POSTHOG_PROJECT_TOKEN));
-
 // Dev-only: 未配 AUTH service binding 时，仅当显式设置 DEV_AUTH_MOCK=1 且请求
 // 来自 localhost 才注入 mock（hostname 只是双保险，真正的开关是环境变量，
 // 不设置它则任何 hostname 都 fail-closed，不依赖 Host 头派生判断）。
@@ -44,31 +41,49 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+/**
+ * CORS origin policy, shared by the /api/* cors middleware and the
+ * side-effectful telemetry reset route so the two can never drift (#96).
+ * Returns null for disallowed origins.
+ */
+function allowOrigin(origin: string | undefined, env: Env): string | null {
+  const publicUrl = env.PUBLIC_URL ?? "";
+  if (!origin) return publicUrl || "*";
+  if (publicUrl && origin === publicUrl) return origin;
+  // Allow schedule.cqu.moe alongside beta
+  if (origin === "https://schedule.cqu.moe") return origin;
+  // Allow localhost for dev only — production must never echo a local origin
+  // (#90: localhost CORS was allowed in every environment).
+  if (
+    env.ENVIRONMENT !== "production" &&
+    (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))
+  ) {
+    return origin;
+  }
+  return null;
+}
+
 // CORS: restrict to same-origin; allow local dev origins
 app.use(
   "/api/*",
   cors({
-    origin: (origin, c) => {
-      // Allow same-origin (no Origin header) and configured public URL
-      const publicUrl = c.env.PUBLIC_URL ?? "";
-      if (!origin) return publicUrl || "*";
-      if (publicUrl && origin === publicUrl) return origin;
-      // Allow schedule.cqu.moe alongside beta
-      if (origin === "https://schedule.cqu.moe") return origin;
-      // Allow localhost for dev only — production must never echo a local origin
-      // (#90: localhost CORS was allowed in every environment).
-      if (
-        c.env.ENVIRONMENT !== "production" &&
-        (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))
-      ) {
-        return origin;
-      }
-      return "";
-    },
+    origin: (origin, c) => allowOrigin(origin, c.env) ?? "",
     allowHeaders: ["Authorization", "Content-Type"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
+
+// #96: telemetry reset clears the visitor's PostHog cookie on a bare GET, so
+// unlike other public GETs it must not be triggerable cross-site. hono/cors
+// only decorates responses — it never blocks the request — so the route itself
+// applies the shared allowOrigin policy and rejects disallowed origins. It is
+// registered after the cors middleware to keep header behavior uniform.
+app.get("/api/v2/telemetry/reset", (c) => {
+  if (allowOrigin(c.req.header("Origin"), c.env) === null) {
+    return errorResponse("FORBIDDEN", "Cross-origin request rejected", 403);
+  }
+  return postHogCookieResetResponse(c.env.POSTHOG_PROJECT_TOKEN);
+});
 
 // Mount routes (v2 topology①: everything lives under /api/v2; /api/v1 is gone).
 // config (health + config) is public.

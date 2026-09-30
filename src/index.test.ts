@@ -96,6 +96,28 @@ describe("PostHog cookie recovery", () => {
     expect(cookie).toContain("Max-Age=0");
     expect(cookie).toContain("Domain=.cqu.moe");
   });
+
+  it("rejects cross-origin requests without clearing the cookie (#96)", async () => {
+    const res = await request(
+      "/api/v2/telemetry/reset",
+      fakeAuth("userA", FULL_CAPS),
+      { headers: { Origin: "https://evil.example" } },
+      { POSTHOG_PROJECT_TOKEN: "test" },
+    );
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("still resets for an allowed sibling origin", async () => {
+    const res = await request(
+      "/api/v2/telemetry/reset",
+      fakeAuth("userA", FULL_CAPS),
+      { headers: { Origin: "https://schedule.cqu.moe" } },
+      { POSTHOG_PROJECT_TOKEN: "test" },
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("set-cookie") ?? "").toContain("Max-Age=0");
+  });
 });
 
 describe("GET /api/v2/me", () => {
