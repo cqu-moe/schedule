@@ -142,7 +142,7 @@ async function insertLink(
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("enqueueScheduleSync (producer)", () => {
-  it.each([2, 3])("preserves the hourly spread for %i due users", async (count) => {
+  it.each([2, 3])("preserves the cron-period spread for %i due users", async (count) => {
     for (let index = 0; index < count; index++) {
       const userId = `small-batch-${index}`;
       await env.CACHE.put(`caps:${userId}`, JSON.stringify(FULL_CAPS));
@@ -156,13 +156,13 @@ describe("enqueueScheduleSync (producer)", () => {
 
     const messages = sendBatch.mock.calls[0][0];
     expect(messages.map((message: { delaySeconds: number }) => message.delaySeconds))
-      .toEqual(count === 2 ? [0, 1800] : [0, 1200, 2400]);
+      .toEqual(count === 2 ? [0, 450] : [0, 300, 600]);
     for (const message of messages) {
       expect(message.body).not.toHaveProperty("plannedQueueDelaySeconds");
     }
   });
 
-  it("keeps a large due batch staggered and bounded by the hourly delay cap", async () => {
+  it("keeps a large due batch staggered and bounded by the cron-period delay cap", async () => {
     for (let index = 0; index < 365; index++) {
       await insertSub({ sourceId: `large-batch-${index}` });
     }
@@ -172,9 +172,9 @@ describe("enqueueScheduleSync (producer)", () => {
     const messages = sendBatch.mock.calls.flatMap(([chunk]) => chunk);
     expect(messages).toHaveLength(365);
     expect(messages[1].delaySeconds).toBe(10);
-    expect(messages[100].delaySeconds).toBe(1000);
-    expect(messages[359].delaySeconds).toBe(3590);
-    expect(messages[364].delaySeconds).toBe(3600);
+    expect(messages[100].delaySeconds).toBe(900);
+    expect(messages[359].delaySeconds).toBe(900);
+    expect(messages[364].delaySeconds).toBe(900);
     expect(sendBatch.mock.calls.every(([chunk]) => chunk.length <= 100)).toBe(true);
   });
 

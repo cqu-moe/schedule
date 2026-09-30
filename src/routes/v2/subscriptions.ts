@@ -480,9 +480,9 @@ app.post("/", async (c) => {
   }
 
   // Kick off an initial sync so the new subscription's links serve real data
-  // promptly instead of EMPTY_ICS until the next hourly cron (deliveries spread
-  // over 6h). Best-effort: the row is already committed, and the cron will pick
-  // it up (lastSyncedAt is null → due) if this enqueue fails.
+  // promptly instead of EMPTY_ICS until the next cron run. Best-effort: the row
+  // is already committed, and the cron will pick it up (lastSyncedAt is null →
+  // due) if this enqueue fails.
   await c.env.SCHEDULE_SYNC_QUEUE.send({
     subscriptionId: subId,
     userId: user.id,
@@ -674,7 +674,7 @@ app.post("/:sid/syncs", async (c) => {
   // 503 short-circuit below, so a frozen external sub's active/inactive state is
   // reconciled regardless of whether it gets serviced:
   //  - REVOKED (cap lost): flip inactive NOW so the public link stops serving,
-  //    without waiting for the hourly producer (Codex round-3 REVOCATION GAP).
+  //    without waiting for the cron producer (Codex round-3 REVOCATION GAP).
   //  - RE-ENTITLED (cap regained, was inactive): flip active NOW so the link
   //    resumes immediately, without waiting for the cron (Codex round-4
   //    REACTIVATION GAP). Both reconciles must precede the external 503: the
