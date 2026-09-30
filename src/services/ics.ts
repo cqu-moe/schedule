@@ -18,7 +18,8 @@ function escapeIcsText(text: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\n/g, "\\n");
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "");
 }
 
 function formatIcsTime(date: Date): string {

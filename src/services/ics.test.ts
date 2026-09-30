@@ -119,6 +119,21 @@ describe("generateCoursesIcs", () => {
     expect(ics).toContain("DESCRIPTION:教师：张三");
     expect(ics).not.toContain("实验内容");
   });
+
+  it("should strip bare CR from course fields (#94)", async () => {
+    const crCourse: CourseEntry = {
+      ...testCourse,
+      name: "高等\r数学",
+      lecturer: "张三\r\n李四",
+    };
+    const ics = await generateCoursesIcs([crCourse], "2025-02-24", "student1");
+
+    // Isolated CR removed; CRLF collapses to the same escaped \n as LF
+    expect(ics).toContain("SUMMARY:高等数学");
+    expect(ics).toContain("张三\\n李四");
+    // Every remaining CR must be a CRLF line separator, never a bare CR
+    expect(ics).not.toMatch(/\r(?!\n)/);
+  });
 });
 
 describe("generateExamsIcs", () => {
