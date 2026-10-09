@@ -32,6 +32,18 @@ describe("Schedule browser session", () => {
     expect(sessionCookie).not.toContain("access_token");
     const me = await request("/api/v2/me", { headers: { cookie: sessionCookie } });
     expect(me.status).toBe(200); expect(await me.json()).toMatchObject(identity);
+    for (const status of ["pending", "revoked", "unbound", "deleting"]) {
+      provider.faults.authority = { cquBindStatus: status };
+      const current = await request("/api/v2/me", { headers: { cookie: sessionCookie } });
+      expect(current.status).toBe(200);
+      expect(await current.json()).toMatchObject({ cquBindStatus: status });
+      const defaults = await request("/api/v2/subscriptions/defaults", {
+        method: "POST", headers: { cookie: sessionCookie, origin: testEnv.PUBLIC_URL },
+      });
+      expect(defaults.status).toBe(409);
+      expect(await defaults.json()).toMatchObject({ detail: { error: { code: "CQU_BINDING_REQUIRED" } } });
+    }
+    provider.faults.authority = { cquBindStatus: "active" };
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + 601000);
     const concurrent = await Promise.all([1, 2].map(() => request("/api/v2/me", { headers: { cookie: sessionCookie } })));

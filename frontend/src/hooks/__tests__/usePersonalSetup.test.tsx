@@ -117,6 +117,17 @@ describe('usePersonalSetup', () => {
     expect(authUrl.searchParams.get('redirect')).toContain('/add?setup=1&from=menu')
   })
 
+  it('waits for deleting to finish without starting a new bind or sync', async () => {
+    mocks.reloadSession.mockResolvedValueOnce(me({ cquBindStatus: 'deleting' }))
+    const { result } = renderHook(() => usePersonalSetup(), {
+      wrapper: createWrapper('/add?setup=1'),
+    })
+    await act(() => result.current.begin())
+    expect(mocks.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+    expect(redirect.fn).not.toHaveBeenCalled()
+    expect(result.current.error).toContain('解绑')
+  })
+
   it('uses the refreshed session, creates defaults, and strips setup', async () => {
     let resolve!: (value: DefaultSubscriptionsResponse) => void
     mocks.ensureDefaultSubscriptions.mockReturnValueOnce(new Promise((done) => { resolve = done }))

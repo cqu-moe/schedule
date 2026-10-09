@@ -22,7 +22,7 @@ import {
 import { Check, Search } from 'lucide-react'
 import api from '@/api'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect'
-import { authCquBindUrl } from '@/config/auth'
+import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import { useButtonFeedback } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
 import { useSubscriptions } from '@/hooks/useSubscriptions'
@@ -324,6 +324,11 @@ export default function Add() {
             {!session.can('sync') ? (
               <div className="add-hint-box">
                 个人课表订阅需要开通「日历同步」权限（内测阶段由管理员开通）。
+              </div>
+            ) : session.cquBindStatus === 'deleting' ? (
+              <div className="add-hint-box">
+                统一认证账号正在解绑，清理完成前无法同步个人课表。请前往
+                <a href={`${AUTH_BASE_URL}/settings/cqu`} className="add-bind-link">认证中心查看解绑进度</a>。
               </div>
             ) : session.isCquUnbound ? (
               <div className="add-hint-box">
