@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { env } from "cloudflare:test";
+import { oauthProvider } from "./test-utils/oauth-provider";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import { env, applyD1Migrations } from "cloudflare:test";
 import { app } from "./index";
 import type {
   AuthService,
@@ -7,12 +8,16 @@ import type {
   VerifiedSession,
 } from "./services/auth-rpc";
 
+beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS));
+afterEach(() => vi.restoreAllMocks());
+
 // ── caps preset ───────────────────────────────────────────────────────────────
 
 const FULL_CAPS: CalendarCaps = {
   sync: true,
   external: true,
   share: true,
+  change_notification: false,
   sub_limit: 10,
   share_limit: 20,
   sync_interval: 60,
@@ -64,7 +69,7 @@ function uniqueIp(): string {
  * Issue a request against the top-level app with an explicit AUTH binding so the
  * dev-mock injection (`!c.env.AUTH`) never kicks in.
  */
-function request(
+async function request(
   path: string,
   auth: AuthService,
   init: RequestInit = {},
@@ -73,6 +78,17 @@ function request(
   const headers = new Headers(init.headers);
   headers.set("CF-Connecting-IP", uniqueIp());
   const testEnv = { ...env, AUTH: auth, ...envOverrides };
+  if (path === "/api/v2/me") {
+    const identity = await auth.verifySession("");
+    if (identity) {
+      const provider = await oauthProvider(identity);
+      Object.assign(testEnv, { AUTH_ORIGIN: provider.origin, CALENDAR_CLIENT_ID: "calendar", CALENDAR_CLIENT_SECRET: "test-secret" });
+      const start = await app.request("/api/v2/auth/login", {}, testEnv);
+      const callback = provider.authorize(start.headers.get("location")!);
+      const finish = await app.request(callback.href, { headers: { cookie: start.headers.get("set-cookie")!.split(";")[0] } }, testEnv);
+      headers.set("cookie", finish.headers.get("set-cookie")!.split(";")[0]);
+    }
+  }
   return app.request(path, { ...init, headers }, testEnv);
 }
 
@@ -151,12 +167,7 @@ describe("GET /api/v2/me", () => {
     expect(body.cquBindStatus).toBe("active");
   });
 
-  it("omits cquBindStatus for older auth deploys that do not supply it", async () => {
-    const res = await request("/api/v2/me", fakeAuth("userA", FULL_CAPS));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect("cquBindStatus" in body).toBe(false);
-  });
+
 });
 
 describe("GET /api/v2/health", () => {
@@ -206,16 +217,14 @@ describe("AUTH binding fail-closed (security)", () => {
     expect(body.detail.error.code).toBe("INTERNAL_ERROR");
   });
 
-  it("missing AUTH on localhost with DEV_AUTH_MOCK=1 → dev mock injected (200)", async () => {
+  it("dev service mock does not authenticate a browser without a local session", async () => {
     const headers = new Headers({ "CF-Connecting-IP": uniqueIp() });
     const res = await app.request(
       "http://localhost/api/v2/me",
       { headers },
       { ...envWithoutAuth(), DEV_AUTH_MOCK: "1" },
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { user: { id: string } };
-    expect(body.user.id).toBe("devuser000000000000000000000000");
+    expect(res.status).toBe(401);
   });
 });
 
@@ -247,7 +256,7 @@ describe("AUTH_LIMITER on authenticated v2 routes", () => {
     expect(res.status).toBe(429);
   });
 
-  it("allows the request through when AUTH_LIMITER has capacity", async () => {
+  it("allows a missing session to reach authentication when AUTH_LIMITER has capacity", async () => {
     const passingLimiter = { limit: async () => ({ success: true }) };
     const testEnv = { ...env, AUTH: fakeAuth("userA", FULL_CAPS), AUTH_LIMITER: passingLimiter };
     const res = await app.request(
@@ -255,7 +264,7 @@ describe("AUTH_LIMITER on authenticated v2 routes", () => {
       { headers: { "CF-Connecting-IP": uniqueIp() } },
       testEnv,
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
   });
 
   it("EXTERNAL_LIMITER runs BEFORE session: rejected → 429, not 401 (no auth RPC)", async () => {

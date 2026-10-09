@@ -1,7 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
-import { sessionMiddleware, type SessionEnv } from "../../middleware/session";
+import type { SessionEnv } from "../../middleware/session";
+import { businessIdentity as sessionMiddleware } from "../../test-utils/business-identity";
 import type { AuthService, CalendarCaps, VerifiedSession } from "../../services/auth-rpc";
 import notificationSettings from "./notification-settings";
 

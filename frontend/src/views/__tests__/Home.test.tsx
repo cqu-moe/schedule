@@ -29,7 +29,7 @@ describe('Home', () => {
     expect(screen.queryByText(/统一认证中心/)).not.toBeInTheDocument()
   })
 
-  it('sends visitors to the CQU bind flow with a return URL', () => {
+  it('starts a local OAuth login with a dashboard return path', () => {
     renderWithApp(<Home />, {
       session: { user: null, isAuthenticated: false, isCquBound: false },
       routerEntries: ['/'],
@@ -37,9 +37,9 @@ describe('Home', () => {
 
     const cta = screen.getByRole('link', { name: '开始使用' })
     const href = cta.getAttribute('href') ?? ''
-    expect(href).toContain('https://auth.cqu.moe/cqu/bind?redirect=')
-    const redirect = new URL(href).searchParams.get('redirect')
-    expect(redirect).toBe(`${window.location.origin}/dashboard?setup=1`)
+    expect(href).toContain('/api/v2/auth/login?returnTo=')
+    const redirect = new URL(href, window.location.origin).searchParams.get('returnTo')
+    expect(redirect).toBe('/dashboard?setup=1')
     expect(
       screen.getByText('将前往统一认证中心 auth.cqu.moe，完成后自动返回本站'),
     ).toBeInTheDocument()

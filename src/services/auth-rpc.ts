@@ -109,6 +109,8 @@ export interface GetCapsArgs {
 
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
+  /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
+   * authenticate through the application session and native OAuth introspection. */
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;
   getCquTicket(args: GetCquTicketArgs): Promise<GetCquTicketResult>;
   getCaps?(args: GetCapsArgs): Promise<{ calendar: CalendarCaps } | null>;
