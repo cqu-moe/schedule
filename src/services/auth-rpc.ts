@@ -23,7 +23,7 @@ export interface SessionUser {
 }
 
 /** CQU 统一身份认证绑定状态（auth 侧 cqu_bind_addresses.status；无绑定行 = "unbound"）。 */
-export type CquBindStatus = "pending" | "active" | "revoked" | "unbound";
+export type CquBindStatus = "pending" | "active" | "revoked" | "deleting" | "unbound";
 
 export interface VerifiedSession {
   user: SessionUser;
@@ -109,6 +109,8 @@ export interface GetCapsArgs {
 
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
+  /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
+   * authenticate through the application session and native OAuth introspection. */
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;
   getCquTicket(args: GetCquTicketArgs): Promise<GetCquTicketResult>;
   getCaps?(args: GetCapsArgs): Promise<{ calendar: CalendarCaps } | null>;

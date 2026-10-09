@@ -249,3 +249,14 @@ export type NewCalendarLink = typeof calendarLinks.$inferInsert;
 export type PersonalSubscriptionSetup = typeof personalSubscriptionSetup.$inferSelect;
 export type PersonalSubscriptionView = typeof personalSubscriptionViews.$inferSelect;
 export type NewPersonalSubscriptionView = typeof personalSubscriptionViews.$inferInsert;
+
+// Local interactive identity only; background synchronization remains service RPC.
+export const applicationLogin = sqliteTable("application_login", {
+  stateHash: text("state_hash").primaryKey(), browserHash: text("browser_hash").notNull(),
+  payload: text("payload").notNull(), expiresAt: integer("expires_at").notNull(),
+}, table => [index("application_login_expiry").on(table.expiresAt)]);
+export const applicationSession = sqliteTable("application_session", {
+  tokenHash: text("token_hash").primaryKey(), payload: text("payload").notNull(),
+  expiresAt: integer("expires_at").notNull(), revision: integer("revision").notNull().default(0),
+  refreshUntil: integer("refresh_until").notNull().default(0),
+}, table => [index("application_session_expiry").on(table.expiresAt)]);

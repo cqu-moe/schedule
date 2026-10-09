@@ -72,6 +72,13 @@ describe('Add view (React)', () => {
     expect(screen.queryByText('我的全部课表')).not.toBeInTheDocument()
   })
 
+  it('shows cleanup progress without a bind or subscription action while deleting', async () => {
+    renderWithApp(<Add />, { routerEntries: ['/add'], session: { cquBindStatus: 'deleting', isCquBound: false, isCquUnbound: true } })
+    expect(await screen.findByRole('link', { name: '认证中心查看解绑进度' })).toHaveAttribute('href', 'https://auth.cqu.moe/settings/cqu')
+    expect(screen.queryByRole('link', { name: '绑定重庆大学统一认证账号' })).not.toBeInTheDocument()
+    expect(screen.queryByText('我的全部课表')).not.toBeInTheDocument()
+  })
+
   it('creates a personal subscription without sourceId and toasts success', async () => {
     mockApi.createSubscription.mockResolvedValue({ id: 'p-new' })
     const user = userEvent.setup()

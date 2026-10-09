@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./types";
+import applicationAuth, { completeLogin } from "./routes/application-auth";
 import configRoutes from "./routes/config";
 import { enqueueScheduleSync, processScheduleSyncBatch, type ScheduleSyncMessage } from "./cron/schedule-sync";
 import { addSecurityHeaders } from "./middleware/security-headers";
@@ -88,9 +89,12 @@ app.get("/api/v2/telemetry/reset", (c) => {
 // Mount routes (v2 topology①: everything lives under /api/v2; /api/v1 is gone).
 // config (health + config) is public.
 app.route("/api/v2", configRoutes);
+app.use("/api/v2/auth/*", rateLimit("AUTH_LIMITER"));
+app.route("/api/v2/auth", applicationAuth);
+app.get("/callback", rateLimit("AUTH_LIMITER"), completeLogin);
 
-// v2 (拓扑①): session-guarded routes verify the cross-subdomain auth cookie via
-// the AUTH service binding before exposing the current user's subscriptions.
+// v2: session-guarded routes verify the local application cookie and current
+// central OAuth authority before exposing the current user's subscriptions.
 // AUTH_LIMITER (per-IP) runs BEFORE sessionMiddleware so rate-limited requests
 // never spend an AUTH RPC / KV / D1 / queue round-trip. External routes keep
 // their stricter per-route EXTERNAL_LIMITER instead.
@@ -135,11 +139,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     let response: Response;
-    if (url.pathname.startsWith("/api/")) {
+    if (url.pathname.startsWith("/api/") || url.pathname === "/callback") {
       response = await app.fetch(request, env, ctx);
       response.headers.set("X-Robots-Tag", "noindex, nofollow");
     } else {
-      // Non-/api/ paths (including SPA routes like /view/:token) are served by
+      // Non-/api/ paths other than the OAuth callback (including /view/:token) use
       // ASSETS; wrangler's not_found_handling: "single-page-application" returns
       // index.html for client-side routes. No server-side special-casing needed.
       response = await env.ASSETS.fetch(request);

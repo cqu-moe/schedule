@@ -35,7 +35,7 @@ export interface MeResponse {
   cquBindStatus?: CquBindStatus
 }
 
-export type CquBindStatus = 'pending' | 'active' | 'revoked' | 'unbound'
+export type CquBindStatus = 'pending' | 'active' | 'revoked' | 'deleting' | 'unbound'
 
 // ── v2 link / subscription types ─────────────────────────────────────────────
 

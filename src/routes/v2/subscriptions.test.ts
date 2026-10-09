@@ -10,7 +10,8 @@ import {
   PERSONAL_VIEW_TYPES,
   LINK_FORMATS,
 } from "../../db/schema";
-import { sessionMiddleware, type SessionEnv } from "../../middleware/session";
+import type { SessionEnv } from "../../middleware/session";
+import { businessIdentity as sessionMiddleware } from "../../test-utils/business-identity";
 import type {
   AuthService,
   CalendarCaps,

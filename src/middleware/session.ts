@@ -1,3 +1,4 @@
+import { resolveApplicationSession } from "../services/application-session";
 import type { Context, Next } from "hono";
 import { errorResponse } from "../utils/error";
 import type { Env } from "../types";
@@ -7,7 +8,7 @@ import type { SessionUser, CalendarCaps, CquBindStatus } from "../services/auth-
  * Hono env for routes guarded by {@link sessionMiddleware}.
  *
  * After the middleware runs, `c.get("user")` / `c.get("caps")` are populated
- * from the auth-verified session. Hono Context types are invariant, so handlers
+ * from the centrally validated application session. Hono Context types are invariant, so handlers
  * downstream of this middleware must use this exact env shape.
  */
 export type SessionEnv = {
@@ -31,7 +32,7 @@ export type SessionEnv = {
 export const CAPS_TTL = 600;
 
 /**
- * Verify the browser session via the auth Worker (拓扑① Service Binding RPC),
+ * Verify the host-only application session with current OAuth introspection,
  * inject `user`/`caps` into the request context, and best-effort cache the
  * calendar caps to KV.
  *
@@ -42,10 +43,15 @@ export const CAPS_TTL = 600;
  * Returns 401 UNAUTHORIZED when the session is missing or invalid.
  */
 export async function sessionMiddleware(c: Context<SessionEnv>, next: Next) {
-  const cookie = c.req.header("cookie") ?? "";
-  const sess = await c.env.AUTH.verifySession(cookie);
+  c.header("Cache-Control", "no-store");
+  let sess;
+  try { sess = await resolveApplicationSession(c); }
+  catch { return errorResponse("AUTH_UNAVAILABLE", "认证服务暂不可用，请稍后重试", 503); }
   if (!sess) return errorResponse("UNAUTHORIZED", "未登录", 401);
 
+  if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.req.header("origin") !== new URL(c.env.PUBLIC_URL).origin) {
+    return errorResponse("FORBIDDEN", "请求来源无效", 403);
+  }
   c.set("user", sess.user);
   c.set("caps", sess.caps);
   c.set("cquBindStatus", sess.cquBindStatus);

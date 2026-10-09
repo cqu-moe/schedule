@@ -30,7 +30,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import api from '@/api'
-import { authCquBindUrl } from '@/config/auth'
+import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import FirstSyncNotice from '@/components/FirstSyncNotice'
 import QrcodeModal from '@/components/QrcodeModal'
 import ShareLinksDialog from '@/components/ShareLinksDialog'
@@ -866,12 +866,12 @@ export default function Dashboard() {
 
           {!loading && session.isCquUnbound && (
             <div className="dash-card dash-bind-card">
-              <p className="dash-bind-title">尚未绑定重庆大学统一认证账号</p>
+              <p className="dash-bind-title">{session.cquBindStatus === 'deleting' ? '统一认证账号正在解绑' : '尚未绑定重庆大学统一认证账号'}</p>
               <p className="dash-sync-meta">
-                个人课表同步依赖你的统一认证账号，绑定后即可继续。
+                {session.cquBindStatus === 'deleting' ? '清理完成前无法同步个人课表，请在认证中心查看解绑进度。' : '个人课表同步依赖你的统一认证账号，绑定后即可继续。'}
               </p>
               <Button asChild variant="outline" size="sm">
-                <a href={bindHref}>绑定重庆大学统一认证账号</a>
+                <a href={session.cquBindStatus === 'deleting' ? `${AUTH_BASE_URL}/settings/cqu` : bindHref}>{session.cquBindStatus === 'deleting' ? '查看解绑进度' : '绑定重庆大学统一认证账号'}</a>
               </Button>
             </div>
           )}
