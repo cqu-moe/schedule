@@ -55,6 +55,11 @@ export const appRoutes: RouteObject[] = [
     errorElement: <RouteError />,
     children: [
       {
+        path: 'signed-out',
+        lazy: async () => ({ Component: (await import('@/views/SignedOut')).default }),
+        handle: { title: `已退出课表 | ${SITE_NAME}` },
+      },
+      {
         index: true,
         lazy: async () => ({ Component: (await import('@/views/Home')).default }),
         handle: { title: `重庆大学课表订阅 | ${SITE_NAME}` },

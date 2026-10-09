@@ -24,7 +24,7 @@ vi.mock('axios', () => ({
 // Import after mock is set up — this triggers axios.create() and interceptors.response.use()
 import axios from 'axios'
 import api, { redirect } from '../index'
-import { authCquBindUrl } from '@/config/auth'
+import { signedOutUrl } from '@/config/auth'
 
 // Capture setup-time calls before any test's beforeEach can clear them
 const createCallArgs = (axios.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
@@ -70,7 +70,7 @@ describe('API module (v2)', () => {
 
       // Assert the exact URL passed to redirect.fn by the interceptor.
       // jsdom's window.location.href defaults to 'http://localhost:3000/'.
-      const expectedUrl = authCquBindUrl(window.location.href)
+      const expectedUrl = signedOutUrl(window.location.href)
       expect(redirectSpy).toHaveBeenCalledOnce()
       expect(redirectSpy).toHaveBeenCalledWith(expectedUrl)
 

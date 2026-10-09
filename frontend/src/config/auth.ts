@@ -1,16 +1,16 @@
 /** Single source of truth for the auth service base URL. */
 export const AUTH_BASE_URL = 'https://auth.cqu.moe'
 
-/**
- * Builds a full auth login URL that redirects back to the given URL after
- * successful authentication.
- *
- * @example
- *   authLoginUrl(window.location.href)
- *   // → "https://auth.cqu.moe/login?redirect=https%3A%2F%2F..."
- */
+/** Login is initiated by this application's backend; long-lived tokens never enter the browser. */
 export function authLoginUrl(redirectTo: string): string {
-  return `${AUTH_BASE_URL}/login?redirect=${encodeURIComponent(redirectTo)}`
+  const target = new URL(redirectTo)
+  const returnTo = target.pathname === '/signed-out' ? '/dashboard' : target.pathname + target.search + target.hash
+  return `/api/v2/auth/login?returnTo=${encodeURIComponent(returnTo)}`
+}
+
+export function signedOutUrl(redirectTo: string): string {
+  const target = new URL(redirectTo)
+  return `/signed-out?returnTo=${encodeURIComponent(target.pathname + target.search + target.hash)}`
 }
 
 export function scheduleSetupTarget(returnTo: string): string {

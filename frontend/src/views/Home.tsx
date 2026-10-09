@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router'
 import { Button } from '@cqu-moe/ui'
 import { Calendar, Lock, RefreshCw } from 'lucide-react'
-import { authCquBindUrl } from '@/config/auth'
+import { authCquBindUrl, authLoginUrl, scheduleSetupTarget } from '@/config/auth'
 import { useSession } from '@/providers/app'
 import './home.css'
 
@@ -77,9 +77,8 @@ function HomeCta({
       </div>
     )
   } else {
-    const bindHref = authCquBindUrl(
-      window.location.origin + location.pathname + location.search + location.hash,
-    )
+    const returnTo = window.location.origin + location.pathname + location.search + location.hash
+    const bindHref = isAuthenticated ? authCquBindUrl(returnTo) : authLoginUrl(scheduleSetupTarget(returnTo))
     return (
       <div className="home-cta">
         <Button asChild size="lg">

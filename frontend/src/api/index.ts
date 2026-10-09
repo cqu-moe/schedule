@@ -15,7 +15,7 @@ import type {
   NotificationSettings,
   DefaultSubscriptionsResponse,
 } from '@/types/api'
-import { authCquBindUrl } from '@/config/auth'
+import { signedOutUrl } from '@/config/auth'
 
 // Augment axios config to support per-request auth-redirect suppression.
 declare module 'axios' {
@@ -42,7 +42,7 @@ const client = axios.create({
  *   import { redirect } from '@/api'
  *   redirect.fn = vi.fn()
  *   // … trigger 401 …
- *   expect(redirect.fn).toHaveBeenCalledWith('https://auth.cqu.moe/login?redirect=...')
+ *   expect(redirect.fn).toHaveBeenCalledWith('/signed-out?returnTo=...')
  *   redirect.fn = (url) => { window.location.href = url } // restore
  */
 export const redirect = {
@@ -52,7 +52,7 @@ export const redirect = {
 }
 
 // 429 interceptor: normalise into the standard { detail: "..." } shape.
-// 401 interceptor: redirect to auth login, unless:
+// 401 interceptor: show a signed-out page with an explicit login action, unless:
 //   - suppressAuthRedirect is set on the request config (e.g. getMe probe), OR
 //   - the error code is TOKEN_EXPIRED (upstream CQU bearer expired; schedule session is still
 //     valid — the backend already invalidated the bearer and will re-mint on the next request,
@@ -69,7 +69,7 @@ client.interceptors.response.use(undefined, (error: AxiosError) => {
       !isUpstreamTokenExpired &&
       !(error.config as InternalAxiosRequestConfig)?.suppressAuthRedirect
     ) {
-      redirect.fn(authCquBindUrl(window.location.href))
+      redirect.fn(signedOutUrl(window.location.href))
     }
     return Promise.reject(error)
   }

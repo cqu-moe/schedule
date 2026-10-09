@@ -1,14 +1,14 @@
 import { useEffect } from 'react'
 import { Link, NavLink, Outlet, useLocation, useMatches } from 'react-router'
-import { ContentContainer, ThemeMenu } from '@cqu-moe/ui'
+import { Button, ContentContainer, ThemeMenu } from '@cqu-moe/ui'
 import { useSession } from '@/providers/app'
-import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
+import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
 import { captureSchedulePageview, syncPostHogReplay } from '@/lib/posthog'
 import './layout.css'
 
 function LoginLink() {
   const location = useLocation()
-  const href = authCquBindUrl(
+  const href = authLoginUrl(
     window.location.origin + location.pathname + location.search + location.hash,
   )
   return <a href={href}>登录</a>
@@ -47,6 +47,9 @@ function Layout() {
             ) : (
               <LoginLink />
             )}
+            {isAuthenticated && <form method="post" action="/api/v2/auth/logout">
+              <Button type="submit" variant="link">退出课表</Button>
+            </form>}
             <NavLink to="/api-docs">API 文档</NavLink>
             <NavLink to="/changelog">更新日志</NavLink>
             <ThemeMenu />

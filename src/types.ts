@@ -33,6 +33,7 @@ export interface Env {
 
   // Environment Variables
   PUBLIC_URL: string;
+  AUTH_ORIGIN?: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
   PERSONAL_SUBSCRIPTION_MODE?: "legacy" | "migration" | "enabled";

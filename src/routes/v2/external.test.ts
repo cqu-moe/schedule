@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
-import { sessionMiddleware, type SessionEnv } from "../../middleware/session";
+import type { SessionEnv } from "../../middleware/session";
+import { businessIdentity as sessionMiddleware } from "../../test-utils/business-identity";
 import type {
   AuthService,
   CalendarCaps,
