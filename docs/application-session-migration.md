@@ -61,7 +61,10 @@ login click. Unsafe protected requests also require the exact application Origin
 so another cqu.moe subdomain cannot submit writes using SameSite cookies.
 
 Central logout, account bans and client disablement deny subsequent protected
-requests through introspection. Business caps remain admin-controlled and current.
+requests through introspection. Business caps remain admin-controlled and current. All five Auth binding states
+(pending, active, revoked, deleting, unbound) are accepted as identity metadata;
+only active permits school-dependent setup. Deleting keeps ordinary reads available
+and shows cleanup progress without automatically initiating a new binding.
 Private RPC background sync remains independent of these browser records; no
 per-user background refresh credentials or new service registry were introduced.
 The existing background caps cache is not an interactive identity cache.

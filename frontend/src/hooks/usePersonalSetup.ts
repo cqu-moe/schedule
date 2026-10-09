@@ -64,6 +64,10 @@ export function usePersonalSetup(): PersonalSetupController {
     }
 
     const status = me.cquBindStatus
+    if (status === 'deleting') {
+      setError('统一认证账号正在解绑，请在认证中心完成清理后重试。')
+      return
+    }
     if (status !== undefined && status !== 'active') {
       redirect.fn(authCquBindUrl(currentUrl()))
       return

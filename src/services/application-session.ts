@@ -67,7 +67,7 @@ export async function authority(env: Env, credentials: Credentials): Promise<Ver
   if (status.client_id !== client.client_id || status.sub !== credentials.sub || typeof status.sid !== "string" || !status.sid ||
       typeof status.exp !== "number" || status.exp * 1000 <= Date.now()) throw new Error("Invalid authority response");
   const caps = status.caps as { calendar?: unknown } | undefined;
-  if (!calendarCaps(caps?.calendar) || !["pending", "active", "revoked", "unbound"].includes(String(status.cquBindStatus))) throw new Error("Missing application authority");
+  if (!calendarCaps(caps?.calendar) || !["pending", "active", "revoked", "deleting", "unbound"].includes(String(status.cquBindStatus))) throw new Error("Missing application authority");
   return { user: credentials.user, caps: { calendar: caps.calendar }, cquBindStatus: status.cquBindStatus as VerifiedSession["cquBindStatus"] };
 }
 export async function resolveApplicationSession(c: Context<SessionEnv>): Promise<VerifiedSession | null> {

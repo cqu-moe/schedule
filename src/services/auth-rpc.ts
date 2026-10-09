@@ -23,7 +23,7 @@ export interface SessionUser {
 }
 
 /** CQU 统一身份认证绑定状态（auth 侧 cqu_bind_addresses.status；无绑定行 = "unbound"）。 */
-export type CquBindStatus = "pending" | "active" | "revoked" | "unbound";
+export type CquBindStatus = "pending" | "active" | "revoked" | "deleting" | "unbound";
 
 export interface VerifiedSession {
   user: SessionUser;

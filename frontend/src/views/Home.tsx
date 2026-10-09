@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router'
 import { Button } from '@cqu-moe/ui'
 import { Calendar, Lock, RefreshCw } from 'lucide-react'
-import { authCquBindUrl, authLoginUrl, scheduleSetupTarget } from '@/config/auth'
+import { AUTH_BASE_URL, authCquBindUrl, authLoginUrl, scheduleSetupTarget } from '@/config/auth'
 import { useSession } from '@/providers/app'
 import './home.css'
 
@@ -24,7 +24,7 @@ const features = [
 ]
 
 export default function Home() {
-  const { isAuthenticated, isCquBound } = useSession()
+  const { isAuthenticated, isCquBound, cquBindStatus } = useSession()
   const location = useLocation()
 
   return (
@@ -35,6 +35,7 @@ export default function Home() {
         <HomeCta
           isAuthenticated={isAuthenticated}
           isCquBound={isCquBound}
+          isDeleting={cquBindStatus === 'deleting'}
           location={location}
         />
       </section>
@@ -60,14 +61,22 @@ export default function Home() {
 }
 
 function HomeCta({
+  isDeleting,
   isAuthenticated,
   isCquBound,
   location,
 }: {
+  isDeleting: boolean
   isAuthenticated: boolean
   isCquBound: boolean
   location: { pathname: string; search: string; hash: string }
 }) {
+  if (isDeleting) {
+    return <div className="home-cta">
+      <p className="home-cta-hint">统一认证账号正在解绑，请等待清理完成后再绑定。</p>
+      <Button asChild size="lg"><a href={`${AUTH_BASE_URL}/settings/cqu`}>查看解绑进度</a></Button>
+    </div>
+  }
   if (isAuthenticated && isCquBound) {
     return (
       <div className="home-cta">
