@@ -2,14 +2,13 @@
 
 .fc {
   --fc-border-color: var(--border);
-  --fc-button-bg-color: var(--secondary);
+  --fc-button-bg-color: var(--surface);
   --fc-button-border-color: var(--border);
-  --fc-button-text-color: var(--secondary-foreground);
-  --fc-button-hover-bg-color: var(--accent);
+  --fc-button-text-color: var(--foreground);
+  --fc-button-hover-bg-color: var(--background);
   --fc-button-hover-border-color: var(--border);
-  --fc-button-active-bg-color: var(--background);
+  --fc-button-active-bg-color: var(--surface);
   --fc-button-active-border-color: var(--border);
-  --fc-button-active-text-color: var(--foreground);
   --fc-page-bg-color: var(--background);
   --fc-neutral-bg-color: var(--muted);
   --fc-today-bg-color: color-mix(in srgb, var(--link) 5%, transparent);
@@ -31,7 +30,7 @@
 .fc .fc-toolbar {
   gap: var(--space-2);
   flex-wrap: wrap;
-  margin-bottom: var(--space-3) !important;
+  margin-bottom: var(--space-2) !important;
 }
 
 .fc .fc-toolbar-title {
@@ -40,6 +39,7 @@
 }
 
 .fc .fc-button {
+  position: relative;
   border-radius: var(--radius-sm);
   font-weight: 500;
   font-size: var(--text-sm);
@@ -55,12 +55,31 @@
   box-shadow: 0 0 0 2px var(--ring) !important;
 }
 
-.fc .fc-button-active {
-  font-weight: 600;
+.fc .fc-event:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active {
+  color: var(--foreground);
+}
+
+.fc .fc-button-active::after {
+  content: '';
+  position: absolute;
+  inset-inline: var(--space-3);
+  bottom: var(--space-1);
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  pointer-events: none;
 }
 
 .fc .fc-today-button:disabled {
-  opacity: 0.4;
+  opacity: 1;
+  color: var(--muted-foreground);
+  background: transparent;
+  border-color: transparent;
 }
 
 .fc .fc-col-header-cell {
@@ -179,4 +198,51 @@
 
 .fc .fc-scroller {
   scrollbar-width: thin;
+}
+
+@media (max-width: 479px) {
+  .fc .fc-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .fc .fc-toolbar-chunk:first-child {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .fc .fc-toolbar-chunk:nth-child(2) {
+    min-width: 0;
+  }
+
+  .fc .fc-toolbar-title {
+    white-space: normal;
+    line-height: 1.35;
+  }
+
+  .fc .fc-toolbar-chunk:last-child {
+    display: flex;
+    justify-self: end;
+  }
+
+  .fc .fc-button,
+  .fc .fc-button-group .fc-button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: var(--space-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc .fc-button,
+  .fc .fc-event {
+    transition: none;
+  }
+
+  .fc .fc-event:hover {
+    opacity: 1;
+    transform: none;
+  }
 }

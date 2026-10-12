@@ -1,19 +1,9 @@
-import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-import { JSDOM } from 'jsdom'
 import posthog from '@posthog/rollup-plugin'
 import { themeInitScript } from '@cqu-moe/theme'
-
-export function renderChangelogHtml(markdown: string): string {
-  const purify = DOMPurify(new JSDOM('').window)
-  return purify.sanitize(marked.parse(markdown, { async: false }))
-}
 
 export default defineConfig(async () => {
   const plugins: PluginOption[] = [
@@ -49,14 +39,6 @@ export default defineConfig(async () => {
 
   return {
     plugins,
-    define: {
-      __APP_VERSION__: JSON.stringify(
-        JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf-8')).version
-      ),
-      __CHANGELOG_HTML__: JSON.stringify(
-        renderChangelogHtml(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'CHANGELOG.md'), 'utf-8'))
-      ),
-    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

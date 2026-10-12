@@ -19,7 +19,7 @@ describe("Schedule browser PostHog persistence", () => {
     document.cookie = "ph_test_posthog=legacy; Path=/";
     const telemetry = await import("./posthog");
 
-    expect(telemetry.initPostHog()).toBe(true);
+    await expect(telemetry.initPostHog()).resolves.toBe(true);
     expect(init).toHaveBeenCalledWith("test", expect.objectContaining({
       api_host: "https://p.cqu.moe",
       asset_host: "https://p.cqu.moe",

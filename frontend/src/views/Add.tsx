@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router'
 import {
   ActionButton,
   Alert,
@@ -45,6 +45,13 @@ interface PersonalOption {
   label: string
   description: string
   sourceName: string
+}
+
+interface SearchRequest {
+  sourceType: ExternalSourceType
+  keyword: string
+  departmentId: string
+  grade: string
 }
 
 const personalOptions: PersonalOption[] = [
@@ -103,18 +110,41 @@ export default function Add() {
   const [searched, setSearched] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [needsRepair, setNeedsRepair] = useState(false)
+  const [sessionError, setSessionError] = useState(false)
+  const [subsStatus, setSubsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [departmentsLoading, setDepartmentsLoading] = useState(false)
+  const [departmentsError, setDepartmentsError] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSeq = useRef(0)
+  const lastSearchRef = useRef<SearchRequest | null>(null)
   const { reloadSession } = session
+  const { load: loadSubscriptions } = subs
   const { begin: beginPersonalSetup } = setup
   const setupRequested = new URLSearchParams(location.search).get('setup') === '1'
 
+  const loadSubscriptionList = useCallback(
+    async (noCache = false) => {
+      setSubsStatus('loading')
+      try {
+        await loadSubscriptions(noCache)
+        setSubsStatus('ready')
+      } catch {
+        setSubsStatus('error')
+      }
+    },
+    [loadSubscriptions],
+  )
+
   useEffect(() => {
     let active = true
-    reloadSession().finally(() => {
-      if (active) setSessionLoading(false)
-    })
+    reloadSession()
+      .catch(() => {
+        if (active) setSessionError(true)
+      })
+      .finally(() => {
+        if (active) setSessionLoading(false)
+      })
     return () => {
       active = false
     }
@@ -125,9 +155,9 @@ export default function Add() {
   }, [beginPersonalSetup])
 
   useEffect(() => {
-    if (setupRequested || session.isCquUnbound) return
-    void subs.load().catch(() => toast.error('加载订阅列表失败'))
-  }, [setupRequested, session.isCquUnbound, subs.load])
+    if (setupRequested) return
+    void loadSubscriptionList()
+  }, [setupRequested, loadSubscriptionList])
 
   useEffect(
     () => () => {
@@ -144,6 +174,30 @@ export default function Add() {
     const currentYear = new Date().getFullYear()
     return Array.from({ length: 5 }, (_, index) => String(currentYear - index))
   }, [])
+
+  async function reloadAfterCreate() {
+    setSubsStatus('loading')
+    try {
+      await loadSubscriptions(true)
+      setSubsStatus('ready')
+    } catch {
+      setSubsStatus('error')
+      toast.error('订阅成功，但刷新订阅列表失败')
+    }
+  }
+
+  async function retrySession() {
+    setSessionLoading(true)
+    setSessionError(false)
+    try {
+      await reloadSession()
+      if (setupRequested) await beginPersonalSetup()
+    } catch {
+      setSessionError(true)
+    } finally {
+      setSessionLoading(false)
+    }
+  }
 
   function isPersonalSubscribed(sourceType: SourceType): boolean {
     return subs.subscriptions.some((s) => s.source_type === sourceType && s.is_personal)
@@ -168,16 +222,22 @@ export default function Add() {
   }
 
   async function loadDepartments() {
+    setDepartmentsLoading(true)
+    setDepartmentsError(false)
     try {
       const data = await api.getDepartments()
       setDepartments(data.departments)
     } catch (err: unknown) {
+      setDepartmentsError(true)
       toast.error(parseApiError(err, '加载院系列表失败'))
+    } finally {
+      setDepartmentsLoading(false)
     }
   }
 
   function handleTypeChange(next: string) {
     const type = next as ExternalSourceType
+    invalidateSearch()
     setSourceType(type)
     setKeyword('')
     setSelectedGrade('all')
@@ -185,23 +245,29 @@ export default function Add() {
     setSearchResults([])
     setSearched(false)
     clearError()
-    clearPendingSearch()
-    if (type === 'admin_class' && departments.length === 0) void loadDepartments()
+    if (type === 'admin_class' && departments.length === 0 && !departmentsLoading) {
+      void loadDepartments()
+    }
   }
 
-  async function doSearch(kw: string) {
+  async function runSearch(request: SearchRequest) {
     const seq = ++searchSeq.current
+    lastSearchRef.current = request
     setSearching(true)
     setSearched(false)
     clearError()
     try {
       const data = await api.searchExternal({
-        source_type: sourceType,
-        keyword: kw,
+        source_type: request.sourceType,
+        keyword: request.keyword,
         department_id:
-          sourceType === 'admin_class' && selectedDepartment ? selectedDepartment : undefined,
+          request.sourceType === 'admin_class' && request.departmentId
+            ? request.departmentId
+            : undefined,
         grade:
-          sourceType === 'admin_class' && selectedGrade !== 'all' ? selectedGrade : undefined,
+          request.sourceType === 'admin_class' && request.grade !== 'all'
+            ? request.grade
+            : undefined,
       })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
@@ -224,29 +290,56 @@ export default function Add() {
     }
   }
 
-  function onKeywordChange(value: string) {
-    setKeyword(value)
+  function invalidateSearch() {
+    searchSeq.current += 1
     clearPendingSearch()
+    setSearching(false)
+  }
+
+  function retrySearch() {
+    if (lastSearchRef.current) void runSearch(lastSearchRef.current)
+  }
+
+  function onKeywordChange(value: string) {
+    const request: SearchRequest = {
+      sourceType,
+      keyword: value,
+      departmentId: selectedDepartment,
+      grade: selectedGrade,
+    }
+
+    setKeyword(value)
+    invalidateSearch()
     if (sourceType !== 'admin_class' && value.trim().length < 2) {
       setSearchResults([])
       setSearched(false)
       return
     }
     debounceRef.current = setTimeout(() => {
-      void doSearch(value)
+      void runSearch(request)
     }, 300)
   }
 
   function handleDepartmentChange(deptId: string) {
     setSelectedDepartment(deptId)
     clearPendingSearch()
-    void doSearch(keyword)
+    void runSearch({
+      sourceType: 'admin_class',
+      keyword,
+      departmentId: deptId,
+      grade: selectedGrade,
+    })
   }
 
   function handleGradeChange(grade: string) {
     setSelectedGrade(grade)
     clearPendingSearch()
-    void doSearch(keyword)
+    void runSearch({
+      sourceType: 'admin_class',
+      keyword,
+      departmentId: selectedDepartment,
+      grade,
+    })
   }
 
   async function handlePersonalSubscribe(opt: PersonalOption) {
@@ -259,7 +352,7 @@ export default function Add() {
           // 不发送 sourceId：后端会将其固定为当前认证用户。
         })
         toast.success(`已订阅「${opt.label}」`)
-        await subs.load(true).catch(() => {})
+        await reloadAfterCreate()
       }, opt.sourceType)
     } catch (err: unknown) {
       toast.error(parseApiError(err, '订阅失败'))
@@ -276,7 +369,7 @@ export default function Add() {
           sourceName: item.name,
         })
         toast.success(`已订阅「${item.name}」`)
-        await subs.load(true).catch(() => {})
+        await reloadAfterCreate()
       }, item.id)
     } catch (err: unknown) {
       toast.error(parseApiError(err, '订阅失败'))
@@ -286,18 +379,56 @@ export default function Add() {
   const busy = setup.preparing || sessionLoading
   const externalUnavailable = !externalSubscriptions.enabled
   const externalLocked = externalSubscriptions.enabled && !session.can('external')
+  const subscriptionsUnavailable = subsStatus !== 'ready' || setup.error !== null
 
   return (
     <>
       <PageHeader
         title="添加新订阅"
-        description="订阅个人课表或外部课表，自动同步到你的日历应用。"
+        description="选择个人课表或外部课表，添加后可返回「我的订阅」查看日历链接。"
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/dashboard">我的订阅</Link>
+          </Button>
+        }
       />
       {busy ? (
         <PageState
           state="loading"
           title="正在准备订阅"
           description="正在确认登录状态与默认订阅，请稍候。"
+        />
+      ) : sessionError ? (
+        <PageState
+          state="error"
+          title="暂时无法确认登录状态"
+          description="请重试本次请求；仍失败时，稍后重新打开本页。"
+          action={
+            <Button type="button" variant="outline" onClick={() => void retrySession()}>
+              重试
+            </Button>
+          }
+        />
+      ) : subsStatus === 'loading' || (subsStatus === 'idle' && !setup.error) ? (
+        <PageState
+          state="loading"
+          title="正在加载订阅状态"
+          description="正在确认已订阅内容与剩余额度，请稍候。"
+        />
+      ) : subsStatus === 'error' ? (
+        <PageState
+          state="error"
+          title="订阅状态加载失败"
+          description="暂时无法确认哪些内容已订阅。为避免重复添加，请重试加载。"
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void loadSubscriptionList(true)}
+            >
+              重试
+            </Button>
+          }
         />
       ) : (
         <>
@@ -362,7 +493,7 @@ export default function Add() {
                           success: '已订阅',
                           error: '失败，重试',
                         }}
-                        disabled={subs.atLimit}
+                        disabled={subscriptionsUnavailable || subs.atLimit}
                         aria-label={`订阅${opt.label}`}
                         onClick={() => void handlePersonalSubscribe(opt)}
                       />
@@ -449,6 +580,22 @@ export default function Add() {
                         onChange={(event) => onKeywordChange(event.target.value)}
                       />
                     </div>
+                    {departmentsError && (
+                      <Alert variant="destructive">
+                        <AlertDescription className="add-error-row">
+                          <span>院系列表加载失败，可先直接搜索班级。</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={departmentsLoading}
+                            onClick={() => void loadDepartments()}
+                          >
+                            重试
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 )}
 
@@ -500,7 +647,7 @@ export default function Add() {
                               success: '已订阅',
                               error: '失败，重试',
                             }}
-                            disabled={subs.atLimit}
+                            disabled={subscriptionsUnavailable || subs.atLimit}
                             aria-label={`订阅${item.name}`}
                             onClick={() => void handleExternalSubscribe(item)}
                           />
@@ -523,8 +670,8 @@ export default function Add() {
 
           {errorMessage && (
             <Alert variant="destructive">
-              <AlertDescription>
-                {errorMessage}
+              <AlertDescription className="add-error-row">
+                <span>{errorMessage}</span>
                 {needsRepair && (
                   <>
                     {' '}
@@ -532,6 +679,16 @@ export default function Add() {
                       重新绑定重庆大学统一认证账号
                     </a>
                   </>
+                )}
+                {!needsRepair && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={retrySearch}
+                  >
+                    重试搜索
+                  </Button>
                 )}
               </AlertDescription>
             </Alert>

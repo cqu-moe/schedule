@@ -52,6 +52,11 @@ const NotFound = (
 export const appRoutes: RouteObject[] = [
   {
     element: <Layout />,
+    hydrateFallbackElement: (
+      <ContentContainer>
+        <PageState state="loading" title="正在打开页面" description="请稍候。" />
+      </ContentContainer>
+    ),
     errorElement: <RouteError />,
     children: [
       {
@@ -77,12 +82,7 @@ export const appRoutes: RouteObject[] = [
       {
         path: 'api-docs',
         lazy: async () => ({ Component: (await import('@/views/Docs')).default }),
-        handle: { title: `API 文档 | ${SITE_NAME}` },
-      },
-      {
-        path: 'changelog',
-        lazy: async () => ({ Component: (await import('@/views/Changelog')).default }),
-        handle: { title: `更新日志 | ${SITE_NAME}` },
+        handle: { title: `使用指南与 API | ${SITE_NAME}` },
       },
       {
         path: 'view/:token',

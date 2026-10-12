@@ -29,11 +29,13 @@ export default function QrcodeModal({
   url,
   token,
   onOpenChange,
+  onCloseAutoFocus,
 }: {
   open: boolean
   url: string
   token: string
   onOpenChange: (open: boolean) => void
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   const { publicUrl } = useSession()
   const opValue = useMemo(
@@ -47,7 +49,7 @@ export default function QrcodeModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>扫码订阅</DialogTitle>
           <DialogDescription>使用手机扫描二维码订阅日历。</DialogDescription>

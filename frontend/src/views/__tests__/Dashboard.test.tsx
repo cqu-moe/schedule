@@ -177,7 +177,7 @@ describe('Dashboard view (v2)', () => {
     expect(screen.getByText('自动同步已开启')).toBeInTheDocument()
     expect(screen.getByText('张三的课表')).toBeInTheDocument()
     expect(screen.getByText('李四老师')).toBeInTheDocument()
-    expect(screen.getAllByText('个人')).toHaveLength(1)
+    expect(screen.getByText('全部')).toBeInTheDocument()
     expect(screen.getByText('2025秋')).toBeInTheDocument()
     expect(screen.getByText('教师')).toBeInTheDocument()
     expect(screen.getByText(/同步于/)).toBeInTheDocument()
@@ -197,6 +197,8 @@ describe('Dashboard view (v2)', () => {
     mockApi.getSubscriptions.mockRejectedValue(new Error('network'))
     renderWithApp(<Dashboard />)
     await screen.findByText('暂时无法加载订阅')
+    expect(screen.getByText('订阅状态暂不可用')).toBeInTheDocument()
+    expect(screen.queryByText('0 / 5 个订阅')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新加载' })).toBeInTheDocument()
 
     mockApi.getSubscriptions.mockResolvedValue(mockList([mockSubscription()]))
@@ -283,7 +285,7 @@ describe('Dashboard view (v2)', () => {
 
   it('opens the share links dialog from the more menu', async () => {
     await mountDashboard([mockSubscription({ links: [defaultLink()] })])
-    await userEvent.click(screen.getByRole('button', { name: '更多' }))
+    await userEvent.click(screen.getByRole('button', { name: /的更多操作$/ }))
     const menu = await screen.findByRole('menu')
     await userEvent.click(within(menu).getByText('管理共享链接'))
     expect(await screen.findByTestId('share-links-dialog')).toHaveTextContent('我的课表')
@@ -305,10 +307,10 @@ describe('Dashboard view (v2)', () => {
       const copyButtons = screen.getAllByRole('button', { name: '复制链接' })
       expect(copyButtons).toHaveLength(3)
       for (const button of copyButtons) expect(button).toBeDisabled()
-      for (const button of screen.getAllByRole('button', { name: '二维码' })) {
+      for (const button of screen.getAllByRole('button', { name: /二维码$/ })) {
         expect(button).toBeDisabled()
       }
-      for (const button of screen.getAllByRole('button', { name: '更多' })) {
+      for (const button of screen.getAllByRole('button', { name: /的更多操作$/ })) {
         expect(button).toBeEnabled()
       }
     })

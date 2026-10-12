@@ -6,19 +6,15 @@ import { renderWithApp } from '@/test-utils'
 vi.mock('@/api', () => ({ default: {} }))
 
 describe('Home', () => {
-  it('renders hero, features and version footer', () => {
+  it('renders hero and features', () => {
     renderWithApp(<Home />)
 
     expect(
-      screen.getByRole('heading', { level: 1, name: '重庆大学课表日历订阅' }),
+      screen.getByRole('heading', { level: 1, name: /课表，放进.*你常用的日历/  }),
     ).toBeInTheDocument()
     expect(screen.getByText('自动同步')).toBeInTheDocument()
     expect(screen.getByText('标准格式')).toBeInTheDocument()
-    expect(screen.getByText('安全加密')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: `v${__APP_VERSION__}` })).toHaveAttribute(
-      'href',
-      '/changelog',
-    )
+    expect(screen.getByText('分享可控')).toBeInTheDocument()
   })
 
   it('links authenticated bound users to dashboard setup', () => {
