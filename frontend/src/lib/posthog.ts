@@ -1,9 +1,12 @@
-import posthog from "posthog-js";
-
 type EventLike = {
   event: string;
   properties: Record<string, unknown>;
 };
+
+type PostHogClient = typeof import("posthog-js")["default"];
+type DeferredCapture =
+  | { kind: "pageview"; path: string }
+  | { kind: "exception"; error: unknown; properties: Record<string, unknown> };
 
 const REDACTED = "[redacted]";
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
@@ -87,7 +90,12 @@ const token = import.meta.env.VITE_POSTHOG_PROJECT_TOKEN?.trim();
 const host = import.meta.env.VITE_POSTHOG_HOST?.trim() || "https://p.cqu.moe";
 const environment = import.meta.env.PROD ? "production" : import.meta.env.MODE === "test" ? "test" : "development";
 const release = import.meta.env.VITE_RELEASE?.trim() || "development";
-let initialized = false;
+let client: PostHogClient | null = null;
+let initialization: Promise<boolean> | null = null;
+let initializationFailed = false;
+let identityRequest: { userId: string | null } | null = null;
+let replayPath: string | null = null;
+let deferredCaptures: DeferredCapture[] = [];
 
 function clearLegacyPostHogCookie(projectToken: string): void {
   const encodedToken = projectToken.replace(/\+/g, "PL").replace(/\//g, "SL").replace(/=/g, "EQ");
@@ -98,57 +106,7 @@ function clearLegacyPostHogCookie(projectToken: string): void {
   }
 }
 
-export function initPostHog(): boolean {
-  if (initialized) return true;
-  if (!token) {
-    if (import.meta.env.DEV) console.info("VITE_POSTHOG_PROJECT_TOKEN is not configured; PostHog is disabled.");
-    return false;
-  }
-  clearLegacyPostHogCookie(token);
-  posthog.init(token, {
-    api_host: host,
-    asset_host: host,
-    ui_host: "https://us.posthog.com",
-    persistence: "localStorage",
-    cross_subdomain_cookie: false,
-    defaults: "2026-05-30",
-    capture_pageview: false,
-    capture_pageleave: false,
-    capture_exceptions: {
-      capture_unhandled_errors: true,
-      capture_unhandled_rejections: true,
-      capture_console_errors: false,
-    },
-    autocapture: {
-      dom_event_allowlist: ["click"],
-      element_allowlist: ["a", "button"],
-      url_allowlist: [
-        /^https?:\/\/[^/]+\/$/,
-        /^https?:\/\/[^/]+\/api-docs$/,
-        /^https?:\/\/[^/]+\/changelog$/,
-      ],
-      css_selector_ignorelist: [".ph-no-capture", "[data-ph-no-autocapture]", "[data-sensitive]"],
-    },
-    capture_heatmaps: true,
-    disable_session_recording: true,
-    session_recording: {
-      maskAllInputs: true,
-      maskTextSelector: "*",
-      blockSelector: "[data-sensitive]",
-      recordHeaders: false,
-      recordBody: false,
-    },
-    before_send: sanitizePostHogEvent,
-    person_profiles: "identified_only",
-    ip: false,
-  });
-  posthog.register({ service: "schedule-web", environment, release });
-  initialized = true;
-  return true;
-}
-
-export function syncPostHogIdentity(userId: string | null): void {
-  if (!initialized) return;
+function applyIdentity(posthog: PostHogClient, userId: string | null): void {
   // posthog-js persists "$user_id" across page loads; a module-level flag
   // misses it after reload and identify() would merge the previous account's
   // person into the new user.
@@ -159,23 +117,138 @@ export function syncPostHogIdentity(userId: string | null): void {
   if (userId) posthog.identify(userId);
 }
 
-export function captureSchedulePageview(pathname: string): void {
-  if (!initialized) return;
-  const path = templateRoutePath(pathname);
-  posthog.capture("$pageview", {
-    $current_url: `${window.location.origin}${path}`,
-    route: path,
-  });
+function captureDeferred(posthog: PostHogClient, capture: DeferredCapture): void {
+  if (capture.kind === "pageview") {
+    const path = templateRoutePath(capture.path);
+    posthog.capture("$pageview", {
+      $current_url: `${window.location.origin}${path}`,
+      route: path,
+    });
+    return;
+  }
+  posthog.captureException(capture.error, capture.properties);
 }
 
-export function syncPostHogReplay(pathname: string): void {
-  if (!initialized) return;
-  const safe = pathname === "/" || pathname === "/api-docs" || pathname === "/changelog";
+function syncReplay(posthog: PostHogClient, pathname: string): void {
+  const safe = pathname === "/" || pathname === "/api-docs";
   if (safe) posthog.startSessionRecording();
   else posthog.stopSessionRecording();
 }
 
+export function initPostHog(): Promise<boolean> {
+  if (client) return Promise.resolve(true);
+  if (!token) {
+    if (import.meta.env.DEV) console.info("VITE_POSTHOG_PROJECT_TOKEN is not configured; PostHog is disabled.");
+    return Promise.resolve(false);
+  }
+  if (initializationFailed) return Promise.resolve(false);
+  if (initialization) return initialization;
+
+  const request = (async (): Promise<boolean> => {
+    try {
+      clearLegacyPostHogCookie(token);
+      const { default: loadedPostHog } = await import("posthog-js");
+      loadedPostHog.init(token, {
+        api_host: host,
+        asset_host: host,
+        ui_host: "https://us.posthog.com",
+        persistence: "localStorage",
+        cross_subdomain_cookie: false,
+        defaults: "2026-05-30",
+        capture_pageview: false,
+        capture_pageleave: false,
+        capture_exceptions: {
+          capture_unhandled_errors: true,
+          capture_unhandled_rejections: true,
+          capture_console_errors: false,
+        },
+        autocapture: {
+          dom_event_allowlist: ["click"],
+          element_allowlist: ["a", "button"],
+          url_allowlist: [
+            /^https?:\/\/[^/]+\/$/,
+            /^https?:\/\/[^/]+\/api-docs$/,
+          ],
+          css_selector_ignorelist: [".ph-no-capture", "[data-ph-no-autocapture]", "[data-sensitive]"],
+        },
+        capture_heatmaps: true,
+        disable_session_recording: true,
+        session_recording: {
+          maskAllInputs: true,
+          maskTextSelector: "*",
+          blockSelector: "[data-sensitive]",
+          recordHeaders: false,
+          recordBody: false,
+        },
+        before_send: sanitizePostHogEvent,
+        person_profiles: "identified_only",
+        ip: false,
+      });
+      loadedPostHog.register({ service: "schedule-web", environment, release });
+      client = loadedPostHog;
+
+      // Replay only the newest identity and recording state. Earlier requests
+      // are deliberately superseded so a slow chunk cannot activate stale state.
+      if (identityRequest) applyIdentity(client, identityRequest.userId);
+      const captures = deferredCaptures;
+      deferredCaptures = [];
+      for (const capture of captures) captureDeferred(client, capture);
+      if (replayPath !== null) syncReplay(client, replayPath);
+      initialization = null;
+      return true;
+    } catch (error) {
+      client = null;
+      initializationFailed = true;
+      initialization = null;
+      identityRequest = null;
+      replayPath = null;
+      deferredCaptures = [];
+      if (import.meta.env.DEV) {
+        console.warn("PostHog failed to load; analytics is disabled for this page load.", error);
+      }
+      return false;
+    }
+  })();
+
+  initialization = request;
+  return request;
+}
+
+export function syncPostHogIdentity(userId: string | null): void {
+  identityRequest = { userId };
+  if (client) applyIdentity(client, userId);
+}
+
+export function captureSchedulePageview(pathname: string): void {
+  if (!token || initializationFailed) return;
+  if (client) {
+    captureDeferred(client, { kind: "pageview", path: pathname });
+    return;
+  }
+  // A route can change while the SDK chunk loads; only the latest pageview is
+  // relevant once analytics becomes available.
+  deferredCaptures = [
+    ...deferredCaptures.filter((capture) => capture.kind !== "pageview"),
+    { kind: "pageview", path: pathname },
+  ];
+}
+
+export function syncPostHogReplay(pathname: string): void {
+  replayPath = pathname;
+  if (client) syncReplay(client, pathname);
+}
+
 export function captureScheduleException(error: unknown, properties: Record<string, unknown> = {}): void {
-  if (!initialized) return;
-  posthog.captureException(error, sanitizeValue(properties) as Record<string, unknown>);
+  if (!token || initializationFailed) return;
+  const capture = {
+    kind: "exception",
+    error,
+    properties: sanitizeValue(properties) as Record<string, unknown>,
+  } satisfies DeferredCapture;
+  if (client) {
+    captureDeferred(client, capture);
+    return;
+  }
+  // Bound startup buffering when the SDK chunk is slow or stalled.
+  deferredCaptures = [...deferredCaptures.slice(-19), capture];
 }

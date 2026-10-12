@@ -93,6 +93,11 @@
   gap: var(--space-2);
 }
 
+.add-error-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .add-source-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -127,7 +132,14 @@
 }
 
 .add-search-field input {
+  min-height: 44px;
+  font-size: var(--text-base);
   padding-left: var(--space-9);
+}
+
+.add-admin-filters input {
+  min-height: 44px;
+  font-size: var(--text-base);
 }
 
 .add-searching {
@@ -178,7 +190,31 @@
 }
 
 @media (max-width: 480px) {
+  .add-card {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .add-option,
+  .add-result {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    min-height: 3.5rem;
+  }
+
+  .add-option > button,
+  .add-result > button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .add-source-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 360px) {
+  .add-source-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import {
   Button,
@@ -19,6 +19,9 @@ import {
   toast,
 } from '@cqu-moe/ui'
 import {
+  CalendarDays,
+  BookOpen,
+  Plus,
   Check,
   CircleAlert,
   Download,
@@ -32,8 +35,8 @@ import {
 import api from '@/api'
 import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import FirstSyncNotice from '@/components/FirstSyncNotice'
-import QrcodeModal from '@/components/QrcodeModal'
-import ShareLinksDialog from '@/components/ShareLinksDialog'
+const QrcodeModal = lazy(() => import('@/components/QrcodeModal'))
+const ShareLinksDialog = lazy(() => import('@/components/ShareLinksDialog'))
 import { useButtonFeedback, type ButtonState } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
 import { defaultLink } from '@/hooks/useSubscriptions'
@@ -181,6 +184,11 @@ export default function Dashboard() {
     url: '',
     token: '',
   })
+  const deletingRef = useRef(false)
+  const [deleting, setDeleting] = useState(false)
+  const qrTriggerRef = useRef<HTMLElement | null>(null)
+  const menuTriggersRef = useRef(new Map<string, HTMLButtonElement>())
+  const dialogTriggerRef = useRef<HTMLElement | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [shareSubId, setShareSubId] = useState<string | null>(null)
   const [firstSyncDismissed, setFirstSyncDismissed] = useState(false)
@@ -216,8 +224,7 @@ export default function Dashboard() {
   function scheduleNextPoll(delay?: number) {
     if (!pollingActiveRef.current || pollTimerRef.current) return
     const nextDelay =
-      delay ??
-      (Date.now() < rateLimitedUntilRef.current ? RATE_LIMIT_POLL_INTERVAL : POLL_INTERVAL)
+      delay ?? (Date.now() < rateLimitedUntilRef.current ? RATE_LIMIT_POLL_INTERVAL : POLL_INTERVAL)
     pollTimerRef.current = setTimeout(runSyncPoll, nextDelay)
   }
 
@@ -252,10 +259,7 @@ export default function Dashboard() {
   }
 
   /** Fail selected pending refreshes so no subscription stays "同步中" forever. */
-  function failPendingRefreshes(
-    message: string,
-    ids = Object.keys(pendingRefreshRef.current),
-  ) {
+  function failPendingRefreshes(message: string, ids = Object.keys(pendingRefreshRef.current)) {
     for (const id of ids) {
       localSyncErrorsRef.current[id] = message
       delete pendingRefreshRef.current[id]
@@ -284,8 +288,7 @@ export default function Dashboard() {
           pending.failureSince ??= now
           if (
             now - pending.failureSince >= POLL_ACTIVE_TIMEOUT ||
-            (pending.unconfirmedSince !== null &&
-              now - pending.unconfirmedSince >= POLL_TIMEOUT)
+            (pending.unconfirmedSince !== null && now - pending.unconfirmedSince >= POLL_TIMEOUT)
           ) {
             timedOutIds.push(id)
           }
@@ -320,8 +323,7 @@ export default function Dashboard() {
         delete pendingRefreshRef.current[id]
         continue
       }
-      const legacyTimestampChanged =
-        !pending.runId && sub.last_synced_at !== pending.oldSyncedAt
+      const legacyTimestampChanged = !pending.runId && sub.last_synced_at !== pending.oldSyncedAt
       if ((isSameRun && sub.sync_status === 'success') || legacyTimestampChanged) {
         delete localSyncErrorsRef.current[id]
         toast.success('同步完成')
@@ -446,9 +448,7 @@ export default function Dashboard() {
   const pendingIds = new Set(Object.keys(pendingRefreshRef.current))
   const hasUnfinishedFirstSync =
     firstSyncTargetIds.length > 0 &&
-    subscriptions.some(
-      (sub) => firstSyncTargetIds.includes(sub.id) && !sub.last_synced_at,
-    )
+    subscriptions.some((sub) => firstSyncTargetIds.includes(sub.id) && !sub.last_synced_at)
   const firstSyncContext = startedThisVisit || hasUnfinishedFirstSync
   const firstSyncPhase = deriveFirstSyncPhase({
     subscriptions,
@@ -480,6 +480,13 @@ export default function Dashboard() {
     return refreshCooldownSeconds(sub) > 0
   }
 
+  const hasActiveCooldown = subscriptions.some(isRefreshCoolingDown)
+  useEffect(() => {
+    if (!hasActiveCooldown) return
+    const timer = window.setInterval(() => setCooldownClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [hasActiveCooldown])
+
   function isSubSyncing(sub: Subscription): boolean {
     return (
       sub.id in pendingRefreshRef.current ||
@@ -499,8 +506,8 @@ export default function Dashboard() {
   function syncProgressLabel(sub: Subscription): string {
     if (isFirstSyncCard(sub)) return '首次同步中…'
     return sub.sync_status === 'queued' && Boolean(sub.sync_error_code)
-      ? '同步遇到临时故障，正在自动重试...'
-      : '同步中...'
+      ? '同步遇到临时故障，正在自动重试…'
+      : '同步中…'
   }
 
   function refreshButtonState(sub: Subscription): ButtonState {
@@ -551,21 +558,27 @@ export default function Dashboard() {
 
   const currentUrl = window.location.origin + location.pathname + location.search + location.hash
   const bindHref = useMemo(() => authCquBindUrl(currentUrl), [currentUrl])
-  const repairBindHref = useMemo(
-    () => authCquBindUrl(currentUrl, { repair: true }),
-    [currentUrl],
-  )
+  const repairBindHref = useMemo(() => authCquBindUrl(currentUrl, { repair: true }), [currentUrl])
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   function openDeleteSubDialog(sub: Subscription) {
     if (sub.is_personal) return
+    dialogTriggerRef.current = menuTriggersRef.current.get(sub.id) ?? null
     setDeleteTarget({ id: sub.id, name: sub.source_name })
   }
 
   function openShareLinks(sub: Subscription) {
+    dialogTriggerRef.current = menuTriggersRef.current.get(sub.id) ?? null
     setShareSubId(sub.id)
     setShareOpen(true)
+  }
+
+  function restoreDialogFocus(event: Event) {
+    event.preventDefault()
+    const trigger = dialogTriggerRef.current
+    if (trigger?.isConnected) trigger.focus()
+    else document.getElementById('main-content')?.focus()
   }
 
   async function handleCopyIcs(item: EnrichedSub) {
@@ -582,6 +595,7 @@ export default function Dashboard() {
 
   function openQrModal(item: EnrichedSub) {
     if (!item.defaultLink || firstSyncLinkUnavailable(item.sub)) return
+    qrTriggerRef.current = document.activeElement as HTMLElement
     setQrModal({
       open: true,
       url: buildLinkUrl(session.publicUrl, item.defaultLink.token, 'ics'),
@@ -614,14 +628,20 @@ export default function Dashboard() {
 
   async function handleDeleteSub(sid: string) {
     const sub = dataRef.current.subscriptions.find((item) => item.id === sid)
-    if (!sub || sub.is_personal) return
+    if (!sub || sub.is_personal || deletingRef.current) return
+    deletingRef.current = true
+    setDeleting(true)
     try {
       await api.deleteSubscription(sid)
+      dialogTriggerRef.current = null
       toast.success('订阅已删除')
       setDeleteTarget(null)
       await loadSubscriptions(true).catch(() => {})
     } catch (error) {
       toast.error(parseApiError(error, '删除订阅失败'))
+    } finally {
+      deletingRef.current = false
+      setDeleting(false)
     }
   }
 
@@ -721,7 +741,6 @@ export default function Dashboard() {
     window.addEventListener('focus', handleWindowFocus)
     window.addEventListener('pageshow', handlePageShow)
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    const cooldownTimer = window.setInterval(() => setCooldownClock(Date.now()), 1000)
 
     void (async () => {
       try {
@@ -743,7 +762,6 @@ export default function Dashboard() {
       window.removeEventListener('focus', handleWindowFocus)
       window.removeEventListener('pageshow', handlePageShow)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.clearInterval(cooldownTimer)
       stopPolling()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -775,41 +793,50 @@ export default function Dashboard() {
     <>
       <PageHeader
         title="我的订阅"
-        description={`${count}${subLimit !== null ? ` / ${subLimit}` : ''} 个订阅`}
+        description="管理课程与考试订阅，让日历跟上你的安排。"
         actions={
           <div className="dash-header-actions">
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="default"
               aria-busy={syncAllButtonState === 'loading'}
               aria-live={syncAllButtonState === 'idle' ? 'off' : 'polite'}
               disabled={
-                syncAllButtonState === 'loading' || personalSubs.length === 0 ||
-                !canManualRefresh || syncAllCooldownSeconds > 0
+                syncAllButtonState === 'loading' ||
+                personalSubs.length === 0 ||
+                !canManualRefresh ||
+                syncAllCooldownSeconds > 0
               }
               onClick={() => void handleSyncAll()}
             >
-              {syncAllButtonState === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
+              {syncAllButtonState === 'loading' && (
+                <Loader2 className="dash-icon-spin" aria-hidden="true" />
+              )}
               {syncAllButtonState === 'success' && <Check aria-hidden="true" />}
               {syncAllButtonState === 'error' && <CircleAlert aria-hidden="true" />}
-              {{
-                idle:
-                  syncAllCooldownSeconds > 0
-                    ? cooldownLabel(syncAllCooldownSeconds)
-                    : '同步个人课表',
-                loading: '同步中…',
-                success: '已同步',
-                error: '同步失败，重试',
-              }[syncAllButtonState]}
+              {
+                {
+                  idle:
+                    syncAllCooldownSeconds > 0
+                      ? cooldownLabel(syncAllCooldownSeconds)
+                      : '同步个人课表',
+                  loading: '同步中…',
+                  success: '已同步',
+                  error: '同步失败，重试',
+                }[syncAllButtonState]
+              }
             </Button>
             {atLimit ? (
-              <Button variant="outline" size="sm" disabled title="已达订阅上限">
+              <Button variant="outline" size="default" disabled title="已达订阅上限">
                 添加订阅
               </Button>
             ) : (
-              <Button asChild variant="outline" size="sm">
-                <Link to="/add">添加订阅</Link>
+              <Button asChild size="default">
+                <Link to="/add">
+                  <Plus aria-hidden="true" />
+                  添加订阅
+                </Link>
               </Button>
             )}
           </div>
@@ -817,23 +844,17 @@ export default function Dashboard() {
       />
 
       <div className="dash-meta">
+        <p className="dash-count">
+          {loading
+            ? '正在读取订阅'
+            : loadError
+              ? '订阅状态暂不可用'
+              : `${count}${subLimit !== null ? ` / ${subLimit}` : ''} 个订阅`}
+        </p>
         <p className={session.can('sync') ? 'dash-sync-status is-on' : 'dash-sync-status'}>
           <span className="dash-status-dot" aria-hidden="true" />
           {session.can('sync') ? '自动同步已开启' : '自动同步未开通'}
         </p>
-        {canChangeNotification && (
-          <div className="dash-notification">
-            <Switch
-              id="notification-settings"
-              aria-label="课表变更通知"
-              checked={notificationEnabled}
-              disabled={notificationLoading}
-              onCheckedChange={() => void toggleNotification()}
-            />
-            <Label htmlFor="notification-settings">课表变更通知</Label>
-            <span className="dash-meta-hint">有变化时发邮件</span>
-          </div>
-        )}
         {atLimit && <p className="dash-limit-note">已达订阅上限</p>}
       </div>
 
@@ -866,167 +887,218 @@ export default function Dashboard() {
 
           {!loading && session.isCquUnbound && (
             <div className="dash-card dash-bind-card">
-              <p className="dash-bind-title">{session.cquBindStatus === 'deleting' ? '统一认证账号正在解绑' : '尚未绑定重庆大学统一认证账号'}</p>
-              <p className="dash-sync-meta">
-                {session.cquBindStatus === 'deleting' ? '清理完成前无法同步个人课表，请在认证中心查看解绑进度。' : '个人课表同步依赖你的统一认证账号，绑定后即可继续。'}
+              <p className="dash-bind-title">
+                {session.cquBindStatus === 'deleting'
+                  ? '统一认证账号正在解绑'
+                  : '尚未绑定重庆大学统一认证账号'}
               </p>
-              <Button asChild variant="outline" size="sm">
-                <a href={session.cquBindStatus === 'deleting' ? `${AUTH_BASE_URL}/settings/cqu` : bindHref}>{session.cquBindStatus === 'deleting' ? '查看解绑进度' : '绑定重庆大学统一认证账号'}</a>
+              <p className="dash-sync-meta">
+                {session.cquBindStatus === 'deleting'
+                  ? '清理完成前无法同步个人课表，请在认证中心查看解绑进度。'
+                  : '个人课表同步依赖你的统一认证账号，绑定后即可继续。'}
+              </p>
+              <Button asChild variant="outline" size="default">
+                <a
+                  href={
+                    session.cquBindStatus === 'deleting'
+                      ? `${AUTH_BASE_URL}/settings/cqu`
+                      : bindHref
+                  }
+                >
+                  {session.cquBindStatus === 'deleting'
+                    ? '查看解绑进度'
+                    : '绑定重庆大学统一认证账号'}
+                </a>
               </Button>
             </div>
           )}
 
-          <ul className="dash-list">
+          <div className="dash-section-heading">
+            <h2>课表订阅</h2>
+            <Link to="/api-docs#subscribe">
+              <BookOpen size={16} aria-hidden="true" />
+              如何订阅到日历
+            </Link>
+          </div>
+          <ul className="dash-list" aria-label="课表订阅">
             {enrichedSubs.map(({ sub, defaultLink: link }) => (
               <li className="dash-card" key={sub.id}>
-                <div className="dash-card-title">
-                  <span className="dash-badge">{sourceTypeLabel(sub.source_type)}</span>
-                  <span className="dash-card-name">{sub.source_name}</span>
-                  {sub.is_personal && <span className="dash-badge dash-badge-outline">个人</span>}
-                </div>
-                <div className="dash-card-sub">
-                  {sub.session_name && (
-                    <span className="dash-badge dash-badge-outline">{sub.session_name}</span>
-                  )}
-                  {syncErrorMessage(sub) ? (
-                    <span className="dash-sync-error">
-                      同步失败{!isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
-                      {sub.sync_error_code === 'NEEDS_REAUTH' && (
-                        <a href={repairBindHref}>重新绑定重庆大学统一认证账号</a>
-                      )}
-                    </span>
-                  ) : isSubSyncing(sub) ? (
-                    <span className="dash-sync-progress">
-                      <Loader2 />
-                      {syncProgressLabel(sub)}
-                    </span>
-                  ) : isFirstSyncCard(sub) &&
+                <div className="dash-card-info">
+                  <div className="dash-card-title">
+                    <CalendarDays size={20} aria-hidden="true" />
+                    <span className="dash-badge">{sourceTypeLabel(sub.source_type)}</span>
+                    <h3 className="dash-card-name">{sub.source_name}</h3>
+                  </div>
+                  <div className="dash-card-sub">
+                    {sub.session_name && (
+                      <span className="dash-semester">{sub.session_name}</span>
+                    )}
+                    {syncErrorMessage(sub) ? (
+                      <span className="dash-sync-error">
+                        同步失败{!isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
+                        {sub.sync_error_code === 'NEEDS_REAUTH' && (
+                          <a href={repairBindHref}>重新绑定重庆大学统一认证账号</a>
+                        )}
+                      </span>
+                    ) : isSubSyncing(sub) ? (
+                      <span className="dash-sync-progress">
+                        <Loader2 />
+                        {syncProgressLabel(sub)}
+                      </span>
+                    ) : isFirstSyncCard(sub) &&
                       sub.sync_status === 'success' &&
                       sub.last_synced_at ? (
-                    <span className="dash-sync-meta">刚刚同步</span>
-                  ) : sub.last_synced_at ? (
-                    <span className="dash-sync-meta">同步于 {formatDate(sub.last_synced_at)}</span>
-                  ) : (
-                    <span className="dash-sync-meta">尚未同步</span>
-                  )}
+                      <span className="dash-sync-meta">刚刚同步</span>
+                    ) : sub.last_synced_at ? (
+                      <span className="dash-sync-meta">
+                        同步于 {formatDate(sub.last_synced_at)}
+                      </span>
+                    ) : (
+                      <span className="dash-sync-meta">尚未同步</span>
+                    )}
+                  </div>
                 </div>
-
                 <div className="dash-card-actions">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    aria-busy={refreshButtonState(sub) === 'loading'}
-                    aria-live={refreshButtonState(sub) === 'idle' ? 'off' : 'polite'}
-                    disabled={
-                      refreshButtonState(sub) === 'loading' ||
-                      !canManualRefresh || isRefreshCoolingDown(sub)
-                    }
-                    onClick={() => void handleRefreshSub(sub.id)}
-                  >
-                    {refreshButtonState(sub) === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
-                    {refreshButtonState(sub) === 'success' && <Check aria-hidden="true" />}
-                    {refreshButtonState(sub) === 'error' && <CircleAlert aria-hidden="true" />}
-                    {{
-                      idle: refreshCooldownSeconds(sub) > 0
-                        ? cooldownLabel(refreshCooldownSeconds(sub))
-                        : '同步',
-                      loading: '同步中',
-                      success: '已刷新',
-                      error: isFirstSyncCard(sub) ? '重试同步' : '失败',
-                    }[refreshButtonState(sub)]}
-                  </Button>
-
                   {link && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-busy={copyFeedback.stateOf(sub.id) === 'loading'}
-                        aria-live="polite"
-                        disabled={
-                          copyFeedback.stateOf(sub.id) === 'loading' || firstSyncLinkUnavailable(sub)
-                        }
-                        onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
-                      >
-                        {copyFeedback.stateOf(sub.id) === 'loading' && <Loader2 className="dash-icon-spin" aria-hidden="true" />}
-                        {copyFeedback.stateOf(sub.id) === 'success' && <Check aria-hidden="true" />}
-                        {copyFeedback.stateOf(sub.id) === 'error' && <CircleAlert aria-hidden="true" />}
-                        {{
-                          idle: '复制链接',
-                          loading: '复制中',
-                          success: '已复制',
-                          error: '复制失败',
-                        }[copyFeedback.stateOf(sub.id)]}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        title="二维码"
-                        aria-label="二维码"
-                        disabled={firstSyncLinkUnavailable(sub)}
-                        onClick={() => openQrModal({ sub, defaultLink: link })}
-                      >
-                        <QrCode />
-                      </Button>
+                    <div className="dash-main-actions">
                       {!firstSyncLinkUnavailable(sub) ? (
-                        <Button asChild variant="outline" size="icon-sm">
+                        <Button asChild size="default">
                           <a
                             href={buildLinkUrl(session.publicUrl, link.token, 'web')}
                             target="_blank"
                             rel="noopener"
                             title="网页预览"
-                            aria-label="网页预览"
+                            aria-label={`查看课表：${sub.source_name}`}
                           >
-                            <ExternalLink />
+                            <ExternalLink aria-hidden="true" />
+                            查看课表
                           </a>
                         </Button>
                       ) : (
                         <Button
-                          variant="outline"
-                          size="icon-sm"
+                          size="default"
                           title="网页预览"
-                          aria-label="网页预览"
+                          aria-label={`查看课表：${sub.source_name}`}
                           disabled
                         >
-                          <ExternalLink />
+                          <ExternalLink aria-hidden="true" />
+                          查看课表
                         </Button>
                       )}
-                    </>
-                  )}
-
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="icon-sm" title="更多" aria-label="更多">
-                        <Ellipsis />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="default"
+                        aria-busy={copyFeedback.stateOf(sub.id) === 'loading'}
+                        aria-live="polite"
+                        disabled={
+                          copyFeedback.stateOf(sub.id) === 'loading' ||
+                          firstSyncLinkUnavailable(sub)
+                        }
+                        onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
+                      >
+                        {copyFeedback.stateOf(sub.id) === 'loading' && (
+                          <Loader2 className="dash-icon-spin" aria-hidden="true" />
+                        )}
+                        {copyFeedback.stateOf(sub.id) === 'success' && <Check aria-hidden="true" />}
+                        {copyFeedback.stateOf(sub.id) === 'error' && (
+                          <CircleAlert aria-hidden="true" />
+                        )}
+                        {
+                          {
+                            idle: '复制链接',
+                            loading: '复制中',
+                            success: '已复制',
+                            error: '复制失败',
+                          }[copyFeedback.stateOf(sub.id)]
+                        }
                       </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {link &&
-                        (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
-                          <DropdownMenuItem key={fmt} asChild>
-                            <a href={buildLinkUrl(session.publicUrl, link.token, fmt)} download>
-                              <Download />
-                              下载 {DOWNLOAD_LABELS[fmt]}
-                            </a>
-                          </DropdownMenuItem>
-                        ))}
-                      <DropdownMenuItem onSelect={() => openShareLinks(sub)}>
-                        <Share2 />
-                        管理共享链接
-                      </DropdownMenuItem>
-                      {!sub.is_personal && (
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onSelect={() => openDeleteSubDialog(sub)}
-                        >
-                          <Trash2 />
-                          删除
-                        </DropdownMenuItem>
+                    </div>
+                  )}
+                  <div className="dash-secondary-actions">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="default"
+                      aria-busy={refreshButtonState(sub) === 'loading'}
+                      aria-live={refreshButtonState(sub) === 'idle' ? 'off' : 'polite'}
+                      disabled={
+                        refreshButtonState(sub) === 'loading' ||
+                        !canManualRefresh ||
+                        isRefreshCoolingDown(sub)
+                      }
+                      onClick={() => void handleRefreshSub(sub.id)}
+                    >
+                      {refreshButtonState(sub) === 'loading' && (
+                        <Loader2 className="dash-icon-spin" aria-hidden="true" />
                       )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                      {refreshButtonState(sub) === 'success' && <Check aria-hidden="true" />}
+                      {refreshButtonState(sub) === 'error' && <CircleAlert aria-hidden="true" />}
+                      {
+                        {
+                          idle:
+                            refreshCooldownSeconds(sub) > 0
+                              ? cooldownLabel(refreshCooldownSeconds(sub))
+                              : '同步',
+                          loading: '同步中',
+                          success: '已刷新',
+                          error: isFirstSyncCard(sub) ? '重试同步' : '失败',
+                        }[refreshButtonState(sub)]
+                      }
+                    </Button>
+                    {link && (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        title="二维码"
+                        aria-label={`${sub.source_name}二维码`}
+                        disabled={firstSyncLinkUnavailable(sub)}
+                        onClick={() => openQrModal({ sub, defaultLink: link })}
+                      >
+                        <QrCode />
+                      </Button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          title="更多"
+                          aria-label={`${sub.source_name}的更多操作`}
+                          ref={(element) => {
+                            if (element) menuTriggersRef.current.set(sub.id, element)
+                            else menuTriggersRef.current.delete(sub.id)
+                          }}
+                        >
+                          <Ellipsis />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {link &&
+                          (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
+                            <DropdownMenuItem key={fmt} asChild>
+                              <a href={buildLinkUrl(session.publicUrl, link.token, fmt)} download>
+                                <Download />
+                                下载 {DOWNLOAD_LABELS[fmt]}
+                              </a>
+                            </DropdownMenuItem>
+                          ))}
+                        <DropdownMenuItem onSelect={() => openShareLinks(sub)}>
+                          <Share2 />
+                          管理共享链接
+                        </DropdownMenuItem>
+                        {!sub.is_personal && (
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => openDeleteSubDialog(sub)}
+                          >
+                            <Trash2 />
+                            删除
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
               </li>
             ))}
@@ -1038,7 +1110,7 @@ export default function Dashboard() {
               title="还没有订阅"
               description="添加课表订阅后，课表会自动同步到你的日历应用。"
               action={
-                <Button asChild variant="outline" size="sm">
+                <Button asChild variant="outline" size="default">
                   <Link to="/add">添加新订阅</Link>
                 </Button>
               }
@@ -1047,35 +1119,73 @@ export default function Dashboard() {
         </>
       )}
 
-      <QrcodeModal
-        open={qrModal.open}
-        url={qrModal.url}
-        token={qrModal.token}
-        onOpenChange={(v) => setQrModal((current) => (v ? current : { ...current, open: false }))}
-      />
+      {canChangeNotification && !loading && !loadError && (
+        <section className="dash-settings" aria-label="通知设置">
+          <div>
+            <h2>课表变更通知</h2>
+            <p>课表有变化时，通过邮件提醒你。</p>
+          </div>
 
-      {activeShareSub && (
-        <ShareLinksDialog
-          open={shareOpen}
-          subscription={activeShareSub}
-          shareLinkCount={shareLinkCount}
-          atShareLimit={atShareLimit}
-          onOpenChange={(v) => {
-            if (!v) setShareOpen(false)
-          }}
-          onChanged={() => {
-            void loadSubscriptions(true).catch(() => {})
-          }}
-        />
+          <div className="dash-notification">
+            <Switch
+              id="notification-settings"
+              aria-label="课表变更通知"
+              checked={notificationEnabled}
+              disabled={notificationLoading}
+              onCheckedChange={() => void toggleNotification()}
+            />
+            <Label htmlFor="notification-settings" className="sr-only">
+              课表变更通知
+            </Label>
+          </div>
+        </section>
       )}
+      <Suspense
+        fallback={
+          <p className="dash-dialog-loading" role="status">
+            正在打开…
+          </p>
+        }
+      >
+        {qrModal.url && (
+          <QrcodeModal
+            open={qrModal.open}
+            url={qrModal.url}
+            token={qrModal.token}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              qrTriggerRef.current?.focus()
+            }}
+            onOpenChange={(v) =>
+              setQrModal((current) => (v ? current : { ...current, open: false }))
+            }
+          />
+        )}
+
+        {activeShareSub && (
+          <ShareLinksDialog
+            open={shareOpen}
+            subscription={activeShareSub}
+            shareLinkCount={shareLinkCount}
+            atShareLimit={atShareLimit}
+            onCloseAutoFocus={restoreDialogFocus}
+            onOpenChange={(v) => {
+              if (!v) setShareOpen(false)
+            }}
+            onChanged={() => {
+              void loadSubscriptions(true).catch(() => {})
+            }}
+          />
+        )}
+      </Suspense>
 
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(v) => {
-          if (!v) setDeleteTarget(null)
+          if (!v && !deletingRef.current) setDeleteTarget(null)
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>确认删除订阅</DialogTitle>
             <DialogDescription>
@@ -1083,14 +1193,16 @@ export default function Dashboard() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>
               取消
             </Button>
             <Button
               variant="destructive"
+              disabled={deleting}
+              aria-busy={deleting}
               onClick={() => deleteTarget && void handleDeleteSub(deleteTarget.id)}
             >
-              删除
+              {deleting ? '正在删除…' : '删除'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -11,10 +11,10 @@ describe('Docs', () => {
   it('renders doc intro, token explanation, endpoints and field table', () => {
     renderWithApp(<Docs />)
 
-    expect(screen.getByRole('heading', { level: 1, name: 'API 文档' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '使用指南与 API' })).toBeInTheDocument()
     expect(screen.getByText('什么是链接令牌？')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '公开端点' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '刷新订阅' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '同步与更新' })).toBeInTheDocument()
     for (const title of endpointTitles) {
       expect(screen.getByRole('heading', { level: 3, name: `GET ${title}` })).toBeInTheDocument()
     }

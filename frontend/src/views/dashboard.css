@@ -9,9 +9,12 @@
 
 .dash-meta {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-block: var(--space-1) var(--space-5);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block: var(--space-1) var(--space-6);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
 }
 
 .dash-sync-status {
@@ -40,11 +43,6 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   font-size: var(--text-sm);
-}
-
-.dash-meta-hint {
-  font-size: var(--text-xs);
-  color: var(--muted-foreground);
 }
 
 .dash-limit-note {
@@ -81,6 +79,8 @@
 }
 
 .dash-card-name {
+  margin: 0;
+  font: inherit;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -99,16 +99,24 @@
   white-space: nowrap;
 }
 
-.dash-badge-outline {
-  background: transparent;
-}
-
 .dash-card-sub {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-2);
+  line-height: 1.7;
+}
+
+.dash-semester {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.dash-card-sub > :not(:first-child)::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--muted-foreground);
 }
 
 .dash-sync-error {
@@ -152,6 +160,8 @@
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
 }
 
 .dash-bind-card {
@@ -587,5 +597,145 @@
   .dash-icon-spin,
   .dash-sync-progress svg {
     animation: none;
+  }
+}
+
+.dash-count {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.dash-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.dash-section-heading h2 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.dash-section-heading a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font-size: var(--text-xs);
+}
+.dash-section-heading a:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.dash-card-info {
+  min-width: 0;
+}
+.dash-card-title > svg {
+  color: var(--muted-foreground);
+}
+.dash-card-title .dash-badge {
+  order: 1;
+  background: transparent;
+}
+
+.dash-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+  padding-block: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+.dash-settings h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0;
+}
+.dash-settings p {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  margin: var(--space-1) 0 0;
+}
+.dash-dialog-loading {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  z-index: 60;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-sm);
+}
+.qr-body > svg {
+  max-width: 100%;
+  height: auto;
+  padding: var(--space-3);
+  background: white;
+  border-radius: var(--radius);
+}
+@media (max-width: 767px) {
+  .dash-card {
+    padding: var(--space-4);
+  }
+  .dash-card-actions {
+    gap: var(--space-2);
+  }
+  .dash-header-actions {
+    width: 100%;
+  }
+  .dash-settings .dash-notification {
+    min-height: 2.75rem;
+  }
+}
+@media (min-width: 1100px) {
+  .dash-list > .dash-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-6);
+    padding: var(--space-6);
+  }
+  .dash-card-actions {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+}
+
+.dash-main-actions,
+.dash-secondary-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dash-main-actions {
+  flex: 1;
+}
+.dash-secondary-actions {
+  margin-left: auto;
+}
+@media (max-width: 767px) {
+  .dash-card-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash-main-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash-secondary-actions {
+    margin: 0;
+  }
+  .dash-secondary-actions > :first-child {
+    flex: 1;
   }
 }

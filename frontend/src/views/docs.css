@@ -122,3 +122,68 @@
   color: var(--muted-foreground);
   white-space: normal;
 }
+
+.docs-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+.docs-toc a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+.docs-toc a:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.docs-guide {
+  margin-bottom: var(--space-10);
+}
+.docs-steps {
+  padding-left: var(--space-5);
+  margin-block: var(--space-5) var(--space-6);
+  display: grid;
+  gap: var(--space-5);
+}
+.docs-steps li {
+  padding-left: var(--space-2);
+}
+.docs-steps li::marker {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+}
+.docs-steps h3 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 var(--space-2);
+}
+.docs-steps p,
+.docs-section-description {
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+.docs-section-description {
+  margin-bottom: var(--space-4);
+}
+.docs-content [id] {
+  scroll-margin-top: var(--space-8);
+}
+.docs-section-title {
+  margin-top: var(--space-8);
+}
+@media (max-width: 767px) {
+  .docs-card {
+    padding: var(--space-4);
+  }
+}

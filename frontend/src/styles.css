@@ -13,35 +13,35 @@ svg {
   flex-shrink: 0;
 }
 
-/* Markdown content (changelog) rendered from CHANGELOG.md */
-.markdown-content h2 {
-  font-size: var(--text-xl);
-  font-weight: 600;
-  margin: var(--space-8) 0 var(--space-3);
+html {
+  scrollbar-gutter: stable;
+  scroll-padding-top: var(--space-6);
 }
-.markdown-content h3 {
-  font-size: var(--text-base);
-  font-weight: 600;
-  margin: var(--space-6) 0 var(--space-2);
+body {
+  overflow-wrap: break-word;
 }
-.markdown-content p {
-  font-size: var(--text-sm);
-  color: var(--muted-foreground);
-  margin-bottom: var(--space-4);
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
 }
-.markdown-content ul {
-  list-style: disc inside;
-  margin-bottom: var(--space-4);
+#main-content:focus {
+  outline: none;
 }
-.markdown-content li {
-  font-size: var(--text-sm);
-  color: var(--muted-foreground);
+button,
+input,
+select,
+textarea,
+a {
+  -webkit-tap-highlight-color: transparent;
 }
-.markdown-content strong {
-  color: var(--foreground);
-  font-weight: 500;
+button,
+a {
+  touch-action: manipulation;
 }
-.markdown-content code {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: var(--text-base);
+  }
 }

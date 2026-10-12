@@ -68,6 +68,7 @@ export default function ShareLinksDialog({
   atShareLimit,
   onOpenChange,
   onChanged,
+  onCloseAutoFocus,
 }: {
   open: boolean
   subscription: Subscription
@@ -75,6 +76,7 @@ export default function ShareLinksDialog({
   atShareLimit: boolean
   onOpenChange: (open: boolean) => void
   onChanged: () => void
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   const session = useSession()
   const [localLinks, setLocalLinks] = useState<CalendarLink[]>(() => [...subscription.links])
@@ -235,7 +237,7 @@ export default function ShareLinksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="share-dialog">
+        <DialogContent className="share-dialog" onCloseAutoFocus={onCloseAutoFocus}>
           <div className="share-dialog-body">
             <DialogHeader className="share-dialog-header">
               <DialogTitle>管理共享链接</DialogTitle>

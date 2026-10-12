@@ -10,7 +10,7 @@ async function navigate(path: string) {
 }
 
 describe('router (v2)', () => {
-  it.each(['/', '/dashboard', '/add', '/api-docs', '/changelog'])(
+  it.each(['/', '/dashboard', '/add', '/api-docs'])(
     '%s resolves to a matched route',
     async (path) => {
       const router = await navigate(path)
