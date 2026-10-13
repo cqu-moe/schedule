@@ -85,7 +85,22 @@ export default function Layout() {
 
   const brand = (
     <Link to="/" className="site-brand">
-      <CalendarDays size={24} aria-hidden="true" />
+      <span className="brand-mark" aria-hidden="true">
+        <img
+          src="/brand/logo-black.svg"
+          alt=""
+          width={32}
+          height={32}
+          className="brand-logo-black"
+        />
+        <img
+          src="/brand/logo-white.svg"
+          alt=""
+          width={32}
+          height={32}
+          className="brand-logo-white"
+        />
+      </span>
       <span>CQU Schedule</span>
     </Link>
   )
