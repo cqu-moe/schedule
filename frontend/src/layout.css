@@ -9,6 +9,26 @@
   font-weight: 600;
   white-space: nowrap;
 }
+.brand-mark {
+  display: inline-flex;
+  width: var(--space-8);
+  height: var(--space-8);
+  flex-shrink: 0;
+}
+.brand-mark img {
+  display: block;
+  width: var(--space-8);
+  height: var(--space-8);
+}
+.brand-mark .brand-logo-white {
+  display: none;
+}
+:root[data-theme='dark'] .brand-logo-black {
+  display: none;
+}
+:root[data-theme='dark'] .brand-logo-white {
+  display: block;
+}
 .landing-root {
   min-height: 100dvh;
 }
