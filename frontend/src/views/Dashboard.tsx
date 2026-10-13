@@ -34,6 +34,7 @@ import {
 import api from '@/api'
 import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import FirstSyncNotice from '@/components/FirstSyncNotice'
+import SyncActionButton from '@/components/SyncActionButton'
 const QrcodeModal = lazy(() => import('@/components/QrcodeModal'))
 const ShareLinksDialog = lazy(() => import('@/components/ShareLinksDialog'))
 import { useButtonFeedback, type ButtonState } from '@/hooks/useButtonFeedback'
@@ -796,9 +797,7 @@ export default function Dashboard() {
         description="管理课程与考试订阅，让日历跟上你的安排。"
         actions={
           <div className="dash-header-actions">
-            <ActionButton
-              className="dash-sync-button"
-              variant="outline"
+            <SyncActionButton
               state={syncAllButtonState}
               labels={{
                 idle: syncAllCooldownSeconds > 0
@@ -988,9 +987,7 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="dash-secondary-actions">
-                    <ActionButton
-                      className="dash-sync-button"
-                      variant="outline"
+                    <SyncActionButton
                       state={refreshButtonState(sub)}
                       labels={{
                         idle: refreshCooldownSeconds(sub) > 0
