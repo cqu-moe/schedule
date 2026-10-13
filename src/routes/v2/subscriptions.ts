@@ -39,6 +39,11 @@ import {
   requestPersonalSync,
 } from "../../services/personal-subscription-sync";
 import { clearHarvestCache } from "../../services/cqu-harvest";
+import { captureScheduleEvent } from "../../lib/posthog";
+import {
+  captureScheduleSyncStarted,
+  captureScheduleSyncTerminal,
+} from "../../lib/sync-telemetry";
 
 const app = new Hono<SessionEnv>();
 
@@ -82,6 +87,62 @@ function entitlementError(e: unknown): Response {
   throw e;
 }
 
+type SubscriptionOperation =
+  | "create"
+  | "prepare_defaults"
+  | "delete"
+  | "create_link"
+  | "update_link"
+  | "delete_link"
+  | "rotate_link";
+
+function subscriptionOperation(method: string, mountedPath: string): SubscriptionOperation | null {
+  if (method === "POST" && mountedPath === "/") return "create";
+  if (method === "POST" && mountedPath === "/defaults") return "prepare_defaults";
+  if (method === "DELETE" && /^\/[^/]+$/.test(mountedPath)) return "delete";
+  if (method === "POST" && /^\/[^/]+\/links$/.test(mountedPath)) return "create_link";
+  if (method === "PATCH" && /^\/[^/]+\/links\/[^/]+$/.test(mountedPath)) return "update_link";
+  if (method === "DELETE" && /^\/[^/]+\/links\/[^/]+$/.test(mountedPath)) return "delete_link";
+  if (method === "POST" && /^\/[^/]+\/links\/[^/]+\/rotations$/.test(mountedPath)) {
+    return "rotate_link";
+  }
+  return null;
+}
+
+// The HTTP response is the authoritative user-facing terminal for subscription
+// mutations; sync requests are excluded because the queue owns their terminal.
+app.use("*", async (c, next) => {
+  await next();
+  const mountedPath = c.req.path.replace(/^\/api\/v2\/subscriptions?/, "") || "/";
+  const operation = subscriptionOperation(c.req.method, mountedPath);
+  if (!operation) return;
+
+  const status = c.res.status;
+  const outcome = status < 400
+    ? "success"
+    : [401, 403, 409].includes(status)
+      ? "needs_input"
+      : "failure";
+  const user = c.get("user");
+  const pathSubscriptionId = /^\/([^/]+)(?:\/|$)/.exec(mountedPath)?.[1];
+  captureScheduleEvent(
+    c.env,
+    executionContext(c),
+    "schedule_subscription_finished",
+    user?.id ?? crypto.randomUUID(),
+    {
+      actor_type: user ? "user" : "system",
+      trigger: "user",
+      operation,
+      outcome,
+      ...(pathSubscriptionId && operation !== "prepare_defaults"
+        ? { subscription_id: pathSubscriptionId }
+        : {}),
+    },
+    Boolean(user),
+  );
+});
+
 // ── GET / — list the current user's subscriptions (with link summaries) ──────
 app.get("/", async (c) => {
   const user = c.get("user");
@@ -97,7 +158,7 @@ app.get("/", async (c) => {
         c.get("cquBindStatus"),
       );
       if (prepared.status === "created" || prepared.status === "resumed") {
-        await dispatchPersonalSetup(c.env, user.id).catch((error) => {
+        await dispatchPersonalSetup(c.env, user.id, executionContext(c)).catch((error) => {
           console.error(JSON.stringify({
             event: "subscription.list.dispatch_failed",
             userId: user.id,
@@ -226,7 +287,7 @@ app.post("/defaults", async (c) => {
 
   if (result.status === "created" || result.status === "resumed") {
     try {
-      await dispatchPersonalSetup(c.env, user.id);
+      await dispatchPersonalSetup(c.env, user.id, executionContext(c));
     } catch (error) {
       console.error(JSON.stringify({
         event: "subscription.defaults.dispatch_failed",
@@ -484,22 +545,40 @@ app.post("/", async (c) => {
   // promptly instead of EMPTY_ICS until the next cron run. Best-effort: the row
   // is already committed, and the cron will pick it up (lastSyncedAt is null →
   // due) if this enqueue fails.
-  await c.env.SCHEDULE_SYNC_QUEUE.send({
-    subscriptionId: subId,
-    userId: user.id,
-    trigger: "initial",
-    runId: initialRunId,
-  } satisfies ScheduleSyncMessage).catch((e) =>
-    markSyncError(db, subId, initialRunId, {
+  try {
+    await c.env.SCHEDULE_SYNC_QUEUE.send({
+      subscriptionId: subId,
+      userId: user.id,
+      trigger: "initial",
+      runId: initialRunId,
+    } satisfies ScheduleSyncMessage);
+    captureScheduleSyncStarted(c.env, executionContext(c), {
+      userId: user.id,
+      subscriptionId: subId,
+      runId: initialRunId,
+      trigger: "initial",
+    });
+  } catch (e) {
+    const won = await markSyncError(db, subId, initialRunId, {
       code: "QUEUE_UNAVAILABLE",
       message: "同步服务暂时不可用，请稍后重试",
-    }).then(() => console.warn(JSON.stringify({
+    });
+    if (won) {
+      captureScheduleSyncTerminal(c.env, executionContext(c), {
+        userId: user.id,
+        subscriptionId: subId,
+        runId: initialRunId,
+        trigger: "initial",
+        requestedAt: Date.parse(now),
+      }, "failure", "QUEUE_UNAVAILABLE");
+    }
+    console.warn(JSON.stringify({
       event: "subscription.v2.initial_sync_enqueue_failed",
       subscriptionId: subId,
       error: e instanceof Error ? e.message : String(e),
       message: "Failed to enqueue initial sync; cron will sync later",
-    }))),
-  );
+    }));
+  }
 
   console.log(
     JSON.stringify({
@@ -809,11 +888,27 @@ app.post("/:sid/syncs", async (c) => {
       trigger: "manual",
       runId,
     } satisfies ScheduleSyncMessage);
+    captureScheduleSyncStarted(c.env, executionContext(c), {
+      userId: user.id,
+      subscriptionId: sid,
+      runId,
+      trigger: "manual",
+    });
   } catch (error) {
-    await Promise.all(affectedSubscriptionIds.map(targetId => markSyncError(db, targetId, runId, {
+    const terminals = await Promise.all(affectedSubscriptionIds.map(targetId => markSyncError(db, targetId, runId, {
       code: "QUEUE_UNAVAILABLE",
       message: "同步服务暂时不可用，请稍后重试",
     })));
+    affectedSubscriptionIds.forEach((targetId, index) => {
+      if (!terminals[index]) return;
+      captureScheduleSyncTerminal(c.env, executionContext(c), {
+        userId: user.id,
+        subscriptionId: targetId,
+        runId,
+        trigger: "manual",
+        requestedAt: Date.parse(now),
+      }, "failure", "QUEUE_UNAVAILABLE");
+    });
     await db
       .update(subscriptions)
       .set({ manualRefreshAt: null })

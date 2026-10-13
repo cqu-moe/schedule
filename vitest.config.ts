@@ -25,6 +25,9 @@ export default defineWorkersConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             PERSONAL_SUBSCRIPTION_MODE: "legacy",
+            // Workerd does not inherit Node's VITEST environment. Keep telemetry
+            // test-bound even though wrangler.jsonc supplies ENVIRONMENT=production.
+            VITEST: "1",
           },
         },
       },

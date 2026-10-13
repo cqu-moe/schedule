@@ -15,7 +15,7 @@ import type {
   MeResponse,
   SessionUser,
 } from '@/types/api'
-import { syncPostHogIdentity } from '@/lib/posthog'
+import { captureScheduleEvent, syncPostHogIdentity } from '@/lib/posthog'
 
 interface SessionState {
   user: SessionUser | null
@@ -57,6 +57,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [publicUrl, setPublicUrl] = useState(window.location.origin)
   const [session, setSession] = useState<SessionState>(EMPTY_SESSION)
   const loadPromise = useRef<Promise<MeResponse> | null>(null)
+  const sessionReadyReported = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -84,7 +85,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           caps: data.caps.calendar,
           cquBindStatus: data.cquBindStatus,
         })
+        if (!sessionReadyReported.current) {
+          sessionReadyReported.current = true
+          captureScheduleEvent('app_session_ready', {
+            actor_type: 'user',
+            trigger: 'automatic',
+            operation: 'session_ready',
+            outcome: 'success',
+          })
+        }
         return data
+      } catch (error) {
+        // A failed /me probe cannot authenticate the browser. Clear a persisted
+        // identity so telemetry never keeps serving the previous account.
+        syncPostHogIdentity(null)
+        setSession(EMPTY_SESSION)
+        throw error
       } finally {
         loadPromise.current = null
       }

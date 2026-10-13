@@ -35,6 +35,7 @@ import { useSession } from '@/providers/app'
 import type { CalendarLink, LinkFormat, Subscription } from '@/types/api'
 import { apiErrorCode, parseApiError } from '@/utils/error'
 import { buildLinkUrl } from '@/utils/links'
+import { captureScheduleEvent } from '@/lib/posthog'
 
 const ALL_FORMATS: LinkFormat[] = ['ics', 'web', 'data_json', 'origin_json', 'csv']
 const DEFAULT_CREATE_FORMATS: LinkFormat[] = ['ics', 'web']
@@ -45,6 +46,16 @@ const FORMAT_META: Record<LinkFormat, { label: string; headerLabel: string }> = 
   data_json: { label: 'JSON', headerLabel: 'JSON' },
   origin_json: { label: '原始 JSON', headerLabel: '原始' },
   csv: { label: 'CSV', headerLabel: 'CSV' },
+}
+
+function captureCopyAction(format: LinkFormat, outcome: 'success' | 'failure'): void {
+  captureScheduleEvent('schedule_action_finished', {
+    actor_type: 'user',
+    trigger: 'user',
+    operation: 'copy_calendar_link',
+    outcome,
+    format,
+  })
 }
 
 interface LinkFormState {
@@ -139,7 +150,9 @@ export default function ShareLinksDialog({
       await copyFeedback.run(async () => {
         await navigator.clipboard.writeText(url)
       }, `${link.id}:${fmt}`)
+      captureCopyAction(fmt, 'success')
     } catch {
+      captureCopyAction(fmt, 'failure')
       toast.error('复制失败，请手动复制链接')
     }
   }

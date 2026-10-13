@@ -25,6 +25,7 @@ import api from '@/api'
 import type { FormattedEvent } from '@/types/api'
 import { apiErrorCode, parseApiError } from '@/utils/error'
 import { getSemesterWeek } from '@/utils/calendarWeek'
+import { captureScheduleEvent } from '@/lib/posthog'
 import '@/assets/fullcalendar-theme.css'
 import './calendar.css'
 
@@ -160,6 +161,13 @@ export default function Calendar() {
             ),
           ),
         )
+        captureScheduleEvent('schedule_action_finished', {
+          actor_type: 'user',
+          trigger: 'user',
+          operation: 'view_calendar',
+          outcome: 'success',
+          format: 'web',
+        })
       } catch (cause) {
         if (cancelled) return
         const code = apiErrorCode(cause)
@@ -176,6 +184,14 @@ export default function Calendar() {
         } else {
           setError({ state: 'error', message: parseApiError(cause, '加载课表数据失败') })
         }
+        captureScheduleEvent('schedule_action_finished', {
+          actor_type: 'user',
+          trigger: 'user',
+          operation: 'view_calendar',
+          outcome: 'failure',
+          format: 'web',
+          ...(code ? { error_code: code } : {}),
+        })
       } finally {
         if (!cancelled) setLoading(false)
       }

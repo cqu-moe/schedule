@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { subscriptions, calendarLinks, LINK_FORMATS } from "../../db/schema";
 import type { Env } from "../../types";
+import * as telemetry from "../../lib/posthog";
 import calendarV2 from "./calendar";
 
 const db = drizzle(env.DB);
@@ -175,6 +176,60 @@ beforeEach(async () => {
 // ── Default (all-format) link: every endpoint reachable ──────────────────────
 
 describe("default (all-format) link", () => {
+  it("reports delivery success and gated or corrupted-data failures without the token", async () => {
+    const sid = await insertSub();
+    const token = await insertLink(sid, ["ics"], { token: "delivery-token" });
+    const corruptedSid = await insertSub({ coursesJson: "{corrupted" });
+    const corruptedToken = await insertLink(corruptedSid, ["origin_json"], {
+      token: "corrupted-delivery-token",
+    });
+    const capture = vi.spyOn(telemetry, "captureScheduleEvent");
+    try {
+      const delivered = await buildApp().request(`/${token}/calendar.ics`);
+      const rejected = await buildApp().request(`/${token}/origin.json`);
+      const corrupted = await buildApp().request(`/${corruptedToken}/origin.json`);
+
+      expect(delivered.status).toBe(200);
+      expect(rejected.status).toBe(403);
+      expect(corrupted.status).toBe(500);
+      expect(capture).toHaveBeenCalledTimes(3);
+      expect(capture.mock.calls.map((call) => call[2])).toEqual([
+        "schedule_calendar_delivered",
+        "schedule_calendar_delivered",
+        "schedule_calendar_delivered",
+      ]);
+      expect(capture.mock.calls[0][4]).toMatchObject({
+        actor_type: "system",
+        trigger: "automatic",
+        operation: "ics",
+        outcome: "success",
+        format: "ics",
+        source_type: "personal_all",
+      });
+      expect(capture.mock.calls[1][4]).toMatchObject({
+        actor_type: "system",
+        trigger: "automatic",
+        operation: "origin_json",
+        outcome: "failure",
+        format: "origin_json",
+        error_code: "FORMAT_NOT_ALLOWED",
+      });
+      expect(capture.mock.calls[2][4]).toMatchObject({
+        actor_type: "system",
+        trigger: "automatic",
+        operation: "origin_json",
+        outcome: "failure",
+        format: "origin_json",
+        source_type: "personal_all",
+        error_code: "DATA_CORRUPTED",
+      });
+      expect(JSON.stringify(capture.mock.calls.map((call) => call[4]))).not.toContain(token);
+      expect(JSON.stringify(capture.mock.calls.map((call) => call[4]))).not.toContain(corruptedToken);
+    } finally {
+      capture.mockRestore();
+    }
+  });
+
   it("uses the stored personal view scope for every public format", async () => {
     const sid = await insertSub({
       sourceType: "personal",
