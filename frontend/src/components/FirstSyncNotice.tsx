@@ -36,10 +36,16 @@ export default function FirstSyncNotice({
   return (
     <div className="sync-notice" role="status" aria-live="polite">
       <div className="sync-notice-body">
-        <span className="sync-notice-icon" aria-hidden="true">
-          {(phase === 'syncing' || phase === 'preparing') && <Loader2 className="sync-icon-spin" />}
-          {phase === 'success' && <Check className="sync-icon-success" />}
-          {phase === 'error' && <CircleAlert className="sync-icon-error" />}
+        <span className="sync-notice-icon feedback-icon" aria-hidden="true">
+          <span data-active={phase === 'syncing' || phase === 'preparing'}>
+            <Loader2 className="sync-icon-spin" />
+          </span>
+          <span data-active={phase === 'success'}>
+            <Check className="sync-icon-success" />
+          </span>
+          <span data-active={phase === 'error'}>
+            <CircleAlert className="sync-icon-error" />
+          </span>
         </span>
         <div className="sync-notice-text">
           <p className="sync-notice-title">
@@ -63,14 +69,16 @@ export default function FirstSyncNotice({
           </Button>
         )}
         {phase === 'success' && (
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             type="button"
             className="sync-notice-close"
             aria-label="关闭同步提示"
             onClick={onDismiss}
           >
             <X />
-          </button>
+          </Button>
         )}
       </div>
     </div>

@@ -172,8 +172,10 @@
   min-height: 2.75rem;
 }
 
-.add-result:hover {
-  background: var(--muted);
+@media (hover: hover) and (pointer: fine) {
+  .add-result:hover {
+    background: var(--muted);
+  }
 }
 
 .add-result-info {

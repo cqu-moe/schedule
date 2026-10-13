@@ -9,7 +9,7 @@ import {
   DialogTrigger,
   Input,
 } from '@cqu-moe/ui'
-import { Check, ChevronDown, ChevronRight, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import type { DepartmentNode } from '@/types/api'
 
 export interface DepartmentTreeSelectProps {
@@ -51,6 +51,7 @@ function baseRowStyle(level: number): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 'var(--space-1)',
     minHeight: '2.75rem',
     fontSize: 'var(--text-sm)',
@@ -65,7 +66,7 @@ function toggleRowStyle(level: number): CSSProperties {
 }
 
 function chevronStyle(level: number): CSSProperties {
-  return { ...baseRowStyle(level), width: '2.25rem', justifyContent: 'center' }
+  return { ...baseRowStyle(level), minWidth: '2.75rem', justifyContent: 'center' }
 }
 
 function selectStyle(): CSSProperties {
@@ -92,39 +93,44 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
   return (
     <li role="none">
       {rootGroup ? (
-        <button
+        <Button
+          variant="ghost"
           type="button"
           style={toggleRowStyle(level)}
           aria-expanded={expanded}
           onClick={() => setOpen((current) => !current)}
         >
-          {expanded ? (
-            <ChevronDown style={mutedIconStyle} aria-hidden />
-          ) : (
-            <ChevronRight style={mutedIconStyle} aria-hidden />
-          )}
+          <ChevronRight
+            className="department-chevron"
+            data-expanded={expanded}
+            style={mutedIconStyle}
+            aria-hidden
+          />
           <span className="truncate" style={{ fontWeight: 500 }}>
             {node.name}
           </span>
-        </button>
+        </Button>
       ) : (
         <div className="flex w-full items-center">
           {hasChildren && (
-            <button
+            <Button
+              variant="ghost"
               type="button"
               style={chevronStyle(level)}
               aria-label={`${expanded ? '收起' : '展开'}${node.name}`}
               aria-expanded={expanded}
               onClick={() => setOpen((current) => !current)}
             >
-              {expanded ? (
-                <ChevronDown style={mutedIconStyle} aria-hidden />
-              ) : (
-                <ChevronRight style={mutedIconStyle} aria-hidden />
-              )}
-            </button>
+              <ChevronRight
+                className="department-chevron"
+                data-expanded={expanded}
+                style={mutedIconStyle}
+                aria-hidden
+              />
+            </Button>
           )}
-          <button
+          <Button
+            variant="ghost"
             type="button"
             style={selectStyle()}
             role="treeitem"
@@ -133,7 +139,7 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
           >
             <Check style={iconStyle} aria-hidden className={selected ? undefined : 'invisible'} />
             <span className="truncate">{node.name}</span>
-          </button>
+          </Button>
         </div>
       )}
       {hasChildren && expanded && (

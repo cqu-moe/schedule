@@ -1,0 +1,45 @@
+/* Business state feedback complements the shared controls. No route/list entrances. */
+.feedback-icon {
+  display: inline-grid;
+  flex-shrink: 0;
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.feedback-icon > span {
+  display: inline-flex;
+  grid-area: 1 / 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-feedback) ease;
+}
+
+.feedback-icon > span[data-active='true'] {
+  opacity: 1;
+}
+
+/* Freeze the outgoing spinner at its current angle instead of resetting mid-fade. */
+.feedback-icon > span:not([data-active='true']) > svg {
+  animation-play-state: paused;
+}
+
+.department-chevron {
+  transform: rotate(0deg);
+  transition: transform var(--duration-feedback) var(--ease-out);
+}
+
+.department-chevron[data-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+/* ThemeProvider already tracks input modality, including events in portals. */
+:root[data-input='keyboard'] .feedback-icon > span,
+:root[data-input='keyboard'] .department-chevron {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .department-chevron {
+    transition: none;
+  }
+}

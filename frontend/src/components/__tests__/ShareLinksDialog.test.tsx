@@ -85,6 +85,19 @@ describe('ShareLinksDialog', () => {
     )
   })
 
+  it('returns focus to the form opener when Escape closes only the nested dialog', async () => {
+    mountDialog()
+    const opener = await screen.findByRole('button', { name: '新建共享链接' })
+    await userEvent.click(opener)
+    const form = await screen.findByRole('dialog', { name: '新建共享链接' })
+    await userEvent.click(within(form).getByLabelText('标签（可选，最多 100 字符）'))
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(form).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: '管理共享链接' })).toBeInTheDocument()
+    await waitFor(() => expect(opener).toHaveFocus())
+  })
+
   it('creates a share link with label and selected formats', async () => {
     const { onChanged } = mountDialog()
     mockApi.createLink.mockResolvedValue({

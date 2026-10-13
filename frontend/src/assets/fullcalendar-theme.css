@@ -45,10 +45,7 @@
   font-size: var(--text-sm);
   padding: var(--space-2) var(--space-3);
   box-shadow: none !important;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
+  transition: transform var(--duration-feedback) var(--ease-out);
 }
 
 .fc .fc-button:focus {
@@ -111,15 +108,38 @@
   font-size: var(--text-xs);
   cursor: pointer;
   overflow: hidden;
-  transition:
-    opacity 0.15s,
-    transform 0.1s;
+  transition: opacity var(--duration-feedback) ease;
   box-shadow: var(--shadow-card);
 }
 
-.fc .fc-event:hover {
-  opacity: 0.88;
-  transform: scale(1.01);
+.fc .fc-event-main,
+.fc .fc-daygrid-dot-event .fc-event-title {
+  transition: transform var(--duration-feedback) var(--ease-out);
+}
+
+/* Keep the hit area still and avoid hover effects sticking after a touch tap. */
+@media (hover: hover) and (pointer: fine) {
+  .fc .fc-event:hover {
+    opacity: 0.88;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-input='keyboard']) .fc .fc-button:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  :root:not([data-input='keyboard']) .fc .fc-event:active .fc-event-main,
+  :root:not([data-input='keyboard']) .fc .fc-daygrid-dot-event:active .fc-event-title {
+    transform: scale(0.98);
+  }
+}
+
+:root[data-input='keyboard'] .fc .fc-button,
+:root[data-input='keyboard'] .fc .fc-event,
+:root[data-input='keyboard'] .fc .fc-event-main,
+:root[data-input='keyboard'] .fc .fc-daygrid-dot-event .fc-event-title {
+  transition: none;
 }
 
 /* 去掉 FullCalendar 点击/选中时的默认灰色遮罩。 */
@@ -237,12 +257,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .fc .fc-button,
-  .fc .fc-event {
+  .fc .fc-event-main,
+  .fc .fc-daygrid-dot-event .fc-event-title {
     transition: none;
-  }
-
-  .fc .fc-event:hover {
-    opacity: 1;
-    transform: none;
   }
 }
