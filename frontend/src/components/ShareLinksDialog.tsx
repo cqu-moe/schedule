@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import {
   Check,
   Copy,
+  CircleAlert,
   Loader2,
   Minus,
   Pencil,
@@ -10,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
+  ActionButton,
   Button,
   Dialog,
   DialogContent,
@@ -91,6 +93,16 @@ export default function ShareLinksDialog({
   const [linkForm, setLinkForm] = useState<LinkFormState>(CLOSED_LINK_FORM)
   const [linkFormError, setLinkFormError] = useState<string | null>(null)
   const copyFeedback = useButtonFeedback()
+  const nestedTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const shareDialogRef = useRef<HTMLDivElement | null>(null)
+
+  function restoreNestedFocus(event: Event) {
+    if (!open || !shareDialogRef.current?.isConnected) return
+    event.preventDefault()
+    const trigger = nestedTriggerRef.current
+    if (trigger?.isConnected && !trigger.disabled) trigger.focus()
+    else shareDialogRef.current.focus()
+  }
 
   // Re-seed local links when the store-derived subscription prop changes identity
   // (covers reloads after mutation AND reopening for a different subscription).
@@ -132,7 +144,8 @@ export default function ShareLinksDialog({
     }
   }
 
-  function openCreateForm() {
+  function openCreateForm(event: MouseEvent<HTMLButtonElement>) {
+    nestedTriggerRef.current = event.currentTarget
     setLinkForm({
       open: true,
       editingId: null,
@@ -143,7 +156,8 @@ export default function ShareLinksDialog({
     setLinkFormError(null)
   }
 
-  function openEditLink(link: CalendarLink) {
+  function openEditLink(link: CalendarLink, trigger: HTMLButtonElement) {
+    nestedTriggerRef.current = trigger
     setLinkForm({
       open: true,
       editingId: link.id,
@@ -181,6 +195,8 @@ export default function ShareLinksDialog({
   }
 
   async function handleDeleteLink() {
+    // The originating row will disappear; return to the stable parent dialog.
+    nestedTriggerRef.current = null
     const lid = deleteConfirm.linkId
     setDeleteConfirm({ open: false, linkId: null })
     if (!lid) return
@@ -237,7 +253,7 @@ export default function ShareLinksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="share-dialog" onCloseAutoFocus={onCloseAutoFocus}>
+        <DialogContent ref={shareDialogRef} className="share-dialog" onCloseAutoFocus={onCloseAutoFocus}>
           <div className="share-dialog-body">
             <DialogHeader className="share-dialog-header">
               <DialogTitle>管理共享链接</DialogTitle>
@@ -292,13 +308,27 @@ export default function ShareLinksDialog({
                                 size="icon-sm"
                                 title={`复制 ${FORMAT_META[fmt].label}`}
                                 aria-label={`复制 ${FORMAT_META[fmt].label}`}
+                                aria-busy={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'loading'}
+                                aria-disabled={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'loading'}
                                 onClick={() => void handleCopy(link, fmt)}
                               >
-                                {copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success' ? (
-                                  <Check />
-                                ) : (
-                                  <Copy />
-                                )}
+                                <span className="feedback-icon" aria-hidden="true">
+                                  <span data-active={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'idle'}>
+                                    <Copy />
+                                  </span>
+                                  <span data-active={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'loading'}>
+                                    <Loader2 className="dash-icon-spin" />
+                                  </span>
+                                  <span data-active={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success'}>
+                                    <Check />
+                                  </span>
+                                  <span data-active={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'error'}>
+                                    <CircleAlert />
+                                  </span>
+                                </span>
+                                <span className="sr-only" role="status">
+                                  {copyFeedback.stateOf(`${link.id}:${fmt}`) === 'success' ? '已复制' : ''}
+                                </span>
                               </Button>
                             ) : (
                               <span
@@ -319,7 +349,10 @@ export default function ShareLinksDialog({
                               size="icon-sm"
                               title="轮换"
                               aria-label="轮换"
-                              onClick={() => setRotateConfirm({ open: true, linkId: link.id })}
+                              onClick={(event) => {
+                                nestedTriggerRef.current = event.currentTarget
+                                setRotateConfirm({ open: true, linkId: link.id })
+                              }}
                             >
                               <RotateCw />
                             </Button>
@@ -329,7 +362,7 @@ export default function ShareLinksDialog({
                               title="修改"
                               aria-label="修改"
                               disabled={link.is_default}
-                              onClick={() => openEditLink(link)}
+                              onClick={(event) => openEditLink(link, event.currentTarget)}
                             >
                               <Pencil />
                             </Button>
@@ -339,7 +372,10 @@ export default function ShareLinksDialog({
                               title="删除"
                               aria-label="删除"
                               disabled={link.is_default}
-                              onClick={() => setDeleteConfirm({ open: true, linkId: link.id })}
+                              onClick={(event) => {
+                                nestedTriggerRef.current = event.currentTarget
+                                setDeleteConfirm({ open: true, linkId: link.id })
+                              }}
                             >
                               <Trash2 />
                             </Button>
@@ -389,7 +425,7 @@ export default function ShareLinksDialog({
           if (!v) setRotateConfirm({ open: false, linkId: null })
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreNestedFocus}>
           <DialogHeader>
             <DialogTitle>确认轮换链接 Token</DialogTitle>
             <DialogDescription>
@@ -413,7 +449,7 @@ export default function ShareLinksDialog({
           if (!v) setDeleteConfirm({ open: false, linkId: null })
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreNestedFocus}>
           <DialogHeader>
             <DialogTitle>确认删除共享链接</DialogTitle>
             <DialogDescription>
@@ -437,7 +473,7 @@ export default function ShareLinksDialog({
           if (!v) setLinkForm((current) => ({ ...current, open: false }))
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreNestedFocus}>
           <DialogHeader>
             <DialogTitle>{linkForm.editingId ? '编辑共享链接' : '新建共享链接'}</DialogTitle>
             <DialogDescription>
@@ -463,7 +499,8 @@ export default function ShareLinksDialog({
               <Label>允许的格式（至少选择一项）</Label>
               <div className="format-grid">
                 {ALL_FORMATS.map((fmt) => (
-                  <button
+                  <Button
+                    variant="outline"
                     key={fmt}
                     type="button"
                     className="format-toggle"
@@ -471,7 +508,7 @@ export default function ShareLinksDialog({
                     onClick={() => toggleFormat(fmt)}
                   >
                     {FORMAT_META[fmt].label}
-                  </button>
+                  </Button>
                 ))}
               </div>
               {linkFormError && (
@@ -489,13 +526,17 @@ export default function ShareLinksDialog({
             >
               取消
             </Button>
-            <Button
-              disabled={linkForm.submitting || linkForm.formats.length === 0}
+            <ActionButton
+              state={linkForm.submitting ? 'loading' : linkFormError ? 'error' : 'idle'}
+              labels={{
+                idle: linkForm.editingId ? '保存' : '创建',
+                loading: linkForm.editingId ? '保存中…' : '创建中…',
+                success: linkForm.editingId ? '已保存' : '已创建',
+                error: '重试',
+              }}
+              disabled={linkForm.formats.length === 0}
               onClick={() => void handleSubmitLinkForm()}
-            >
-              {linkForm.submitting && <Loader2 className="dash-icon-spin" />}
-              {linkForm.editingId ? '保存' : '创建'}
-            </Button>
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>

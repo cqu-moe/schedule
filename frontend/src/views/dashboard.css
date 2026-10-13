@@ -7,6 +7,12 @@
   gap: var(--space-2);
 }
 
+/* Reserve room for the five-minute cooldown as well as all action states. */
+.dash-sync-button {
+  min-width: 11rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .dash-meta {
   display: flex;
   flex-wrap: wrap;
@@ -195,7 +201,7 @@
 }
 
 .sync-notice-icon {
-  display: inline-flex;
+  display: inline-grid;
   flex-shrink: 0;
   width: var(--space-5);
   height: var(--space-5);
@@ -250,8 +256,10 @@
   cursor: pointer;
 }
 
-.sync-notice-close:hover {
-  background: var(--surface);
+@media (hover: hover) and (pointer: fine) {
+  .sync-notice-close:hover {
+    background: var(--surface);
+  }
 }
 
 /* ── QR modal ──────────────────────────────────────────────────────────── */
@@ -485,6 +493,11 @@
   background: var(--muted);
 }
 
+/* Selection is immediate; only the shared pointer press has motion. */
+.format-toggle {
+  transition-property: transform;
+}
+
 .share-form-error {
   display: flex;
   align-items: center;
@@ -590,6 +603,12 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+:root[data-input='keyboard'] .sync-icon-spin,
+:root[data-input='keyboard'] .dash-icon-spin,
+:root[data-input='keyboard'] .dash-sync-progress svg {
+  animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {

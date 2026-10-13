@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import {
+  ActionButton,
   Button,
   Dialog,
   DialogContent,
@@ -22,8 +23,6 @@ import {
   CalendarDays,
   BookOpen,
   Plus,
-  Check,
-  CircleAlert,
   Download,
   Ellipsis,
   ExternalLink,
@@ -579,6 +578,7 @@ export default function Dashboard() {
     const trigger = dialogTriggerRef.current
     if (trigger?.isConnected) trigger.focus()
     else document.getElementById('main-content')?.focus()
+    dialogTriggerRef.current = null
   }
 
   async function handleCopyIcs(item: EnrichedSub) {
@@ -796,37 +796,25 @@ export default function Dashboard() {
         description="管理课程与考试订阅，让日历跟上你的安排。"
         actions={
           <div className="dash-header-actions">
-            <Button
-              type="button"
+            <ActionButton
+              className="dash-sync-button"
               variant="outline"
-              size="default"
-              aria-busy={syncAllButtonState === 'loading'}
-              aria-live={syncAllButtonState === 'idle' ? 'off' : 'polite'}
+              state={syncAllButtonState}
+              labels={{
+                idle: syncAllCooldownSeconds > 0
+                  ? cooldownLabel(syncAllCooldownSeconds)
+                  : '同步个人课表',
+                loading: '同步中…',
+                success: '已同步',
+                error: '同步失败，重试',
+              }}
               disabled={
-                syncAllButtonState === 'loading' ||
                 personalSubs.length === 0 ||
                 !canManualRefresh ||
                 syncAllCooldownSeconds > 0
               }
               onClick={() => void handleSyncAll()}
-            >
-              {syncAllButtonState === 'loading' && (
-                <Loader2 className="dash-icon-spin" aria-hidden="true" />
-              )}
-              {syncAllButtonState === 'success' && <Check aria-hidden="true" />}
-              {syncAllButtonState === 'error' && <CircleAlert aria-hidden="true" />}
-              {
-                {
-                  idle:
-                    syncAllCooldownSeconds > 0
-                      ? cooldownLabel(syncAllCooldownSeconds)
-                      : '同步个人课表',
-                  loading: '同步中…',
-                  success: '已同步',
-                  error: '同步失败，重试',
-                }[syncAllButtonState]
-              }
-            </Button>
+            />
             {atLimit ? (
               <Button variant="outline" size="default" disabled title="已达订阅上限">
                 添加订阅
@@ -985,67 +973,36 @@ export default function Dashboard() {
                           查看课表
                         </Button>
                       )}
-                      <Button
-                        type="button"
+                      <ActionButton
                         variant="outline"
-                        size="default"
-                        aria-busy={copyFeedback.stateOf(sub.id) === 'loading'}
-                        aria-live="polite"
-                        disabled={
-                          copyFeedback.stateOf(sub.id) === 'loading' ||
-                          firstSyncLinkUnavailable(sub)
-                        }
+                        state={copyFeedback.stateOf(sub.id)}
+                        labels={{
+                          idle: '复制链接',
+                          loading: '复制中',
+                          success: '已复制',
+                          error: '复制失败',
+                        }}
+                        disabled={firstSyncLinkUnavailable(sub)}
                         onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
-                      >
-                        {copyFeedback.stateOf(sub.id) === 'loading' && (
-                          <Loader2 className="dash-icon-spin" aria-hidden="true" />
-                        )}
-                        {copyFeedback.stateOf(sub.id) === 'success' && <Check aria-hidden="true" />}
-                        {copyFeedback.stateOf(sub.id) === 'error' && (
-                          <CircleAlert aria-hidden="true" />
-                        )}
-                        {
-                          {
-                            idle: '复制链接',
-                            loading: '复制中',
-                            success: '已复制',
-                            error: '复制失败',
-                          }[copyFeedback.stateOf(sub.id)]
-                        }
-                      </Button>
+                      />
                     </div>
                   )}
                   <div className="dash-secondary-actions">
-                    <Button
-                      type="button"
+                    <ActionButton
+                      className="dash-sync-button"
                       variant="outline"
-                      size="default"
-                      aria-busy={refreshButtonState(sub) === 'loading'}
-                      aria-live={refreshButtonState(sub) === 'idle' ? 'off' : 'polite'}
-                      disabled={
-                        refreshButtonState(sub) === 'loading' ||
-                        !canManualRefresh ||
-                        isRefreshCoolingDown(sub)
-                      }
+                      state={refreshButtonState(sub)}
+                      labels={{
+                        idle: refreshCooldownSeconds(sub) > 0
+                          ? cooldownLabel(refreshCooldownSeconds(sub))
+                          : '同步',
+                        loading: '同步中',
+                        success: '已刷新',
+                        error: isFirstSyncCard(sub) ? '重试同步' : '失败',
+                      }}
+                      disabled={!canManualRefresh || isRefreshCoolingDown(sub)}
                       onClick={() => void handleRefreshSub(sub.id)}
-                    >
-                      {refreshButtonState(sub) === 'loading' && (
-                        <Loader2 className="dash-icon-spin" aria-hidden="true" />
-                      )}
-                      {refreshButtonState(sub) === 'success' && <Check aria-hidden="true" />}
-                      {refreshButtonState(sub) === 'error' && <CircleAlert aria-hidden="true" />}
-                      {
-                        {
-                          idle:
-                            refreshCooldownSeconds(sub) > 0
-                              ? cooldownLabel(refreshCooldownSeconds(sub))
-                              : '同步',
-                          loading: '同步中',
-                          success: '已刷新',
-                          error: isFirstSyncCard(sub) ? '重试同步' : '失败',
-                        }[refreshButtonState(sub)]
-                      }
-                    </Button>
+                    />
                     {link && (
                       <Button
                         variant="outline"
@@ -1073,30 +1030,38 @@ export default function Dashboard() {
                           <Ellipsis />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {link &&
-                          (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
-                            <DropdownMenuItem key={fmt} asChild>
-                              <a href={buildLinkUrl(session.publicUrl, link.token, fmt)} download>
-                                <Download />
-                                下载 {DOWNLOAD_LABELS[fmt]}
-                              </a>
-                            </DropdownMenuItem>
-                          ))}
-                        <DropdownMenuItem onSelect={() => openShareLinks(sub)}>
-                          <Share2 />
-                          管理共享链接
-                        </DropdownMenuItem>
-                        {!sub.is_personal && (
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() => openDeleteSubDialog(sub)}
-                          >
-                            <Trash2 />
-                            删除
+                      {/* A dialog takes over immediately; do not retain its source menu's exit. */}
+                      {!shareOpen && !deleteTarget && (
+                        <DropdownMenuContent
+                          align="end"
+                          onCloseAutoFocus={(event) => {
+                            if (dialogTriggerRef.current) event.preventDefault()
+                          }}
+                        >
+                          {link &&
+                            (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
+                              <DropdownMenuItem key={fmt} asChild>
+                                <a href={buildLinkUrl(session.publicUrl, link.token, fmt)} download>
+                                  <Download />
+                                  下载 {DOWNLOAD_LABELS[fmt]}
+                                </a>
+                              </DropdownMenuItem>
+                            ))}
+                          <DropdownMenuItem onSelect={() => openShareLinks(sub)}>
+                            <Share2 />
+                            管理共享链接
                           </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
+                          {!sub.is_personal && (
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onSelect={() => openDeleteSubDialog(sub)}
+                            >
+                              <Trash2 />
+                              删除
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      )}
                     </DropdownMenu>
                   </div>
                 </div>
@@ -1196,14 +1161,12 @@ export default function Dashboard() {
             <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>
               取消
             </Button>
-            <Button
+            <ActionButton
               variant="destructive"
-              disabled={deleting}
-              aria-busy={deleting}
+              state={deleting ? 'loading' : 'idle'}
+              labels={{ idle: '删除', loading: '正在删除…', success: '已删除', error: '删除失败' }}
               onClick={() => deleteTarget && void handleDeleteSub(deleteTarget.id)}
-            >
-              {deleting ? '正在删除…' : '删除'}
-            </Button>
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>
