@@ -115,7 +115,7 @@ function createClient(env: Env): PostHog | null {
     enableExceptionAutocapture: false,
     before_send: (event: EventMessage | null) => event ? {
       ...event,
-      properties: sanitizePostHogProperties(event.properties ?? {}),
+      properties: { ...sanitizePostHogProperties(event.properties ?? {}), $geoip_disable: true },
     } : null,
   });
 }
