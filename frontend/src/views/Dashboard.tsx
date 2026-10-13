@@ -41,6 +41,7 @@ import { useButtonFeedback, type ButtonState } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
 import { defaultLink } from '@/hooks/useSubscriptions'
 import { deriveFirstSyncPhase } from '@/lib/first-sync-state'
+import { captureScheduleEvent } from '@/lib/posthog'
 import { useSession } from '@/providers/app'
 import type {
   CalendarLink,
@@ -108,6 +109,20 @@ function isRateLimitError(error: unknown): boolean {
     'response' in error &&
     (error as { response?: { status?: number } }).response?.status === 429
   )
+}
+
+function captureAction(
+  operation: string,
+  outcome: 'success' | 'failure' | 'unverified',
+  properties: Record<string, unknown> = {},
+): void {
+  captureScheduleEvent('schedule_action_finished', {
+    actor_type: 'user',
+    trigger: 'user',
+    operation,
+    outcome,
+    ...properties,
+  })
 }
 
 /**
@@ -589,7 +604,9 @@ export default function Dashboard() {
       await copyFeedback.run(async () => {
         await navigator.clipboard.writeText(url)
       }, item.sub.id)
+      captureAction('copy_calendar_link', 'success', { format: 'ics' })
     } catch {
+      captureAction('copy_calendar_link', 'failure', { format: 'ics' })
       toast.error('复制失败，请手动复制链接')
     }
   }
@@ -602,6 +619,7 @@ export default function Dashboard() {
       url: buildLinkUrl(session.publicUrl, item.defaultLink.token, 'ics'),
       token: item.defaultLink.token,
     })
+    captureAction('show_calendar_qr_code', 'success', { format: 'ics' })
   }
 
   async function handleRefreshSub(sid: string) {
@@ -684,7 +702,9 @@ export default function Dashboard() {
     try {
       const settings = await api.updateNotificationSettings(next)
       setNotificationEnabled(settings.enabled)
+      captureAction('change_notification', 'success')
     } catch {
+      captureAction('change_notification', 'failure')
       toast.error('保存通知设置失败')
     } finally {
       setNotificationLoading(false)
@@ -1038,7 +1058,13 @@ export default function Dashboard() {
                           {link &&
                             (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
                               <DropdownMenuItem key={fmt} asChild>
-                                <a href={buildLinkUrl(session.publicUrl, link.token, fmt)} download>
+                                <a
+                                  href={buildLinkUrl(session.publicUrl, link.token, fmt)}
+                                  download
+                                  onClick={() =>
+                                    captureAction('export_calendar', 'unverified', { format: fmt })
+                                  }
+                                >
                                   <Download />
                                   下载 {DOWNLOAD_LABELS[fmt]}
                                 </a>

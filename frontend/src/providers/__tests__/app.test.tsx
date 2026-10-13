@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { useContext } from 'react'
 import api from '@/api'
 import { AppContext, AppProvider } from '@/providers/app'
+import { captureScheduleEvent, syncPostHogIdentity } from '@/lib/posthog'
 import { mockMeResponse } from '@/test-utils'
 
 vi.mock('@/api', () => ({
@@ -10,6 +11,10 @@ vi.mock('@/api', () => ({
     getMe: vi.fn(),
     getConfig: vi.fn(),
   },
+}))
+vi.mock('@/lib/posthog', () => ({
+  syncPostHogIdentity: vi.fn(),
+  captureScheduleEvent: vi.fn(),
 }))
 
 const mockApi = vi.mocked(api, true)
@@ -39,6 +44,8 @@ describe('AppProvider session and config', () => {
   beforeEach(() => {
     mockApi.getMe.mockReset()
     mockApi.getConfig.mockReset()
+    vi.mocked(syncPostHogIdentity).mockReset()
+    vi.mocked(captureScheduleEvent).mockReset()
   })
 
   it('defaults publicUrl to window.location.origin and starts logged out', () => {
@@ -60,6 +67,13 @@ describe('AppProvider session and config', () => {
       expect(screen.getByTestId('can-sync')).toHaveTextContent('true')
       expect(screen.getByTestId('quota-sub')).toHaveTextContent('5')
     })
+    expect(syncPostHogIdentity).toHaveBeenCalledWith(mockMeResponse().user.id)
+    expect(captureScheduleEvent).toHaveBeenCalledWith('app_session_ready', {
+      actor_type: 'user',
+      trigger: 'automatic',
+      operation: 'session_ready',
+      outcome: 'success',
+    })
   })
 
   it('keeps origin fallback when config fails', async () => {
@@ -76,6 +90,8 @@ describe('AppProvider session and config', () => {
     renderProvider()
     await waitFor(() => expect(mockApi.getMe).toHaveBeenCalledOnce())
     expect(screen.getByTestId('authenticated')).toHaveTextContent('false')
+    expect(syncPostHogIdentity).toHaveBeenCalledWith(null)
+    expect(captureScheduleEvent).not.toHaveBeenCalled()
   })
 
   it('deduplicates concurrent reloadSession calls', async () => {

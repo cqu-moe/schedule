@@ -54,11 +54,11 @@ export default function QrcodeModal({
           <DialogTitle>扫码订阅</DialogTitle>
           <DialogDescription>使用手机扫描二维码订阅日历。</DialogDescription>
         </DialogHeader>
-        <div className="qr-body">
+        <div className="qr-body" data-sensitive>
           <QRCodeSVG value={url} size={240} level="M" />
           <p className="qr-hint">使用手机扫描二维码</p>
           {opValue && (
-            <span className="qr-op-save">
+            <span className="qr-op-save" data-sensitive>
               <onepassword-save-button
                 data-onepassword-type="login"
                 value={opValue}

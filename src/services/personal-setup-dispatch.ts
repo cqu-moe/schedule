@@ -2,6 +2,10 @@ import type { Env } from "../types";
 import type { ScheduleSyncMessage } from "../cron/schedule-sync";
 import { getPersonalSetup } from "./personal-subscription-setup";
 import { personalSubscriptionMode } from "../config/personal-subscription-mode";
+import {
+  captureScheduleSyncStarted,
+  captureScheduleSyncTerminal,
+} from "../lib/sync-telemetry";
 
 const DISPATCH_LEASE_MS = 60_000;
 
@@ -17,7 +21,11 @@ async function finishOwnedLease(env: Env, userId: string, leaseToken: string): P
     .run();
 }
 
-export async function dispatchPersonalSetup(env: Env, userId: string): Promise<void> {
+export async function dispatchPersonalSetup(
+  env: Env,
+  userId: string,
+  lifecycle?: { waitUntil(promise: Promise<unknown>): void },
+): Promise<void> {
   const mode = personalSubscriptionMode(env);
   if (mode === "migration") return;
   const nowMs = Date.now();
@@ -60,6 +68,13 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
   }
 
   const dispatchTime = new Date().toISOString();
+  const affectedTargets = await env.DB.prepare(`SELECT id FROM subscriptions
+    WHERE ${mode === "enabled"
+      ? "id=? AND sync_run_id=? AND source_type='personal'"
+      : "user_id=? AND sync_run_id=? AND source_type IN ('personal_all','personal_courses','personal_exams')"}
+    `)
+    .bind(mode === "enabled" ? target.id : userId, runId)
+    .all<{ id: string }>();
   await env.DB.prepare(`UPDATE subscriptions SET
     sync_status=CASE WHEN sync_error_code='QUEUE_UNAVAILABLE' THEN 'queued' ELSE sync_status END,
     sync_requested_at=CASE
@@ -83,6 +98,12 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
       runId,
       trigger: "initial",
     } satisfies ScheduleSyncMessage);
+    captureScheduleSyncStarted(env, lifecycle, {
+      userId,
+      subscriptionId: target.id,
+      runId,
+      trigger: "initial",
+    });
   } catch (error) {
     const failureNowMs = Date.now();
     const failureNow = new Date(failureNowMs).toISOString();
@@ -100,6 +121,15 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
           : "user_id=? AND sync_run_id=? AND source_type IN ('personal_all','personal_courses','personal_exams')"}`)
         .bind(failureNow, failureNow, mode === "enabled" ? target.id : userId, runId)
         .run();
+      for (const affected of affectedTargets.results) {
+        captureScheduleSyncTerminal(env, lifecycle, {
+          userId,
+          subscriptionId: affected.id,
+          runId,
+          trigger: "initial",
+          requestedAt: Date.parse(dispatchTime),
+        }, "failure", "QUEUE_UNAVAILABLE");
+      }
     }
     throw error;
   }
@@ -107,7 +137,10 @@ export async function dispatchPersonalSetup(env: Env, userId: string): Promise<v
   await finishOwnedLease(env, userId, leaseToken);
 }
 
-export async function dispatchPendingPersonalSetups(env: Env): Promise<void> {
+export async function dispatchPendingPersonalSetups(
+  env: Env,
+  lifecycle?: { waitUntil(promise: Promise<unknown>): void },
+): Promise<void> {
   const pending = await env.DB.prepare(`SELECT user_id FROM personal_subscription_setup
     WHERE status='created' AND dispatch_status!='sent' AND lease_until<=?
     ORDER BY updated_at, user_id LIMIT 25`)
@@ -116,7 +149,7 @@ export async function dispatchPendingPersonalSetups(env: Env): Promise<void> {
 
   for (const row of pending.results) {
     try {
-      await dispatchPersonalSetup(env, row.user_id);
+      await dispatchPersonalSetup(env, row.user_id, lifecycle);
     } catch (error) {
       console.error(JSON.stringify({
         event: "personal_setup.dispatch_recovery_failed",

@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
 import { AppProvider, type AppContextValue } from '@/providers/app'
+import { captureScheduleEvent } from '@/lib/posthog'
 import { mockMeResponse, mockSubscription, renderWithApp } from '@/test-utils'
 import type { AppConfig, NotificationSettings, PersonalSetupSummary, Subscription, SubscriptionList } from '@/types/api'
 
@@ -28,6 +29,10 @@ const { mockApi, mockToast } = vi.hoisted(() => {
 })
 
 vi.mock('@/api', () => ({ default: mockApi, redirect: { fn: vi.fn() } }))
+vi.mock('@/lib/posthog', () => ({
+  captureScheduleEvent: vi.fn(),
+  syncPostHogIdentity: vi.fn(),
+}))
 vi.mock('@cqu-moe/ui', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   toast: mockToast,
@@ -222,6 +227,31 @@ describe('Dashboard view (v2)', () => {
       'https://schedule.cqu.moe/api/v2/calendar/tok-abc/calendar.ics',
     )
     expect(await screen.findByRole('button', { name: '已复制' })).toBeInTheDocument()
+    expect(captureScheduleEvent).toHaveBeenCalledWith('schedule_action_finished', {
+      actor_type: 'user',
+      trigger: 'user',
+      operation: 'copy_calendar_link',
+      outcome: 'success',
+      format: 'ics',
+    })
+  })
+
+  it('reports a failed calendar-link copy without exposing its URL', async () => {
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error('denied'))
+    await mountDashboard([mockSubscription({ links: [defaultLink('tok-abc')] })])
+    await userEvent.click(screen.getByRole('button', { name: '复制链接' }))
+
+    expect(await screen.findByRole('button', { name: '复制失败' })).toBeInTheDocument()
+    const call = vi.mocked(captureScheduleEvent).mock.calls.at(-1)
+    expect(call?.[0]).toBe('schedule_action_finished')
+    expect(call?.[1]).toMatchObject({
+      actor_type: 'user',
+      trigger: 'user',
+      operation: 'copy_calendar_link',
+      outcome: 'failure',
+      format: 'ics',
+    })
+    expect(JSON.stringify(call?.[1])).not.toContain('tok-abc')
   })
 
   it('runs the manual refresh state flow: queue → syncing → complete', async () => {

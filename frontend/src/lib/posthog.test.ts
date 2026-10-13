@@ -3,6 +3,7 @@ import { sanitizePostHogEvent, templateRoutePath } from "./posthog";
 
 async function loadTelemetry(persistedUserId: string | undefined) {
   vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "test");
+  vi.stubEnv("VITE_POSTHOG_ALLOW_NON_PRODUCTION", "true");
   const posthog = {
     init: vi.fn(),
     register: vi.fn(),
@@ -27,13 +28,19 @@ describe("Schedule browser PostHog privacy boundary", () => {
       event: "$pageview",
       properties: {
         $current_url: "https://schedule.cqu.moe/view/secret-subscription-token?code=secret#calendar",
+        $exception_message: "failed to load secret-subscription-token",
+        $exception_stack_trace: "at load(secret-subscription-token)",
         email: "user@example.com",
+        search_keyword: "private course",
       },
     });
     const serialized = JSON.stringify(event);
     expect(serialized).not.toContain("secret-subscription-token");
     expect(serialized).not.toContain("user@example.com");
+    expect(serialized).not.toContain("private course");
     expect(event?.properties.$current_url).toBe("https://schedule.cqu.moe/view/:token");
+    expect(event?.properties.$exception_message).toBeUndefined();
+    expect(event?.properties.$exception_stack_trace).toBeUndefined();
   });
 });
 
@@ -41,6 +48,7 @@ describe("Schedule browser PostHog identity sync", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.resetModules();
     vi.doUnmock("posthog-js");
   });
@@ -75,6 +83,7 @@ describe("Schedule browser PostHog deferred lifecycle", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.resetModules();
     vi.doUnmock("posthog-js");
   });
@@ -102,6 +111,7 @@ describe("Schedule browser PostHog deferred lifecycle", () => {
     telemetry.captureSchedulePageview("/dashboard");
     telemetry.syncPostHogReplay("/");
     telemetry.syncPostHogReplay("/view/secret-subscription-token");
+    telemetry.captureScheduleException(new Error("render failed"));
     await ready;
 
     expect(posthog.reset).toHaveBeenCalledTimes(1);
@@ -111,24 +121,39 @@ describe("Schedule browser PostHog deferred lifecycle", () => {
     expect(posthog.capture).toHaveBeenCalledWith("$pageview", {
       $current_url: expect.stringContaining("/dashboard"),
       route: "/dashboard",
+      actor_type: "user",
+      trigger: "automatic",
+      operation: "pageview",
+      outcome: "success",
     });
+    expect(posthog.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        actor_type: "system",
+        outcome: "failure",
+        $process_person_profile: false,
+      }),
+    );
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
     expect(posthog.stopSessionRecording).toHaveBeenCalledTimes(1);
   });
 
-  it("treats the removed changelog page as private for session recording", async () => {
+  it("records masked owned pages and refuses other origins", async () => {
+    vi.stubGlobal("window", { location: { origin: "https://schedule.cqu.moe", hostname: "schedule.cqu.moe" } });
     const { telemetry, posthog } = await loadTelemetry(undefined);
     await telemetry.initPostHog();
 
     telemetry.syncPostHogReplay("/api-docs");
     expect(posthog.startSessionRecording).toHaveBeenCalledTimes(1);
 
-    telemetry.syncPostHogReplay("/changelog");
+    vi.stubGlobal("window", { location: { origin: "https://sso.cqu.edu.cn" } });
+    telemetry.syncPostHogReplay("/login");
     expect(posthog.stopSessionRecording).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the app usable when the SDK import fails", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "test");
+  vi.stubEnv("VITE_POSTHOG_ALLOW_NON_PRODUCTION", "true");
     vi.doMock("posthog-js", () => {
       throw new Error("SDK chunk unavailable");
     });

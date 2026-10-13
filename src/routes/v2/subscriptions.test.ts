@@ -19,6 +19,7 @@ import type {
   VerifiedSession,
 } from "../../services/auth-rpc";
 import type { DefaultSubscriptionsResponse } from "../../services/personal-subscription-setup";
+import * as telemetry from "../../lib/posthog";
 import subscriptionsV2 from "./subscriptions";
 
 // ── caps presets ─────────────────────────────────────────────────────────────
@@ -405,6 +406,43 @@ describe("GET /api/v2/subscriptions", () => {
 // ── POST /defaults ──────────────────────────────────────────────────────────
 
 describe("POST /api/v2/subscriptions/defaults", () => {
+  it("reports default-subscription success and needs-input terminals once each", async () => {
+    const capture = vi.spyOn(telemetry, "captureScheduleEvent");
+    try {
+      const created = await buildApp("telemetry-user", FULL_CAPS, "active")
+        .request("/defaults", { method: "POST" });
+      const rejected = await buildApp("telemetry-user", FULL_CAPS, "revoked")
+        .request("/defaults", { method: "POST" });
+
+      expect(created.status).toBe(201);
+      expect(rejected.status).toBe(409);
+      const calls = capture.mock.calls.filter(call => call[2] === "schedule_subscription_finished");
+      expect(calls).toHaveLength(2);
+      expect(calls.map((call) => call[2])).toEqual([
+        "schedule_subscription_finished",
+        "schedule_subscription_finished",
+      ]);
+      expect(calls.map((call) => call[3])).toEqual([
+        "telemetry-user",
+        "telemetry-user",
+      ]);
+      expect(calls[0][4]).toMatchObject({
+        actor_type: "user",
+        trigger: "user",
+        operation: "prepare_defaults",
+        outcome: "success",
+      });
+      expect(calls[1][4]).toMatchObject({
+        actor_type: "user",
+        trigger: "user",
+        operation: "prepare_defaults",
+        outcome: "needs_input",
+      });
+    } finally {
+      capture.mockRestore();
+    }
+  });
+
   it("initializes defaults through the authenticated route", async () => {
     const app = buildApp("userA");
     const response = await app.request("/defaults", { method: "POST" });

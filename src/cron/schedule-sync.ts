@@ -39,7 +39,11 @@ import {
   expireInterruptedRun,
   type PublicSyncFailure,
 } from "../services/sync-status";
-import { captureScheduleEvent, captureScheduleException } from "../lib/posthog";
+import { captureScheduleException } from "../lib/posthog";
+import {
+  captureScheduleSyncStarted,
+  captureScheduleSyncTerminal,
+} from "../lib/sync-telemetry";
 import type { PersonalScheduleData } from "../services/sync";
 import {
   createNotificationId,
@@ -97,39 +101,6 @@ type SyncTerminal = {
   sessionRecoveryAttempts?: number;
 };
 
-function captureSyncTerminal(
-  env: Env,
-  lifecycle: ExecutionContext | undefined,
-  terminal: SyncTerminal,
-  outcome: "success" | "failure",
-  errorCode?: string,
-): void {
-  const now = Date.now();
-  const endToEndDurationMs = terminal.requestedAt !== undefined
-    && Number.isFinite(terminal.requestedAt)
-    && terminal.requestedAt <= now
-      ? now - terminal.requestedAt
-      : undefined;
-  // This accepted running attempt only; earlier attempts and queue wait are
-  // included in end_to_end_duration_ms, never presented as execution time.
-  const durationMs = terminal.executionStartedAt === undefined
-    ? undefined : Math.max(0, now - terminal.executionStartedAt);
-  captureScheduleEvent(env, lifecycle, "schedule_sync_completed", terminal.userId, {
-    outcome,
-    trigger: terminal.trigger,
-    run_id: terminal.runId,
-    subscription_id: terminal.subscriptionId,
-    duration_basis: "execution_v2",
-    ...(durationMs === undefined ? {} : { duration_ms: durationMs }),
-    ...(endToEndDurationMs === undefined ? {} : { end_to_end_duration_ms: endToEndDurationMs }),
-    ...(terminal.deliveryAttempt === undefined ? {} : { delivery_attempt: terminal.deliveryAttempt }),
-    ...(terminal.sessionRecoveryAttempts === undefined ? {} : {
-      session_recovery_attempts: terminal.sessionRecoveryAttempts,
-    }),
-    ...(errorCode ? { error_code: errorCode } : {}),
-  });
-}
-
 async function markTerminalError(
   db: ReturnType<typeof drizzle>,
   env: Env,
@@ -138,7 +109,7 @@ async function markTerminalError(
   failure: PublicSyncFailure,
 ): Promise<boolean> {
   const won = await markSyncError(db, terminal.subscriptionId, terminal.runId, failure);
-  if (won) captureSyncTerminal(env, lifecycle, terminal, "failure", failure.code);
+  if (won) captureScheduleSyncTerminal(env, lifecycle, terminal, "failure", failure.code);
   return won;
 }
 
@@ -149,7 +120,7 @@ async function markTerminalSuccess(
   terminal: SyncTerminal,
 ): Promise<boolean> {
   const won = await markSyncSuccess(db, terminal.subscriptionId, terminal.runId);
-  if (won) captureSyncTerminal(env, lifecycle, terminal, "success");
+  if (won) captureScheduleSyncTerminal(env, lifecycle, terminal, "success");
   return won;
 }
 
@@ -169,7 +140,7 @@ async function markTerminalSuccess(
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
-  await dispatchPendingPersonalSetups(env);
+  await dispatchPendingPersonalSetups(env, lifecycle);
   console.log(
     JSON.stringify({ event: "cron.schedule_sync.start", message: "Selecting due subscriptions" }),
   );
@@ -300,8 +271,26 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       10,
       SYNC_SPREAD_SECONDS, // hard-cap every delay at the cron period so nothing spills past the next run
     );
+    for (const item of due) {
+      if (!item.runId) continue;
+      captureScheduleSyncStarted(env, lifecycle, {
+        userId: item.userId,
+        subscriptionId: item.subscriptionId,
+        runId: item.runId,
+        trigger: item.trigger ?? "cron",
+      });
+    }
   } catch (error) {
     const enqueued = error instanceof SpreadEnqueueError ? error.enqueued : 0;
+    for (const item of due.slice(0, enqueued)) {
+      if (!item.runId) continue;
+      captureScheduleSyncStarted(env, lifecycle, {
+        userId: item.userId,
+        subscriptionId: item.subscriptionId,
+        runId: item.runId,
+        trigger: item.trigger ?? "cron",
+      });
+    }
     await Promise.all(due.slice(enqueued).map((item) =>
       markTerminalError(db, env, lifecycle, {
         subscriptionId: item.subscriptionId,
@@ -468,7 +457,7 @@ export async function processScheduleSyncBatch(
       };
       const captureCommittedSuccess = (targetId: string) => {
         const current = terminal(targetId);
-        if (current) captureSyncTerminal(env, lifecycle, current, "success");
+        if (current) captureScheduleSyncTerminal(env, lifecycle, current, "success");
       };
       try {
         let sub = (await db
@@ -539,7 +528,9 @@ export async function processScheduleSyncBatch(
             && await expireInterruptedRun(env.DB, sub.id, runId, interruptedBefore)
           ) {
             const current = terminal(sub.id);
-            if (current) captureSyncTerminal(env, lifecycle, current, "failure", "SYNC_INTERRUPTED");
+            if (current) {
+              captureScheduleSyncTerminal(env, lifecycle, current, "failure", "SYNC_INTERRUPTED");
+            }
             message.ack();
             return;
           }
@@ -551,6 +542,12 @@ export async function processScheduleSyncBatch(
           // queueSyncRun just stamped syncRequestedAt for this new run.
           runFirstRequestedAt = Date.now();
           sessionRecoveryAttempts = 0;
+          captureScheduleSyncStarted(env, lifecycle, {
+            userId,
+            subscriptionId,
+            runId,
+            trigger: trigger ?? "admin",
+          });
         }
         const runningAt = Date.now();
         if (!(await markSyncRunning(db, sub.id, runId, new Date(runningAt).toISOString()))) {

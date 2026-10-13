@@ -21,6 +21,7 @@ import { EMPTY_ICS } from "../../services/ics";
 import type { CourseEntry, ExamEntry } from "../../services/cqu-api";
 import { errorResponse } from "../../utils/error";
 import { projectPersonalCalendar } from "../../services/personal-calendar-projection";
+import { captureScheduleEvent } from "../../lib/posthog";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -32,6 +33,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 /** Joined link + its subscription's export-relevant fields. */
 interface ResolvedLink {
+  subscriptionId: string;
   formats: string;
   isActive: boolean;
   isDefault: boolean;
@@ -56,6 +58,7 @@ async function resolveLink(
 ): Promise<ResolvedLink | null> {
   const [row] = await db
     .select({
+      subscriptionId: subscriptions.id,
       formats: calendarLinks.formats,
       isActive: subscriptions.isActive,
       isDefault: calendarLinks.isDefault,
@@ -137,6 +140,85 @@ function parseLinkJson(
   }
 }
 
+async function responseErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const body = await response.clone().json() as { detail?: { error?: { code?: unknown } } };
+    const code = body.detail?.error?.code;
+    return typeof code === "string" ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function captureCalendarDelivery(
+  c: { env: Env; executionCtx: ExecutionContext },
+  format: LinkFormat,
+  outcome: "success" | "failure",
+  link: Pick<ResolvedLink, "subscriptionId" | "sourceType" | "personalViewType"> | null,
+  errorCode?: string,
+): void {
+  let lifecycle: ExecutionContext | undefined;
+  try {
+    lifecycle = c.executionCtx;
+  } catch {
+    lifecycle = undefined;
+  }
+  captureScheduleEvent(
+    c.env,
+    lifecycle,
+    "schedule_calendar_delivered",
+    link ? `subscription:${link.subscriptionId}` : crypto.randomUUID(),
+    {
+      actor_type: "system",
+      trigger: "automatic",
+      operation: format,
+      outcome,
+      format,
+      ...(link ? { subscription_id: link.subscriptionId } : {}),
+      ...(link ? { source_type: link.sourceType } : {}),
+      ...(link?.personalViewType ? { view_type: link.personalViewType } : {}),
+      ...(errorCode ? { error_code: errorCode } : {}),
+    },
+    false,
+  );
+}
+
+async function deliverCalendar(
+  c: { env: Env; executionCtx: ExecutionContext; req: { param: (name: string) => string } },
+  format: LinkFormat,
+  produce: (link: ResolvedLink) => Promise<Response>,
+): Promise<Response> {
+  let link: ResolvedLink | null = null;
+  try {
+    const db = drizzle(c.env.DB);
+    const resolved = await resolveLinkOr404(db, c.req.param("token"));
+    if (resolved instanceof Response) {
+      captureCalendarDelivery(c, format, "failure", null, await responseErrorCode(resolved));
+      return resolved;
+    }
+    link = resolved;
+
+    const gated = gateFormat(link, format);
+    if (gated) {
+      captureCalendarDelivery(c, format, "failure", link, await responseErrorCode(gated));
+      return gated;
+    }
+
+    const response = await produce(link);
+    captureCalendarDelivery(
+      c,
+      format,
+      response.status < 400 ? "success" : "failure",
+      link,
+      response.status < 400 ? undefined : await responseErrorCode(response),
+    );
+    return response;
+  } catch (error) {
+    captureCalendarDelivery(c, format, "failure", link, "CALENDAR_DELIVERY_FAILED");
+    throw error;
+  }
+}
+
 // Token endpoints use `public, max-age=300` by DESIGN: tokens are unguessable and
 // per-link, the payload is low-sensitivity course-schedule data, and edge-caching
 // frequently-polled ICS feeds meaningfully cuts Worker invocations. The tradeoff
@@ -146,105 +228,78 @@ function parseLinkJson(
 
 // ── GET /:token/calendar.ics ─────────────────────────────────────────────────
 app.get("/:token/calendar.ics", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const db = drizzle(c.env.DB);
-  const link = await resolveLinkOr404(db, c.req.param("token"));
-  if (link instanceof Response) return link;
-
-  const gated = gateFormat(link, "ics");
-  if (gated) return gated;
-
-  return new Response(link.icsContent ?? EMPTY_ICS, {
+  return deliverCalendar(c, "ics", async (link) => new Response(link.icsContent ?? EMPTY_ICS, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": 'attachment; filename="schedule.ics"',
       "Cache-Control": "public, max-age=300",
     },
-  });
+  }));
 });
 
 // ── GET /:token/origin.json — raw courses + exams ────────────────────────────
 app.get("/:token/origin.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const db = drizzle(c.env.DB);
-  const link = await resolveLinkOr404(db, c.req.param("token"));
-  if (link instanceof Response) return link;
-
-  const gated = gateFormat(link, "origin_json");
-  if (gated) return gated;
-
-  const parsed = parseLinkJson(link);
-  if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
-
-  return new Response(
-    JSON.stringify({ courses: parsed.courses ?? [], exams: parsed.exams ?? [] }),
-    {
+  return deliverCalendar(c, "origin_json", async (link) => {
+    const parsed = parseLinkJson(link);
+    if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
+    return new Response(
+      JSON.stringify({ courses: parsed.courses ?? [], exams: parsed.exams ?? [] }),
+      {
       headers: {
         "Content-Type": "application/json",
         "Content-Disposition": 'attachment; filename="origin.json"',
         "Cache-Control": "public, max-age=300",
       },
-    },
-  );
+      },
+    );
+  });
 });
 
 // ── GET /:token/data.json — formatted events + metadata ──────────────────────
 app.get("/:token/data.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const db = drizzle(c.env.DB);
-  const link = await resolveLinkOr404(db, c.req.param("token"));
-  if (link instanceof Response) return link;
-
-  const gated = gateFormat(link, "data_json");
-  if (gated) return gated;
-
-  const parsed = parseLinkJson(link);
-  if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
-
-  const events = generateFormattedEvents(
-    parsed.courses,
-    link.semesterStart ?? "",
-    parsed.exams,
-  );
-
-  return new Response(
-    JSON.stringify({
-      semester: semesterShortName(link.sessionName),
-      semester_start: link.semesterStart ?? "",
-      generated_at: new Date().toISOString(),
-      events,
-    }),
-    {
+  return deliverCalendar(c, "data_json", async (link) => {
+    const parsed = parseLinkJson(link);
+    if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
+    const events = generateFormattedEvents(
+      parsed.courses,
+      link.semesterStart ?? "",
+      parsed.exams,
+    );
+    return new Response(
+      JSON.stringify({
+        semester: semesterShortName(link.sessionName),
+        semester_start: link.semesterStart ?? "",
+        generated_at: new Date().toISOString(),
+        events,
+      }),
+      {
       headers: {
         "Content-Type": "application/json",
         "Content-Disposition": 'attachment; filename="data.json"',
         "Cache-Control": "public, max-age=300",
       },
-    },
-  );
+      },
+    );
+  });
 });
 
 // ── GET /:token/data.csv ─────────────────────────────────────────────────────
 app.get("/:token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const db = drizzle(c.env.DB);
-  const link = await resolveLinkOr404(db, c.req.param("token"));
-  if (link instanceof Response) return link;
-
-  const gated = gateFormat(link, "csv");
-  if (gated) return gated;
-
-  const parsed = parseLinkJson(link);
-  if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
-
-  const events = generateFormattedEvents(
-    parsed.courses,
-    link.semesterStart ?? "",
-    parsed.exams,
-  );
-
-  return new Response(generateCsv(events), {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": 'attachment; filename="schedule.csv"',
-      "Cache-Control": "public, max-age=300",
-    },
+  return deliverCalendar(c, "csv", async (link) => {
+    const parsed = parseLinkJson(link);
+    if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
+    const events = generateFormattedEvents(
+      parsed.courses,
+      link.semesterStart ?? "",
+      parsed.exams,
+    );
+    return new Response(generateCsv(events), {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="schedule.csv"',
+        "Cache-Control": "public, max-age=300",
+      },
+    });
   });
 });
 
@@ -252,36 +307,29 @@ app.get("/:token/data.csv", rateLimit("UNAUTH_LIMITER"), async (c) => {
 //  Same event payload as data.json, but the gate checks the "web" format and
 //  no attachment header is set (the frontend fetches this via XHR).
 app.get("/:token/view.json", rateLimit("UNAUTH_LIMITER"), async (c) => {
-  const db = drizzle(c.env.DB);
-  const link = await resolveLinkOr404(db, c.req.param("token"));
-  if (link instanceof Response) return link;
-
-  const gated = gateFormat(link, "web");
-  if (gated) return gated;
-
-  const parsed = parseLinkJson(link);
-  if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
-
-  const events = generateFormattedEvents(
-    parsed.courses,
-    link.semesterStart ?? "",
-    parsed.exams,
-  );
-
-  return new Response(
-    JSON.stringify({
-      semester: semesterShortName(link.sessionName),
-      semester_start: link.semesterStart ?? "",
-      generated_at: new Date().toISOString(),
-      events,
-    }),
-    {
+  return deliverCalendar(c, "web", async (link) => {
+    const parsed = parseLinkJson(link);
+    if (!parsed) return errorResponse("DATA_CORRUPTED", "存储数据已损坏", 500);
+    const events = generateFormattedEvents(
+      parsed.courses,
+      link.semesterStart ?? "",
+      parsed.exams,
+    );
+    return new Response(
+      JSON.stringify({
+        semester: semesterShortName(link.sessionName),
+        semester_start: link.semesterStart ?? "",
+        generated_at: new Date().toISOString(),
+        events,
+      }),
+      {
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "public, max-age=300",
       },
-    },
-  );
+      },
+    );
+  });
 });
 
 export default app;

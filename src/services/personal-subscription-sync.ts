@@ -10,7 +10,10 @@ import { claimSubscriptionRun, markSyncError } from "./sync-status";
 import { drizzle } from "drizzle-orm/d1";
 import { CHINA_TZ_OFFSET_MS } from "../utils/time";
 import type { Subscription } from "../db/schema";
-import { captureScheduleEvent } from "../lib/posthog";
+import {
+  captureScheduleSyncStarted,
+  captureScheduleSyncTerminal,
+} from "../lib/sync-telemetry";
 import { fetchPersonalHarvest } from "./cqu-harvest";
 import {
   applySyncResult,
@@ -90,7 +93,7 @@ export async function requestPersonalSync(
   if (!canonical) {
     const prepared = await prepareDefaultSubscriptions(env, userId, caps, bindingStatus);
     if (prepared.status === "created" || prepared.status === "resumed") {
-      await dispatchPersonalSetup(env, userId);
+        await dispatchPersonalSetup(env, userId, lifecycle);
     }
     canonical = await env.DB.prepare(`SELECT id,manual_refresh_at FROM subscriptions
       WHERE user_id=? AND source_type='personal' LIMIT 1`)
@@ -125,21 +128,25 @@ export async function requestPersonalSync(
         runId: claim.runId,
         trigger: "manual",
       });
+      captureScheduleSyncStarted(env, lifecycle, {
+        userId,
+        subscriptionId: canonical.id,
+        runId: claim.runId,
+        trigger: "manual",
+      });
     } catch (error) {
       const won = await markSyncError(drizzle(env.DB), canonical.id, claim.runId, {
         code: "QUEUE_UNAVAILABLE",
         message: "同步服务暂时不可用，请稍后重试",
       });
       if (won) {
-        captureScheduleEvent(env, lifecycle, "schedule_sync_completed", userId, {
-          outcome: "failure",
+        captureScheduleSyncTerminal(env, lifecycle, {
+          userId,
+          subscriptionId: canonical.id,
+          runId: claim.runId,
           trigger: "manual",
-          run_id: claim.runId,
-          subscription_id: canonical.id,
-          duration_basis: "execution_v2",
-          end_to_end_duration_ms: Math.max(0, Date.now() - Date.parse(claim.requestedAt)),
-          error_code: "QUEUE_UNAVAILABLE",
-        });
+          requestedAt: Date.parse(claim.requestedAt),
+        }, "failure", "QUEUE_UNAVAILABLE");
       }
       await env.DB.prepare(`UPDATE subscriptions SET manual_refresh_at=NULL
         WHERE id=? AND sync_run_id=? AND manual_refresh_at=?`)

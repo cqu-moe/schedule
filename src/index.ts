@@ -15,7 +15,7 @@ import subscriptionsV2 from "./routes/v2/subscriptions";
 import externalV2 from "./routes/v2/external";
 import calendarV2 from "./routes/v2/calendar";
 import notificationSettingsV2 from "./routes/v2/notification-settings";
-import { captureScheduleEvent, captureScheduleException } from "./lib/posthog";
+import { captureScheduleException } from "./lib/posthog";
 import { postHogCookieResetResponse } from "./lib/posthog-cookie";
 
 export const app = new Hono<{ Bindings: Env }>();
@@ -168,9 +168,6 @@ export default {
     switch (controller.cron) {
       case "*/15 * * * *":
         await enqueueScheduleSync(env, ctx);
-        captureScheduleEvent(env, ctx, "service_heartbeat", crypto.randomUUID(), {
-          trigger: "cron",
-        }, false);
         break;
       default:
         console.warn(JSON.stringify({ event: "http.unknown_cron", cron: controller.cron, message: "Unknown cron schedule" }));

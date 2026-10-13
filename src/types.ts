@@ -41,6 +41,7 @@ export interface Env {
   DEV_AUTH_MOCK?: string;
   POSTHOG_PROJECT_TOKEN?: string;
   POSTHOG_HOST?: string;
-  ENVIRONMENT?: "production" | "preview" | "development";
+  POSTHOG_ENABLED?: string;
+  ENVIRONMENT?: "production" | "preview" | "development" | "test";
   RELEASE?: string;
 }
