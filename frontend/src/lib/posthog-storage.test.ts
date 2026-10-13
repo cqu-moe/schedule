@@ -11,7 +11,7 @@ describe("Schedule browser PostHog persistence", () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "test");
     vi.stubEnv("VITE_POSTHOG_ALLOW_NON_PRODUCTION", "true");
     const init = vi.fn();
-    vi.doMock("posthog-js", () => ({
+    vi.doMock("posthog-js/dist/module.no-external", () => ({
       default: {
         init,
         register: vi.fn(),

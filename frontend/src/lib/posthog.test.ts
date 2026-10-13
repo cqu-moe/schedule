@@ -15,7 +15,7 @@ async function loadTelemetry(persistedUserId: string | undefined) {
     startSessionRecording: vi.fn(),
     stopSessionRecording: vi.fn(),
   };
-  vi.doMock("posthog-js", () => ({ default: posthog }));
+  vi.doMock("posthog-js/dist/module.no-external", () => ({ default: posthog }));
   vi.resetModules();
   const telemetry = await import("./posthog");
   return { telemetry, posthog };
@@ -50,7 +50,7 @@ describe("Schedule browser PostHog identity sync", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.resetModules();
-    vi.doUnmock("posthog-js");
+    vi.doUnmock("posthog-js/dist/module.no-external");
   });
 
   it("resets a persisted other-account identity before identifying, but keeps anonymous continuity", async () => {
@@ -85,14 +85,14 @@ describe("Schedule browser PostHog deferred lifecycle", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.resetModules();
-    vi.doUnmock("posthog-js");
+    vi.doUnmock("posthog-js/dist/module.no-external");
   });
 
   it("does not import the SDK without a project token", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
     const init = vi.fn();
     const loadSdk = vi.fn(() => ({ default: { init } }));
-    vi.doMock("posthog-js", loadSdk);
+    vi.doMock("posthog-js/dist/module.no-external", loadSdk);
     vi.resetModules();
     const telemetry = await import("./posthog");
 
@@ -154,7 +154,7 @@ describe("Schedule browser PostHog deferred lifecycle", () => {
   it("keeps the app usable when the SDK import fails", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "test");
   vi.stubEnv("VITE_POSTHOG_ALLOW_NON_PRODUCTION", "true");
-    vi.doMock("posthog-js", () => {
+    vi.doMock("posthog-js/dist/module.no-external", () => {
       throw new Error("SDK chunk unavailable");
     });
     vi.resetModules();

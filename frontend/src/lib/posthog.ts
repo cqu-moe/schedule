@@ -5,7 +5,7 @@ type EventLike = {
   properties: Record<string, unknown>;
 };
 
-type PostHogClient = typeof import("posthog-js")["default"];
+type PostHogClient = typeof import("posthog-js/dist/module.no-external")["default"];
 type DeferredCapture =
   | { kind: "pageview"; path: string }
   | { kind: "event"; event: string; properties: Record<string, unknown> }
@@ -147,7 +147,11 @@ export function initPostHog(): Promise<boolean> {
   const request = (async (): Promise<boolean> => {
     try {
       clearLegacyPostHogCookie(token);
-      const { default: loadedPostHog } = await import("posthog-js");
+      const [{ default: loadedPostHog }] = await Promise.all([
+        import("posthog-js/dist/module.no-external"),
+        import("posthog-js/dist/posthog-recorder"),
+        import("posthog-js/dist/exception-autocapture"),
+      ]);
       loadedPostHog.init(token, {
         api_host: host,
         asset_host: host,
