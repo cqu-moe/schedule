@@ -98,11 +98,41 @@ describe('Add view (React)', () => {
     select.focus(); await user.keyboard('{Enter}')
     expect(mockApi.createSubscription).not.toHaveBeenCalled()
     expect(mockApi.searchTeachingClasses).toHaveBeenCalledWith('catalog-1', 'catalog-token')
+    await waitFor(() => expect(screen.getByRole('button', { name: '订阅大学物理 01班' })).toHaveFocus())
     await user.click(await screen.findByRole('button', { name: '订阅大学物理 02班' }))
     expect(mockApi.createSubscription).toHaveBeenCalledWith({ sourceType: 'course', sourceId: 'class-2', sourceName: '大学物理 02班', selectionToken: 'class-token', sessionId: 'current' })
     await user.click(screen.getByRole('button', { name: '重新选择课程' }))
     expect(screen.queryByRole('button', { name: '订阅大学物理 02班' })).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('searchbox', { name: '搜索课程' })).toHaveFocus())
+  })
+
+  it('retains keyboard focus through teaching-class loading, failure, retry and success', async () => {
+    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
+    mockApi.searchExternal.mockResolvedValue({ session: { id: 'term', name: '当前学期' }, selection_token: 'catalog',
+      results: [{ id: 'course', name: '大学物理' }] })
+    let rejectLookup!: (error: unknown) => void
+    let resolveRetry!: (result: unknown) => void
+    mockApi.searchTeachingClasses
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectLookup = reject }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRetry = resolve }))
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索课程' }), '物理')
+    const course = await screen.findByRole('button', { name: '选择课程大学物理' })
+    course.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('大学物理 · 选择教学班')).toHaveFocus()
+    expect(screen.queryByRole('button', { name: '选择课程大学物理' })).not.toBeInTheDocument()
+    await act(async () => rejectLookup(new Error('offline')))
+    const retry = await screen.findByRole('button', { name: '重试搜索' })
+    expect(retry).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('大学物理 · 选择教学班')).toHaveFocus()
+    await act(async () => resolveRetry({ session: { id: 'term', name: '当前学期' }, selection_token: 'receipt',
+      results: [{ id: 'class', name: '物理01班' }] }))
+    expect(await screen.findByRole('button', { name: '订阅物理01班' })).toHaveFocus()
+    expect(mockApi.searchTeachingClasses).toHaveBeenNthCalledWith(2, 'course', 'catalog')
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
   })
 
   it('reselects on the original subscription at full quota with external permission only', async () => {

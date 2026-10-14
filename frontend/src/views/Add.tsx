@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import {
   ActionButton,
@@ -107,6 +107,9 @@ export default function Add() {
   const [selectedCourse, setSelectedCourse] = useState<SearchResult | null>(null)
   const catalogToken = useRef<string | null>(null)
   const courseInput = useRef<HTMLInputElement>(null)
+  const teachingClassHeading = useRef<HTMLHeadingElement>(null)
+  const teachingClassResults = useRef<HTMLUListElement>(null)
+  const searchRetryButton = useRef<HTMLButtonElement>(null)
   const [selectionToken, setSelectionToken] = useState<string | null>(null)
   const [sourceType, setSourceType] = useState<ExternalSourceType>(reselectMode ? 'course' : 'instructor')
   const [keyword, setKeyword] = useState('')
@@ -127,6 +130,20 @@ export default function Add() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSeq = useRef(0)
   const lastSearchRef = useRef<SearchRequest | null>(null)
+  useLayoutEffect(() => {
+    if (!selectedCourse) return
+    const resultAction = teachingClassResults.current?.querySelector<HTMLButtonElement>(
+      'button:not(:disabled):not([aria-disabled="true"])',
+    )
+    const target = searching || !searched
+      ? teachingClassHeading.current
+      : errorMessage
+        ? searchRetryButton.current
+        : resultAction
+    const focusTarget = target ?? teachingClassHeading.current
+    focusTarget?.focus()
+  }, [selectedCourse, searching, searched, errorMessage, searchResults])
+
   const { reloadSession } = session
   const { load: loadSubscriptions } = subs
   const { begin: beginPersonalSetup } = setup
@@ -749,7 +766,7 @@ export default function Add() {
                       )}
 
                       {!selectedCourse && <p id="external-search-help" className="add-hint">{sourceType === 'admin_class' ? '可按学院、年级筛选，也可直接搜索班级。' : '请输入至少两个字符，可按 Enter 搜索。'}</p>}
-                      {selectedCourse && <div className="add-field"><p>{selectedCourse.name} · 选择教学班</p><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
+                      {selectedCourse && <div className="add-field"><h3 ref={teachingClassHeading} tabIndex={-1} className="add-result-name" aria-describedby={searching ? 'external-lookup-status' : errorMessage ? 'external-search-error' : undefined}>{selectedCourse.name} · 选择教学班</h3><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
                       {!selectedCourse && <Button className="add-touch-control" type="submit" variant="outline"
                         disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
                         aria-describedby="external-search-help">
@@ -757,14 +774,14 @@ export default function Add() {
                       </Button>}
                       {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
                       {searching && (
-                        <p className="add-searching" role="status">
+                        <p id="external-lookup-status" className="add-searching" role="status">
                           搜索中…
                         </p>
                       )}
 
                       {searched && !searching && !errorMessage && searchResults.length > 0 && (!selectionToken || !currentTerm) && <p id="external-selection-help" className="add-warning">本次结果暂不能选择，请重新搜索。</p>}
                       {searchResults.length > 0 && (
-                        <ul className="add-results" aria-label="搜索结果" role="list">
+                        <ul ref={teachingClassResults} className="add-results" aria-label="搜索结果" role="list">
                           {searchResults.map((item) => (
                             <li key={item.id} className="add-result">
                               <div className="add-result-info">
@@ -822,7 +839,7 @@ export default function Add() {
           </section>
 
           {errorMessage && (
-            <Alert variant="destructive">
+            <Alert id="external-search-error" variant="destructive">
               <AlertDescription className="add-error-row">
                 <span>{errorMessage}</span>
                 {needsRepair && (
@@ -838,6 +855,7 @@ export default function Add() {
                     type="button"
                     variant="outline"
                     size="default"
+                    ref={searchRetryButton}
                     onClick={retrySearch}
                   >
                     重试搜索
