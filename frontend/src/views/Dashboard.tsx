@@ -1003,7 +1003,7 @@ export default function Dashboard() {
           </div>
           <ul className="dash-list" aria-label="课表订阅">
             {enrichedSubs.map(({ sub, defaultLink: link }) => (
-              <li className="dash-card" key={sub.id}>
+              <li className={sub.source_version === 1 ? 'dash-card dash-external-card' : 'dash-card'} key={sub.id}>
                 <div className="dash-card-info">
                   <div className="dash-card-title">
                     <CalendarDays size={20} aria-hidden="true" />
@@ -1014,7 +1014,7 @@ export default function Dashboard() {
                     {sub.session_name && (
                       <span className="dash-semester">{sub.session_name}</span>
                     )}
-                    {sub.external_state === 'reselecting' && <span className="dash-sync-meta">原链接地址保留，采集成功前保持停用</span>}
+                    {sub.external_state === 'reselecting' && <span className="dash-sync-meta">原链接地址保留，同步成功前保持停用</span>}
                     {sub.external_state !== 'reselecting' && sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
                     {sub.external_state !== 'reselecting' && sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
@@ -1043,8 +1043,11 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="dash-card-actions">
+                  {sub.source_version === 1 && firstSyncLinkUnavailable(sub) && <p id={`external-links-${sub.id}`} className="dash-external-link-notice">
+                    {sub.external_state === 'expired' ? '教学班已过期，请重新选择教学班。' : '课表暂不可用，请等待同步成功。'}全部公共链接暂时停用。
+                  </p>}
                   {link && (
-                    <div className="dash-main-actions">
+                    <div className="dash-main-actions" aria-describedby={sub.source_version === 1 && firstSyncLinkUnavailable(sub) ? `external-links-${sub.id}` : undefined}>
                       {!firstSyncLinkUnavailable(sub) ? (
                         <Button asChild size="default">
                           <a
@@ -1064,6 +1067,7 @@ export default function Dashboard() {
                           title="网页预览"
                           aria-label={`查看课表：${sub.source_name}`}
                           disabled
+                          aria-describedby={sub.source_version === 1 ? `external-links-${sub.id}` : undefined}
                         >
                           <ExternalLink aria-hidden="true" />
                           查看课表
@@ -1079,6 +1083,7 @@ export default function Dashboard() {
                           error: '复制失败',
                         }}
                         disabled={firstSyncLinkUnavailable(sub)}
+                        aria-describedby={sub.source_version === 1 && firstSyncLinkUnavailable(sub) ? `external-links-${sub.id}` : undefined}
                         onClick={() => void handleCopyIcs({ sub, defaultLink: link })}
                       />
                     </div>
@@ -1112,6 +1117,7 @@ export default function Dashboard() {
                         title="二维码"
                         aria-label={`${sub.source_name}二维码`}
                         disabled={firstSyncLinkUnavailable(sub)}
+                        aria-describedby={sub.source_version === 1 && firstSyncLinkUnavailable(sub) ? `external-links-${sub.id}` : undefined}
                         onClick={() => openQrModal({ sub, defaultLink: link })}
                       >
                         <QrCode />
@@ -1141,7 +1147,11 @@ export default function Dashboard() {
                           }}
                         >
                           {link &&
-                            (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => (
+                            (['ics', 'data_json', 'origin_json', 'csv'] as const).map((fmt) => sub.source_version === 1 && firstSyncLinkUnavailable(sub) ? (
+                              <DropdownMenuItem key={fmt} disabled>
+                                <Download />下载 {DOWNLOAD_LABELS[fmt]}
+                              </DropdownMenuItem>
+                            ) : (
                               <DropdownMenuItem key={fmt} asChild>
                                 <a
                                   href={buildLinkUrl(session.publicUrl, link.token, fmt)}

@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
   Tabs,
+  TabsContent,
   TabsList,
   TabsTrigger,
   toast,
@@ -117,6 +118,7 @@ export default function Add() {
   const [searched, setSearched] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [needsRepair, setNeedsRepair] = useState(false)
+  const [submitError, setSubmitError] = useState('')
   const [sessionError, setSessionError] = useState(false)
   const [subsStatus, setSubsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [departmentsLoading, setDepartmentsLoading] = useState(false)
@@ -235,6 +237,7 @@ export default function Add() {
   function clearError() {
     setErrorMessage('')
     setNeedsRepair(false)
+    setSubmitError('')
   }
 
   function clearPendingSearch() {
@@ -351,6 +354,7 @@ export default function Add() {
 
     setKeyword(value)
     invalidateSearch()
+    clearError()
     if (sourceType !== 'admin_class' && value.trim().length < 2) {
       setSearchResults([])
       setSearched(false)
@@ -445,7 +449,7 @@ export default function Add() {
         if (reselectMode) {
           if (!reselectId || !canReselect) return
           const result = await api.reselectTeachingClass(reselectId, body)
-          toast.success('已提交重选，正在重新同步；采集成功后原链接恢复可用')
+          toast.success('已提交重选，正在重新同步；同步成功后原链接恢复可用')
           navigate('/dashboard', { state: { reselection: { id: reselectId, runId: result.run_id } } })
         } else {
           await api.createSubscription(body)
@@ -454,7 +458,9 @@ export default function Add() {
         }
       }, item.id)
     } catch (err: unknown) {
-      toast.error(parseApiError(err, reselectMode ? '重选提交失败，请重试' : '订阅失败'))
+      const message = parseApiError(err, reselectMode ? '重选提交失败，请重试' : '订阅失败')
+      setSubmitError(message)
+      toast.error(message)
     }
   }
 
@@ -475,7 +481,7 @@ export default function Add() {
     <>
       <PageHeader
         title={reselectMode ? '重新选择教学班' : '添加新订阅'}
-        description={reselectMode ? '原订阅和全部链接地址保持不变；新教学班采集成功前，公共链接保持停用。' : '选择个人课表或外部课表，添加后可返回「我的订阅」查看日历链接。'}
+        description={reselectMode ? '原订阅和全部链接地址保持不变；新教学班同步成功前，公共链接保持停用。' : '选择个人课表或外部课表，添加后可返回「我的订阅」查看日历链接。'}
         actions={
           <Button asChild variant="outline" size="sm">
             <Link to="/dashboard">我的订阅</Link>
@@ -522,7 +528,7 @@ export default function Add() {
         />
       ) : reselectMode && !canReselect ? (
         <PageState state="error" title={reselectPending ? '教学班正在重新同步' : '无法重选此订阅'}
-          description={reselectPending ? '请等待本次采集完成后再操作；公共链接保持停用。' : '仅支持本人已过期或重选失败的新版教学班订阅，请返回我的订阅确认状态。'} />
+          description={reselectPending ? '请等待本次同步完成后再操作；公共链接保持停用。' : '仅支持本人已过期或重选失败的教学班订阅，请返回我的订阅确认状态。'} />
       ) : (
         <>
           {!reselectMode && setup.error && (
@@ -612,9 +618,9 @@ export default function Add() {
           <section className="add-section" aria-labelledby="external-heading">
             <h2 id="external-heading" className="add-section-title">
               外部订阅
-              <span className="add-flag">
-                {externalUnavailable ? '暂不可用' : externalLocked ? '未开通' : null}
-              </span>
+              {(externalUnavailable || externalLocked) && <span className="add-flag">
+                {externalUnavailable ? '暂不可用' : '未开通'}
+              </span>}
             </h2>
             {configStatus === 'loading' ? (
               <p role="status">正在确认外部订阅可用性…</p>
@@ -638,156 +644,179 @@ export default function Add() {
             ) : (
               <div className="add-card">
                 {reselectMode && <p className="add-hint">重选失败后，可在上次提交5分钟后重试。</p>}
-                {!reselectMode && <Tabs value={sourceType} onValueChange={handleTypeChange}>
-                  <TabsList className="add-source-tabs" aria-label="来源类型">
+                <Tabs value={sourceType} onValueChange={handleTypeChange} className="add-external-tabs">
+                  {!reselectMode && <TabsList className="add-source-tabs" aria-label="来源类型">
                     {availability.search_types.map((type) => (
-                      <TabsTrigger key={type} value={type}>
+                      <TabsTrigger className="add-touch-control" key={type} value={type}>
                         {SOURCE_LABELS[type]}
                       </TabsTrigger>
                     ))}
-                  </TabsList>
-                </Tabs>}
+                  </TabsList>}
+                  <TabsContent value={sourceType} asChild
+                    {...(reselectMode ? { role: 'group', 'aria-label': '选择教学班', 'aria-labelledby': undefined } : {})}>
+                    <form className="add-external-panel" onSubmit={(event) => {
+                      event.preventDefault()
+                      if (selectedCourse || searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)) return
+                      clearPendingSearch()
+                      void runSearch({ sourceType, keyword, departmentId: selectedDepartment, grade: selectedGrade })
+                    }}>
 
-                {currentTerm && <p className="add-result-extra">当前学期：{currentTerm.name}</p>}
-                <p className="add-result-extra">仅查询学校当前学期。</p>
-                {!creationAvailable && <p className="add-result-extra">当前支持搜索，订阅创建暂未开放。</p>}
-                {sourceType === 'admin_class' && (
-                  <div className="add-admin-filters">
-                    <div className="add-field">
-                      <Label htmlFor="department-select">选择学院</Label>
-                      <DepartmentTreeSelect
-                        id="department-select"
-                        departments={departments}
-                        value={selectedDepartment}
-                        onChange={handleDepartmentChange}
-                      />
-                      {selectedDepartment && (
-                        <Button type="button" variant="ghost" size="sm" onClick={() => handleDepartmentChange('')}>
-                          清除学院筛选
-                        </Button>
-                      )}
-                      {departmentsLoading && <p role="status" className="add-result-extra">正在加载学院…</p>}
-                    </div>
-                    <div className="add-field">
-                      <Label htmlFor="grade-select">年级</Label>
-                      <Select value={selectedGrade} onValueChange={handleGradeChange}>
-                        <SelectTrigger id="grade-select" aria-label="年级">
-                          <SelectValue placeholder="全部年级" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">全部</SelectItem>
-                          {gradeOptions.map((year) => (
-                            <SelectItem key={year} value={year}>
-                              {year}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="add-search-field">
-                      <Search aria-hidden />
-                      <Input
-                        type="search"
-                        aria-label="搜索班级"
-                        placeholder="输入班级名称关键词（可选）"
-                        value={keyword}
-                        onChange={(event) => onKeywordChange(event.target.value)}
-                      />
-                    </div>
-                    {departmentsError && (
-                      <Alert variant="destructive">
-                        <AlertDescription className="add-error-row">
-                          <span>院系列表加载失败，可先直接搜索班级。</span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={departmentsLoading}
-                            onClick={() => void loadDepartments()}
-                          >
-                            重试
-                          </Button>
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-                )}
-
-                {sourceType !== 'admin_class' && !selectedCourse && (
-                  <div className="add-search-field">
-                    <Search aria-hidden />
-                    <Input
-                      type="search"
-                      ref={courseInput}
-                      aria-label={`搜索${SOURCE_LABELS[sourceType]}`}
-                      placeholder={SEARCH_PLACEHOLDERS[sourceType]}
-                      value={keyword}
-                      onChange={(event) => onKeywordChange(event.target.value)}
-                    />
-                  </div>
-                )}
-
-                {selectedCourse && <div className="add-field"><p>{selectedCourse.name} · 选择教学班</p><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
-                {!selectedCourse && <Button type="button" variant="outline"
-                  disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
-                  onClick={() => { clearPendingSearch(); void runSearch({ sourceType, keyword, departmentId: selectedDepartment, grade: selectedGrade }) }}>
-                  搜索
-                </Button>}
-                {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
-                {searching && (
-                  <p className="add-searching" role="status">
-                    搜索中…
-                  </p>
-                )}
-
-                {searchResults.length > 0 && (
-                  <ul className="add-results">
-                    {searchResults.map((item) => (
-                      <li key={item.id} className="add-result">
-                        <div className="add-result-info">
-                          <p className="add-result-name">{item.name}</p>
-                          {item.extra && <p className="add-result-extra">{item.extra}</p>}
+                      {currentTerm && <p className="add-result-extra">当前学期：{currentTerm.name}</p>}
+                      <p className="add-result-extra">仅查询学校当前学期。</p>
+                      {!creationAvailable && <p className="add-result-extra">当前支持搜索，订阅创建暂未开放。</p>}
+                      {sourceType === 'admin_class' && (
+                        <div className="add-admin-filters">
+                          <div className="add-field">
+                            <Label htmlFor="department-select">选择学院</Label>
+                            <DepartmentTreeSelect
+                              id="department-select"
+                              departments={departments}
+                              value={selectedDepartment}
+                              onChange={handleDepartmentChange}
+                            />
+                            {selectedDepartment && (
+                              <Button type="button" variant="ghost" size="default" onClick={() => handleDepartmentChange('')}>
+                                清除学院筛选
+                              </Button>
+                            )}
+                            {departmentsLoading && <p role="status" className="add-result-extra">正在加载学院…</p>}
+                          </div>
+                          <div className="add-field">
+                            <Label htmlFor="grade-select">年级</Label>
+                            <Select value={selectedGrade} onValueChange={handleGradeChange}>
+                              <SelectTrigger className="add-touch-control" id="grade-select" aria-label="年级">
+                                <SelectValue placeholder="全部年级" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">全部</SelectItem>
+                                {gradeOptions.map((year) => (
+                                  <SelectItem key={year} value={year}>
+                                    {year}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Label htmlFor="external-keyword">搜索班级</Label>
+                          <div className="add-search-field">
+                            <Search aria-hidden />
+                            <Input
+                              id="external-keyword"
+                              type="search"
+                              aria-describedby="external-search-help"
+                              aria-label="搜索班级"
+                              placeholder="输入班级名称关键词（可选）"
+                              value={keyword}
+                              onChange={(event) => onKeywordChange(event.target.value)}
+                            />
+                          </div>
+                          {departmentsError && (
+                            <Alert variant="destructive">
+                              <AlertDescription className="add-error-row">
+                                <span>院系列表加载失败，可先直接搜索班级。</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="default"
+                                  disabled={departmentsLoading}
+                                  onClick={() => void loadDepartments()}
+                                >
+                                  重试
+                                </Button>
+                              </AlertDescription>
+                            </Alert>
+                          )}
                         </div>
-                        {sourceType === 'course' && !selectedCourse ? (
-                          <Button type="button" size="sm" aria-label={`选择课程${item.name}`} disabled={searching || !selectionToken} onClick={() => void selectCourse(item)}>选择教学班</Button>
-                        ) : !reselectMode && isExternalSubscribed(item.id) ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled
-                            aria-label={`已订阅${item.name}`}
-                          >
-                            <Check aria-hidden />
-                            已订阅
-                          </Button>
-                        ) : (
-                          <ActionButton
-                            type="button"
-                            size="sm"
-                            state={subscribeFeedback.stateOf(item.id)}
-                            labels={{
-                              idle: reselectMode ? '重选教学班' : '订阅',
-                              loading: reselectMode ? '提交中…' : '订阅中…',
-                              success: reselectMode ? '已提交' : '已订阅',
-                              error: '失败，重试',
-                            }}
-                            disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || (!reselectMode && subs.atLimit)}
-                            aria-label={`${reselectMode ? '重选' : '订阅'}${item.name}`}
-                            onClick={() => void handleExternalSubscribe(item)}
+                      )}
+
+                      {sourceType !== 'admin_class' && !selectedCourse && (
+                        <div className="add-field">
+                        <Label htmlFor="external-keyword">搜索{SOURCE_LABELS[sourceType]}</Label>
+                        <div className="add-search-field">
+                          <Search aria-hidden />
+                          <Input
+                            type="search"
+                            id="external-keyword"
+                            aria-describedby="external-search-help"
+                            ref={courseInput}
+                            aria-label={`搜索${SOURCE_LABELS[sourceType]}`}
+                            placeholder={SEARCH_PLACEHOLDERS[sourceType]}
+                            value={keyword}
+                            onChange={(event) => onKeywordChange(event.target.value)}
                           />
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                        </div>
+                        </div>
+                      )}
 
-                {searched && !searching && !errorMessage && searchResults.length === 0 && (
-                  <p className="add-no-results">未找到结果</p>
-                )}
+                      {!selectedCourse && <p id="external-search-help" className="add-hint">{sourceType === 'admin_class' ? '可按学院、年级筛选，也可直接搜索班级。' : '请输入至少两个字符，可按 Enter 搜索。'}</p>}
+                      {selectedCourse && <div className="add-field"><p>{selectedCourse.name} · 选择教学班</p><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
+                      {!selectedCourse && <Button className="add-touch-control" type="submit" variant="outline"
+                        disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
+                        aria-describedby="external-search-help">
+                        搜索
+                      </Button>}
+                      {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
+                      {searching && (
+                        <p className="add-searching" role="status">
+                          搜索中…
+                        </p>
+                      )}
 
-                {!reselectMode && subs.atLimit && (
-                  <p className="add-warning">已达最大订阅数，请先删除不需要的订阅</p>
-                )}
+                      {searched && !searching && !errorMessage && searchResults.length > 0 && (!selectionToken || !currentTerm) && <p id="external-selection-help" className="add-warning">本次结果暂不能选择，请重新搜索。</p>}
+                      {searchResults.length > 0 && (
+                        <ul className="add-results" aria-label="搜索结果" role="list">
+                          {searchResults.map((item) => (
+                            <li key={item.id} className="add-result">
+                              <div className="add-result-info">
+                                <p className="add-result-name">{item.name}</p>
+                                {item.extra && <p className="add-result-extra">{item.extra}</p>}
+                              </div>
+                              {sourceType === 'course' && !selectedCourse ? (
+                                <Button className="add-touch-control" type="button" size="default" aria-label={`选择课程${item.name}`} disabled={searching || !selectionToken} aria-describedby={(!selectionToken || !currentTerm) ? "external-selection-help" : undefined} onClick={() => void selectCourse(item)}>选择教学班</Button>
+                              ) : !reselectMode && isExternalSubscribed(item.id) ? (
+                                <Button
+                                  variant="outline"
+                                  size="default"
+                                  disabled
+                                  aria-label={`已订阅${item.name}`}
+                                >
+                                  <Check aria-hidden />
+                                  已订阅
+                                </Button>
+                              ) : (
+                                <ActionButton
+                                  className="add-touch-control"
+                                  type="button"
+                                  size="default"
+                                  state={subscribeFeedback.stateOf(item.id)}
+                                  labels={{
+                                    idle: reselectMode ? '重选教学班' : '订阅',
+                                    loading: reselectMode ? '提交中…' : '订阅中…',
+                                    success: reselectMode ? '已提交' : '已订阅',
+                                    error: '失败，重试',
+                                  }}
+                                  disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || (!reselectMode && subs.atLimit)}
+                                  aria-describedby={(!selectionToken || !currentTerm) ? "external-selection-help" : undefined}
+                                  aria-label={`${reselectMode ? '重选' : '订阅'}${item.name}`}
+                                  onClick={() => void handleExternalSubscribe(item)}
+                                />
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {searched && !searching && !errorMessage && searchResults.length === 0 && (
+                        <PageState state="empty" title="未找到结果" description={selectedCourse ? '此课程暂无教学班，可重新选择课程。' : '请更换关键词或调整筛选后重试。'} />
+                      )}
+
+                      {!reselectMode && subs.atLimit && (
+                        <p className="add-warning">已达最大订阅数，请先删除不需要的订阅</p>
+                      )}
+                      {submitError && <Alert variant="destructive"><AlertDescription>{submitError}。所选内容已保留，可重试提交。</AlertDescription></Alert>}
+                    </form>
+                  </TabsContent>
+                </Tabs>
               </div>
             )}
           </section>
@@ -808,7 +837,7 @@ export default function Add() {
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
+                    size="default"
                     onClick={retrySearch}
                   >
                     重试搜索

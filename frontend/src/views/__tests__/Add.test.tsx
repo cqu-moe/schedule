@@ -50,6 +50,24 @@ describe('Add view (React)', () => {
     mockApi.getDepartments.mockResolvedValue({ departments: [] })
   })
 
+  it('submits a search with Enter from the input without repeating the debounce request', async () => {
+    await enableExternal()
+    mockApi.searchExternal.mockResolvedValue({ session: { id: 'term', name: '当前学期' }, selection_token: 'receipt',
+      results: [{ id: 'teacher', name: '测试教师' }] })
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const input = await screen.findByRole('searchbox', { name: '搜索教师' })
+    await user.type(input, '测试{Enter}')
+    expect(mockApi.searchExternal).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('测试教师')).toBeInTheDocument()
+    expect(input).toHaveFocus()
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(mockApi.searchExternal).toHaveBeenCalledTimes(1)
+    expect(mockApi.searchExternal).toHaveBeenCalledWith(expect.objectContaining({ source_type: 'instructor', keyword: '测试' }))
+    const selectedTab = screen.getByRole('tab', { name: '教师' })
+    expect(screen.getByRole('tabpanel', { name: '教师' })).toHaveAttribute('id', selectedTab.getAttribute('aria-controls'))
+  })
+
   it('uses server availability and shows the current term and truncated results', async () => {
     mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: ['admin_class'], create_types: [] } })
     mockApi.searchExternal.mockResolvedValue({
@@ -148,6 +166,7 @@ describe('Add view (React)', () => {
     await user.click(await screen.findByRole('button', { name: '选择课程物理' }))
     await user.click(await screen.findByRole('button', { name: '重选物理01班' }))
     await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('请在5分钟后重试'))
+    expect(screen.getByText(/所选内容已保留，可重试提交/)).toHaveTextContent('请在5分钟后重试')
     expect(screen.getByText(/原订阅和全部链接地址保持不变/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重选物理01班' })).toBeInTheDocument()
     expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()

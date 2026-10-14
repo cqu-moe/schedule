@@ -513,6 +513,20 @@ describe('Dashboard view (v2)', () => {
     }
   })
 
+  it.each(['expired', 'reselecting'] as const)('keeps every download unavailable for a %s teaching class', async (external_state) => {
+    await mountDashboard([mockSubscription({ source_type: 'course', source_version: 1, is_personal: false,
+      external_state, sync_status: external_state === 'reselecting' ? 'queued' : 'idle', links: [defaultLink()] })])
+    await userEvent.click(screen.getByRole('button', { name: /的更多操作$/ }))
+    const menu = await screen.findByRole('menu')
+    for (const item of within(menu).getAllByRole('menuitem', { name: /^下载 / })) {
+      expect(item).toHaveAttribute('aria-disabled', 'true')
+      expect(item).not.toHaveAttribute('href')
+      expect(item.querySelector('a')).toBeNull()
+    }
+    expect(within(menu).getByRole('menuitem', { name: '管理共享链接' })).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText(/全部公共链接暂时停用/)).toBeInTheDocument()
+  })
+
   it('opens the share links dialog from the more menu', async () => {
     await mountDashboard([mockSubscription({ links: [defaultLink()] })])
     await userEvent.click(screen.getByRole('button', { name: /的更多操作$/ }))
