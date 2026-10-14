@@ -147,3 +147,17 @@ GitHub: https://github.com/cqu-moe/schedule-cloudflare (Private)
 - OAuth token (accessToken/refreshToken) 使用 AES-256-GCM 加密存储，读写路径:
   - 写入: `src/routes/users.ts` (注册+恢复), `src/cron/token-refresh.ts` (刷新+重登录)
   - 读取: `src/routes/subscriptions.ts`, `src/routes/explore.ts`, `src/cron/schedule-sync.ts`, `src/cron/token-refresh.ts`
+
+## Agent skills
+
+### Issue tracker
+
+规格、任务和问题使用 `cqu-moe/schedule` 的 GitHub Issues；通过 `gh` 操作。见 [Issue tracker](docs/agents/issue-tracker.md)。
+
+### Triage labels
+
+使用默认五种 triage 角色标签，保留现有分类标签。见 [Triage labels](docs/agents/triage-labels.md)。
+
+### Domain docs
+
+采用 single-context：根目录 `GLOSSARY.md` 与按需创建的 `docs/adr/`。见 [Domain docs](docs/agents/domain.md)。
