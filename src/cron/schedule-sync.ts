@@ -1,3 +1,4 @@
+import { externalAvailability } from "../config/external-availability";
 import { processExternalSyncMessage } from "../services/external-sync";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
@@ -232,7 +233,7 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       // Legacy external rows remain frozen. New v1 rows use their independent
       // automatic interval and the external capture consumer; neither ever falls
       // back to the personal interval or harvest provider.
-      if (sub.sourceVersion !== 1 || sub.externalState !== "active") continue;
+      if (sub.sourceVersion !== 1 || sub.externalState !== "active" || !externalAvailability(env).create_types.some(type => type === sub.sourceType)) continue;
       if (!entitled) continue;
       const automaticInterval = externalAutomaticInterval(caps);
       if (automaticInterval === null) continue;

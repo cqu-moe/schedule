@@ -1,3 +1,5 @@
+import { externalAvailability } from "../config/external-availability";
+import { externalAutomaticInterval } from "./external-automatic-scheduling";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Env } from "../types";
@@ -14,6 +16,8 @@ function failure(code: string): PublicSyncFailure {
   if (["PAGE_PERMISSION_DENIED", "FORBIDDEN"].includes(code)) return { code: "EXTERNAL_TARGET_FORBIDDEN", message: "当前账号无权查看该课表" };
   if (["TARGET_NOT_FOUND", "AMBIGUOUS_TARGET"].includes(code)) return { code, message: "原目标已不可用，请重新选择当前学期目标" };
   if (code === "FEATURE_NOT_ENABLED") return { code, message: "外部订阅权益已撤销" };
+  if (code === "EXTERNAL_UNAVAILABLE") return { code, message: "该类外部订阅暂不可用，已保留上次成功结果" };
+  if (code === "EXTERNAL_AUTO_DISABLED") return { code, message: "外部自动同步权益已关闭，已保留上次成功结果" };
   if (code === "CAPS_UNAVAILABLE") return { code, message: "暂时无法确认外部订阅权益，请稍后重试" };
   if (["TARGET_MISMATCH", "INVALID_CAPTURE_PAYLOAD", "SCHEMA_INVALID", "UNSUPPORTED_SOURCE_TYPE"].includes(code)) return { code: "EXTERNAL_INVALID_RESPONSE", message: "学校返回的课表无法验证，已保留上次成功结果" };
   return { code: "EXTERNAL_SYNC_UNAVAILABLE", message: "外部课表同步暂时不可用，请稍后重试" };
@@ -52,6 +56,7 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
   }
   async function reconcile(caps: CalendarCaps | null): Promise<boolean> {
     if (!caps) { await fail("CAPS_UNAVAILABLE"); return false; }
+    if (!externalAvailability(env).create_types.includes(sub.sourceType as ExternalSourceType)) { await fail("EXTERNAL_UNAVAILABLE"); return false; }
     await db.update(calendarLinks).set({ isActive: caps.share, updatedAt: new Date().toISOString() })
       .where(and(eq(calendarLinks.subscriptionId, sub.id), eq(calendarLinks.isDefault, false)));
     if (!caps.external) {
@@ -59,6 +64,7 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
         .where(and(eq(subscriptions.id, sub.id), eq(subscriptions.userId, sub.userId)));
       await fail("FEATURE_NOT_ENABLED"); return false;
     }
+    if (message.body.trigger === "cron" && externalAutomaticInterval(caps) === null) { await fail("EXTERNAL_AUTO_DISABLED"); return false; }
     return true;
   }
   if (!(await reconcile(await currentCaps(env, sub.userId)))) return;

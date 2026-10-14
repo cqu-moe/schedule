@@ -266,3 +266,48 @@ describe("external admission and publication boundaries", () => {
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
   });
 });
+
+let rolloutReads = 0;
+describe("external rollout controls", () => {
+  it("stops new periodic admission for disabled types without disabling stored public calendars", async () => {
+    const app = makeApp(crypto.randomUUID(), { ...CAPS, external_sync_interval: 15 });
+    await app.select(); const created = await (await app.create()).json<any>();
+    app.capture.mockResolvedValue(successfulCapture());
+    const message = { body: app.send.mock.calls[0][0], attempts: 1, ack: vi.fn(), retry: vi.fn() };
+    await processScheduleSyncBatch({queue:"schedule-sync",messages:[message]} as unknown as MessageBatch<any>, app.testEnv);
+    const previous = await (await app.request(`/calendar/${created.links[0].token}/calendar.ics`, {headers:{"CF-Connecting-IP":`198.51.100.${++rolloutReads}`}})).text();
+    await env.DB.prepare("UPDATE subscriptions SET last_synced_at='2000-01-01T00:00:00.000Z' WHERE id=?").bind(created.id).run();
+    app.testEnv.EXTERNAL_SUBSCRIPTION_TYPES = "instructor";
+    const sendBatch = vi.fn(); app.testEnv.SCHEDULE_SYNC_QUEUE = {sendBatch} as unknown as Env["SCHEDULE_SYNC_QUEUE"];
+    const context = createExecutionContext();
+    await worker.scheduled({cron:"*/15 * * * *"} as ScheduledController,app.testEnv,context); await waitOnExecutionContext(context);
+    expect(sendBatch).not.toHaveBeenCalled();
+    const response = await app.request(`/calendar/${created.links[0].token}/calendar.ics`, {headers:{"CF-Connecting-IP":`198.51.100.${++rolloutReads}`}});
+    expect(response.status).toBe(200); expect(await response.text()).toBe(previous);
+  });
+  it("stops an already queued capture when its type is removed before delivery", async () => {
+    const app=makeApp(); await app.select(); const created=await (await app.create()).json<any>();
+    app.testEnv.EXTERNAL_SUBSCRIPTION_TYPES=""; app.capture.mockResolvedValue(successfulCapture());
+    const message={body:app.send.mock.calls[0][0],attempts:1,ack:vi.fn(),retry:vi.fn()};
+    await processScheduleSyncBatch({queue:"schedule-sync",messages:[message]} as unknown as MessageBatch<any>,app.testEnv);
+    expect(app.capture).not.toHaveBeenCalled(); expect(message.ack).toHaveBeenCalled();
+    expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({sync_status:"error",sync_error_code:"EXTERNAL_UNAVAILABLE",last_synced_at:null});
+  });
+  it("cancels automatic collection when its independent grant was removed while queued", async () => {
+    const caps={...CAPS,external_sync_interval:15};
+    const app=makeApp(crypto.randomUUID(),caps); await app.select(); const created=await (await app.create()).json<any>();
+    app.capture.mockResolvedValue(successfulCapture());
+    await processScheduleSyncBatch({queue:"schedule-sync",messages:[{body:app.send.mock.calls[0][0],attempts:1,ack:vi.fn(),retry:vi.fn()}]} as unknown as MessageBatch<any>,app.testEnv);
+    await env.DB.prepare("UPDATE subscriptions SET last_synced_at='2000-01-01T00:00:00.000Z' WHERE id=?").bind(created.id).run();
+    const sendBatch=vi.fn().mockResolvedValue(undefined);
+    app.testEnv.SCHEDULE_SYNC_QUEUE={sendBatch} as unknown as Env["SCHEDULE_SYNC_QUEUE"];
+    const context=createExecutionContext(); await worker.scheduled({cron:"*/15 * * * *"} as ScheduledController,app.testEnv,context); await waitOnExecutionContext(context);
+    expect(sendBatch).toHaveBeenCalledOnce();
+    caps.external_sync_interval=0; app.capture.mockClear();
+    const message={body:sendBatch.mock.calls[0][0][0].body,attempts:1,ack:vi.fn(),retry:vi.fn()};
+    await processScheduleSyncBatch({queue:"schedule-sync",messages:[message]} as unknown as MessageBatch<any>,app.testEnv);
+    expect(app.capture).not.toHaveBeenCalled(); expect(message.ack).toHaveBeenCalled();
+    expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({sync_status:"error",sync_error_code:"EXTERNAL_AUTO_DISABLED"});
+    expect((await app.request(`/calendar/${created.links[0].token}/calendar.ics`, {headers:{"CF-Connecting-IP":`198.51.100.${++rolloutReads}`}})).status).toBe(200);
+  });
+});

@@ -147,7 +147,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
       }),
     );
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-ext");
@@ -178,7 +178,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     });
     await env.CACHE.put("caps:user-ext2", JSON.stringify(FULL_CAPS)); // external GRANTED
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-ext2");
@@ -245,7 +245,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     await env.CACHE.put("caps:user-external-personal-only", JSON.stringify({ ...FULL_CAPS, sync_interval: 15 }));
     await env.CACHE.put("caps:user-external-legacy", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     for (const user of [
@@ -294,7 +294,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     });
     await env.CACHE.put("caps:user-external-retry", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-external-retry");
@@ -307,7 +307,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     const sid = await insertSub({ userId: "user-stale-snapshot", sourceType: "admin_class", sourceVersion: 1,
       sourceId: "class-stale-snapshot", isPersonal: false, lastSyncedAt: "2000-01-01T00:00:00.000Z", syncRunId: "old-run" });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, AUTH: { getCaps: async () => {
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", AUTH: { getCaps: async () => {
       // Cap resolution occurs after the producer reads its due snapshot. A
       // second producer and consumer finish before this invocation can claim.
       await db.update(subscriptions).set({ syncRunId: "concurrent-finished-run", syncStatus: "success", lastSyncedAt: new Date().toISOString() })
@@ -328,7 +328,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     await env.CACHE.put("caps:user-z-late", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
     await env.CACHE.put("caps:user-stable", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-z-late");
