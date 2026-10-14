@@ -16,6 +16,8 @@ export interface CalendarCaps {
   share_limit: number | null
   sync_interval: number | null
   manual_refresh: number | null
+  external_sync_interval?: number
+  external_manual_refresh?: number | null
 }
 
 export interface NotificationSettings {
@@ -42,6 +44,7 @@ export type CquBindStatus = 'pending' | 'active' | 'revoked' | 'deleting' | 'unb
 export type LinkFormat = 'ics' | 'origin_json' | 'data_json' | 'csv' | 'web'
 
 export interface CalendarLink {
+  is_active?: boolean
   id: string
   token: string
   label: string | null
@@ -64,11 +67,16 @@ export interface Subscription {
   user_id: string
   source_type: SourceType
   source_id: string
+  source_version?: number
+  external_state?: 'active' | 'expired' | 'reselecting'
+  import_quality?: 'complete' | 'partial' | 'empty' | null
+  skipped_count?: number
   source_name: string
   session_id: string | null
   session_name: string | null
   semester_start: string | null
   is_personal: boolean
+  is_active: boolean
   last_synced_at: string | null
   sync_status: 'idle' | 'queued' | 'running' | 'success' | 'error'
   sync_run_id: string | null
@@ -89,6 +97,7 @@ export interface SyncQueuedResponse {
   run_id: string
   affected_subscription_ids: string[]
   cooldown_until: string
+  manual_remaining?: number | null
 }
 
 export type PersonalSetupDispatchStatus = 'pending' | 'sending' | 'sent' | 'failed'
@@ -111,9 +120,25 @@ export interface SubscriptionList {
   subscriptions: Subscription[]
   count: number
   personal_setup?: PersonalSetupSummary | null
+  manual_remaining?: number | null
 }
 
 // ── v2 search / department types ─────────────────────────────────────────────
+
+export type ExternalSourceType = Extract<SourceType, 'instructor' | 'room' | 'laboratory' | 'course' | 'admin_class'>
+export interface ExternalSession { id: string; name: string }
+export interface ExternalSearchResponse {
+  stage?: 'courses' | 'classes'
+  course?: { id: string; name: string }
+  selection_token: string
+  session: ExternalSession
+  results: SearchResult[]
+  truncated: boolean
+}
+export interface ExternalAvailability {
+  search_types: ExternalSourceType[]
+  create_types: ExternalSourceType[]
+}
 
 export interface SearchResult {
   id: string
@@ -150,6 +175,7 @@ export interface RotateLinkResult {
 
 export interface AppConfig {
   public_url: string
+  external?: ExternalAvailability
 }
 
 // ── calendar / view page types (unchanged; used by Calendar.vue / FE-4) ──────

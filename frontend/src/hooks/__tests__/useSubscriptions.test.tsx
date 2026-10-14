@@ -24,6 +24,18 @@ describe('useSubscriptions', () => {
     mockApi.getSubscriptions.mockReset()
   })
 
+  it('counts only new external subscriptions toward creation quota', async () => {
+    const legacy = Array.from({ length: 6 }, (_, index) => mockSubscription({ id: `old-${index}`, source_type: 'admin_class', is_personal: false }))
+    mockApi.getSubscriptions.mockResolvedValueOnce({ subscriptions: [...legacy, mockSubscription()], count: 7 })
+    const quotaWrapper = ({ children }: { children: ReactNode }) => <AppContext.Provider value={{ ...defaultMockSession, quota: key => key === 'sub_limit' ? 1 : null }}>{children}</AppContext.Provider>
+    const { result } = renderHook(() => useSubscriptions(), { wrapper: quotaWrapper })
+    await act(() => result.current.load())
+    expect(result.current.atLimit).toBe(false)
+    mockApi.getSubscriptions.mockResolvedValueOnce({ subscriptions: legacy.map(s => ({ ...s, source_version: 1 })), count: 6 })
+    await act(() => result.current.load())
+    expect(result.current.atLimit).toBe(true)
+  })
+
   it('loads subscriptions and optional personal_setup metadata', async () => {
     const personalSetup = {
       status: 'created' as const,
@@ -48,6 +60,28 @@ describe('useSubscriptions', () => {
     const { result } = renderHook(() => useSubscriptions(), { wrapper })
     await act(() => result.current.load())
     expect(result.current.personalSetup).toBeNull()
+  })
+
+  it('keeps the external manual remaining value owned by the subscription list', async () => {
+    mockApi.getSubscriptions.mockResolvedValueOnce({
+      subscriptions: [mockSubscription()],
+      count: 1,
+      manual_remaining: 2,
+    })
+    const { result } = renderHook(() => useSubscriptions(), { wrapper })
+    await act(() => result.current.load())
+    expect(result.current.manualRemaining).toBe(2)
+
+    mockApi.getSubscriptions.mockResolvedValueOnce({
+      subscriptions: [mockSubscription()],
+      count: 1,
+      manual_remaining: null,
+    })
+    await act(() => result.current.load())
+    expect(result.current.manualRemaining).toBeNull()
+
+    act(() => result.current.reset())
+    expect(result.current.manualRemaining).toBeUndefined()
   })
 
   it('derives share link usage and limits from session quotas', async () => {

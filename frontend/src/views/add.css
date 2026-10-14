@@ -100,7 +100,7 @@
 
 .add-source-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6rem), 1fr));
   width: 100%;
 }
 
@@ -129,12 +129,13 @@
   height: 1rem;
   color: var(--muted-foreground);
   pointer-events: none;
+  z-index: 1;
 }
 
 .add-search-field input {
   min-height: 44px;
   font-size: var(--text-base);
-  padding-left: var(--space-9);
+  padding-left: var(--space-10);
 }
 
 .add-admin-filters input {
@@ -153,7 +154,7 @@
 .add-results {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 0;
   max-height: 20rem;
   overflow-y: auto;
   margin: 0;
@@ -167,8 +168,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-bottom: 1px solid var(--border);
   min-height: 2.75rem;
 }
 
@@ -210,13 +210,21 @@
     justify-content: center;
   }
 
-  .add-source-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
-@media (max-width: 360px) {
-  .add-source-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.add-external-tabs,
+.add-external-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.add-result:last-child {
+  border-bottom: 0;
+}
+
+.add-touch-control {
+  min-height: 44px;
+  min-width: 44px;
 }

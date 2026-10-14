@@ -7,7 +7,8 @@ import type {
   CreateLinkBody,
   PatchLinkBody,
   RotateLinkResult,
-  SearchResult,
+  ExternalSearchResponse,
+  ExternalSession,
   DepartmentNode,
   AppConfig,
   CalendarData,
@@ -125,6 +126,7 @@ export default {
   async createSubscription(body: {
     sourceType: string
     sourceId?: string
+    selectionToken?: string
     sourceName: string
     sessionId?: string
     sessionName?: string
@@ -132,6 +134,19 @@ export default {
     isPersonal?: boolean
   }): Promise<Subscription> {
     const response = await client.post<Subscription>('/subscriptions', body, { timeout: 120000 })
+    return response.data
+  },
+
+  async reselectTeachingClass(sid: string, body: {
+    sourceType: string
+    sourceId: string
+    sourceName: string
+    selectionToken: string
+    sessionId: string
+  }): Promise<{ status: 'queued'; run_id: string; reused: boolean }> {
+    const response = await client.post<{ status: 'queued'; run_id: string; reused: boolean }>(
+      `/subscriptions/${encodeURIComponent(sid)}/target-selection`, body,
+    )
     return response.data
   },
 
@@ -186,20 +201,24 @@ export default {
   async searchExternal(params: {
     source_type: string
     keyword: string
-    session_id?: string
     department_id?: string
     grade?: string
-  }): Promise<{ results: SearchResult[] }> {
+  }): Promise<ExternalSearchResponse> {
     const query = new URLSearchParams({ source_type: params.source_type, keyword: params.keyword })
-    if (params.session_id) query.append('session_id', params.session_id)
     if (params.department_id) query.append('department_id', params.department_id)
     if (params.grade) query.append('grade', params.grade)
-    const response = await client.get<{ results: SearchResult[] }>(`/external/search?${query}`)
+    const response = await client.get<ExternalSearchResponse>(`/external/search?${query}`, { timeout: 100_000 })
     return response.data
   },
 
-  async getDepartments(): Promise<{ departments: DepartmentNode[] }> {
-    const response = await client.get<{ departments: DepartmentNode[] }>('/external/departments')
+  async searchTeachingClasses(courseId: string, selectionToken: string): Promise<ExternalSearchResponse> {
+    const query = new URLSearchParams({ course_id: courseId, selection_token: selectionToken })
+    const response = await client.get<ExternalSearchResponse>(`/external/teaching-classes?${query}`, { timeout: 100_000 })
+    return response.data
+  },
+
+  async getDepartments(): Promise<{ session: ExternalSession; departments: DepartmentNode[] }> {
+    const response = await client.get<{ session: ExternalSession; departments: DepartmentNode[] }>('/external/departments', { timeout: 100_000 })
     return response.data
   },
 

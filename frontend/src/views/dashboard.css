@@ -792,3 +792,29 @@
     flex: 1;
   }
 }
+
+.dash-external-link-notice {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 380px) {
+  .dash-external-card .dash-secondary-actions {
+    flex-wrap: wrap;
+  }
+
+  .dash-external-card .dash-secondary-actions > :first-child,
+  .dash-external-card .dash-secondary-actions > .dash-sync-action {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 1100px) {
+  .dash-list > .dash-card.dash-external-card {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 32rem);
+  }
+}

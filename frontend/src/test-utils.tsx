@@ -29,6 +29,8 @@ export function mockCalendarCaps(overrides: Partial<CalendarCaps> = {}): Calenda
     share_limit: 10,
     sync_interval: 60,
     manual_refresh: 5,
+    external_sync_interval: 60,
+    external_manual_refresh: 5,
     ...overrides,
   }
 }
@@ -55,6 +57,7 @@ export function mockSubscription(
     session_name: null,
     semester_start: '2025-09-01',
     is_personal: true,
+    is_active: true,
     last_synced_at: null,
     sync_status: 'idle',
     sync_run_id: null,
@@ -88,6 +91,8 @@ export const defaultMockSession: AppContextValue = {
     share_limit: 10,
     sync_interval: 3600,
     manual_refresh: 3,
+    external_sync_interval: 3600,
+    external_manual_refresh: 3,
   },
   cquBindStatus: 'active',
   publicUrl: 'https://schedule.cqu.moe',

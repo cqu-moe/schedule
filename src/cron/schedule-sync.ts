@@ -1,5 +1,8 @@
+import { externalAvailability } from "../config/external-availability";
+import { checkExternalTerms, processExternalTermCheck } from "../services/external-term";
+import { processExternalSyncMessage } from "../services/external-sync";
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   subscriptions,
   calendarLinks,
@@ -58,11 +61,19 @@ import { dispatchPendingPersonalSetups } from "../services/personal-setup-dispat
 import { personalSubscriptionMode } from "../config/personal-subscription-mode";
 import { executePersonalSync } from "../services/personal-subscription-sync";
 import { resolveOwnedSubscription } from "../services/personal-subscription-views";
+import {
+  claimExternalAutomaticRun,
+  externalAutomaticInterval,
+  requiresUserActionAfterSyncFailure,
+} from "../services/external-automatic-scheduling";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
+  purpose?: "external_term_check";
   subscriptionId: string;
   userId: string;
+  sourceVersion?: number;
+  targetRevision?: number;
   /**
    * What enqueued this message. `"cron"` messages are re-checked for due-ness in
    * the consumer — the producer spreads each due batch over
@@ -139,6 +150,11 @@ async function markTerminalSuccess(
  * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
+  const results = await Promise.allSettled([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env)]);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
+}
+
+async function enqueueRegularScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
   await dispatchPendingPersonalSetups(env, lifecycle);
   console.log(
@@ -151,10 +167,15 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       id: subscriptions.id,
       userId: subscriptions.userId,
       sourceType: subscriptions.sourceType,
+      sourceVersion: subscriptions.sourceVersion,
+      externalState: subscriptions.externalState,
+      targetRevision: subscriptions.targetRevision,
       isActive: subscriptions.isActive,
       lastSyncedAt: subscriptions.lastSyncedAt,
+      syncRunId: subscriptions.syncRunId,
       syncStatus: subscriptions.syncStatus,
       syncRequestedAt: subscriptions.syncRequestedAt,
+      syncErrorCode: subscriptions.syncErrorCode,
     })
     .from(subscriptions);
 
@@ -183,7 +204,8 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       capsCache.set(sub.userId, caps);
     }
 
-    const entitled = isCalendarEntitled(sub.sourceType, caps);
+    const lifecycleActive = sub.sourceVersion !== 1 || sub.externalState === "active";
+    const entitled = lifecycleActive && isCalendarEntitled(sub.sourceType, caps);
 
     // Reconcile is_active (hard revocation): when caps are KNOWN, flip the row to
     // match entitlement — revoked → inactive (public links 403), re-granted →
@@ -196,32 +218,49 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       await db
         .update(subscriptions)
         .set({ isActive: entitled, updatedAt: new Date().toISOString() })
-        .where(eq(subscriptions.id, sub.id));
+        .where(and(eq(subscriptions.id, sub.id),
+          ...(sub.sourceVersion === 1 ? [eq(subscriptions.externalState, sub.externalState), eq(subscriptions.targetRevision, sub.targetRevision)] : [])));
     }
 
     // Reconcile non-default links from caps.share (issue #89): revoked share →
     // the link stops serving (public 403 LINK_INACTIVE); re-granted → it resumes.
     // Default links are NOT touched — their gate is subscriptions.isActive above.
     // Same fail-safe as is_active: null caps (transient outage) skips to avoid
-    // flapping; the ne() guard makes already-matching rows a no-op.
+    // flapping. Read the current lifecycle again when writing link state.
     if (caps !== null) {
-      await db
-        .update(calendarLinks)
-        .set({ isActive: caps.share, updatedAt: new Date().toISOString() })
-        .where(and(
-          eq(calendarLinks.subscriptionId, sub.id),
-          eq(calendarLinks.isDefault, false),
-          ne(calendarLinks.isActive, caps.share),
-        ));
+      await env.DB.prepare(`UPDATE calendar_links SET is_active=CASE WHEN EXISTS
+        (SELECT 1 FROM subscriptions WHERE id=? AND (source_version<>1 OR external_state='active'))
+        THEN ? ELSE 0 END,updated_at=? WHERE subscription_id=? AND is_default=0`)
+        .bind(sub.id, caps.share, new Date().toISOString(), sub.id).run();
     }
 
-    // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部
-    // 课表的 harvest 路径(该能力已在本 PR 移除),外部订阅永不入队同步。若仍入队,
-    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 cron 又因"due"重新入队
-    // → 永不停止的空转入队 + 日志刷屏。放在 is_active 对账之后,故被吊销 external 权益
-    // 的外部订阅仍会被对账成 inactive(吊销照常生效),只是不入队。EXTERNAL_DISABLED
-    // 不参与此处判断,仅控制面向用户的提示/守卫。
-    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
+    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
+      // Legacy external rows remain frozen. New v1 rows use their independent
+      // automatic interval and the external capture consumer; neither ever falls
+      // back to the personal interval or harvest provider.
+      if (sub.sourceVersion !== 1 || sub.externalState !== "active" || !externalAvailability(env).create_types.some(type => type === sub.sourceType)) continue;
+      if (!entitled) continue;
+      const automaticInterval = externalAutomaticInterval(caps);
+      if (automaticInterval === null) continue;
+      if (requiresUserActionAfterSyncFailure(sub.syncErrorCode)) continue;
+
+      // Failed automatic attempts share the existing hourly retry floor.
+      if (sub.syncStatus === "error" && !isDue(sub.syncRequestedAt, 60, now)) continue;
+      if (isDue(sub.lastSyncedAt, automaticInterval, now)) {
+        const runId = await claimExternalAutomaticRun(env.DB, sub);
+        if (runId) {
+          due.push({
+            subscriptionId: sub.id,
+            userId: sub.userId,
+            sourceVersion: 1,
+            targetRevision: sub.targetRevision,
+            trigger: "cron",
+            runId,
+          });
+        }
+      }
+      continue;
+    }
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
@@ -261,6 +300,11 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
     );
     return;
   }
+
+  due.sort((left, right) =>
+    left.userId.localeCompare(right.userId) ||
+    left.subscriptionId.localeCompare(right.subscriptionId)
+  );
 
   try {
     await spreadEnqueue(
@@ -406,6 +450,7 @@ export async function processScheduleSyncBatch(
   type PersonalHarvest = Awaited<ReturnType<typeof fetchPersonalHarvest>>;
   const personalHarvestByUser = new Map<string, Promise<PersonalHarvest>>();
   const personalNotificationByUser = new Map<string, Promise<void>>();
+  const externalByUser = new Map<string, Promise<void>>();
 
   function fetchBatchPersonalHarvest(userId: string): Promise<PersonalHarvest> {
     const existing = personalHarvestByUser.get(userId);
@@ -460,6 +505,13 @@ export async function processScheduleSyncBatch(
         if (current) captureScheduleSyncTerminal(env, lifecycle, current, "success");
       };
       try {
+        if (message.body.purpose === "external_term_check") {
+          const previous = externalByUser.get(userId) ?? Promise.resolve();
+          const next = previous.catch(() => {}).then(() => processExternalTermCheck(env, message, deadlineAt));
+          externalByUser.set(userId, next);
+          await next;
+          return;
+        }
         let sub = (await db
           .select()
           .from(subscriptions)
@@ -479,6 +531,13 @@ export async function processScheduleSyncBatch(
         }
         if (sub.userId !== userId) {
           message.ack();
+          return;
+        }
+        if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType) && sub.sourceVersion === 1) {
+          const previous = externalByUser.get(userId) ?? Promise.resolve();
+          const next = previous.catch(() => {}).then(() => processExternalSyncMessage(env, message, sub!, deadlineAt, lifecycle));
+          externalByUser.set(userId, next);
+          await next;
           return;
         }
         if (mode === "migration" && PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {

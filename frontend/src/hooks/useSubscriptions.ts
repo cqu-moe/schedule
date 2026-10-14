@@ -17,6 +17,8 @@ export interface SubscriptionsState {
   shareLinkCount: number
   /** True when the user reached their share link cap; null share_limit = unlimited. */
   atShareLimit: boolean
+  /** Remaining shared external manual quota; null is explicit unlimited. */
+  manualRemaining?: number | null
   load: (noCache?: boolean) => Promise<void>
   reset: () => void
 }
@@ -30,19 +32,23 @@ export function useSubscriptions(): SubscriptionsState {
   const { quota } = useSession()
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
   const [personalSetup, setPersonalSetup] = useState<PersonalSetupSummary | null>(null)
+  const [manualRemaining, setManualRemaining] = useState<number | null | undefined>(undefined)
 
   const load = useCallback(async (noCache = false) => {
     const data = await api.getSubscriptions(noCache)
     setSubscriptions(data.subscriptions)
     setPersonalSetup(data.personal_setup ?? null)
+    setManualRemaining(data.manual_remaining)
   }, [])
 
   const reset = useCallback(() => {
     setSubscriptions([])
     setPersonalSetup(null)
+    setManualRemaining(undefined)
   }, [])
 
   const count = subscriptions.length
+  const creationCount = subscriptions.filter(sub => sub.source_version === 1).length
   const subLimit = quota('sub_limit')
   const shareLimit = quota('share_limit')
   const shareLinkCount = subscriptions.reduce(
@@ -53,8 +59,9 @@ export function useSubscriptions(): SubscriptionsState {
   return {
     subscriptions,
     personalSetup,
+    manualRemaining,
     count,
-    atLimit: subLimit !== null && count >= subLimit,
+    atLimit: subLimit !== null && creationCount >= subLimit,
     shareLinkCount,
     atShareLimit: shareLimit !== null && shareLinkCount >= shareLimit,
     load,

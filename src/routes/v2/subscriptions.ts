@@ -16,6 +16,13 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
+import { reselectExternalCourse } from "../../services/external-reselection";
+import { createExternalSubscription } from "../../services/external-subscriptions";
+import {
+  ExternalManualRefreshCooldownError,
+  getExternalManualRemaining,
+  requestExternalManualSync,
+} from "../../services/external-manual-sync";
 import { externalUnavailableResponse } from "../../config/external-availability";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
@@ -220,11 +227,18 @@ app.get("/", async (c) => {
   }
 
   const setup = await getPersonalSetup(c.env.DB, user.id);
+  const manualRemaining = await getExternalManualRemaining(
+    c.env,
+    user.id,
+    c.get("caps").calendar,
+  );
   c.header("Cache-Control", "private, no-store");
   return c.json({
     subscriptions: serialized,
     count: serialized.length,
+    quota_count: subs.filter(sub => sub.sourceVersion === 1).length,
     personal_setup: setup ? summarizePersonalSetup(setup) : null,
+    manual_remaining: manualRemaining,
   });
 });
 
@@ -358,6 +372,15 @@ app.get("/:sid", async (c) => {
   });
 });
 
+app.post("/:sid/target-selection", async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return errorResponse("INVALID_INPUT", "无效的 JSON 请求体", 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("INVALID_INPUT", "请求体必须为对象", 400);
+  try {
+    return c.json(await reselectExternalCourse(c.env, c.get("user").id, c.req.param("sid"), c.get("caps").calendar, c.get("cquBindStatus"), body, executionContext(c)), 202);
+  } catch (error) { return entitlementError(error); }
+});
+
 // ── POST / — create a subscription + its default (all-format) link ───────────
 app.post("/", async (c) => {
   const user = c.get("user");
@@ -419,214 +442,11 @@ app.post("/", async (c) => {
     return errorResponse("INVALID_INPUT", "semesterStart 长度不能超过 10", 400);
   }
 
-  const sourceTypeTyped = sourceType as SourceType;
-  const isExternal = EXTERNAL_SOURCE_TYPES.has(sourceTypeTyped);
-
-  const sessionId =
-    typeof body.sessionId === "string" && body.sessionId.length > 0
-      ? body.sessionId
-      : null;
-  const sessionName =
-    typeof body.sessionName === "string" && body.sessionName.length > 0
-      ? body.sessionName
-      : null;
-  const semesterStart =
-    typeof body.semesterStart === "string" && body.semesterStart.length > 0
-      ? body.semesterStart
-      : null;
-  // is_personal is DERIVED from the validated sourceType — never trusted from the
-  // client. Sync/entitlement classify by sourceType, and the frontend relies on
-  // is_personal for dedup/grouping/Sync All, so a client-supplied value (e.g.
-  // instructor + isPersonal:true) would misclassify the subscription.
-  const isPersonal = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped);
-
-  // ── Personal-subscription identity binding (security invariant) ───────────
-  //  For personal source types, the personal schedule is fetched against the
-  //  AUTHENTICATED bearer's own 学号 at sync time (see schedule-sync consumer);
-  //  the stored sourceId never reaches the CQU API. We therefore IGNORE any
-  //  client-supplied sourceId and pin it to the trusted auth `user.id` so it is
-  //  a stable per-user identifier (uniqueness/ICS UID namespace) that cannot be
-  //  abused to reference another student. External types keep the client
-  //  sourceId — those are public timetables and the target id is meant to vary.
-  //  (For external types the validation above guarantees a non-empty string;
-  //  personal types pin to user.id so the client sourceId is never read.)
-  const effectiveSourceId = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped)
-    ? user.id
-    : (sourceId as string);
-
-  // ── Entitlement gating ────────────────────────────────────────────────────
   try {
-    if (isExternal) {
-      // 外部课表软禁用(可逆):瑞数化后无法 harvest,拒绝新增外部订阅。在配额/写库
-      // 之前短路,不暴露 WAF。个人订阅不受影响。
-      const unavailable = externalUnavailableResponse();
-      if (unavailable) return unavailable;
-      assertFlag(caps, "external", "外部订阅");
-    } else {
-      assertFlag(caps, "sync", "日历同步");
-    }
-
-    // best-effort 配额：count-then-insert 存在 TOCTOU，并发下可能 +1 超配；无 DB 层兜底（软业务限制，可接受）
-    const [countRow] = await db
-      .select({ cnt: sql<number>`count(*)` })
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, user.id));
-    assertQuota(caps, "sub_limit", countRow?.cnt ?? 0, "订阅数量");
-  } catch (e) {
-    return entitlementError(e);
-  }
-
-  // ── Duplicate check (uq_user_source_session) ──────────────────────────────
-  const dupConds = [
-    eq(subscriptions.userId, user.id),
-    eq(subscriptions.sourceType, sourceTypeTyped),
-    eq(subscriptions.sourceId, effectiveSourceId),
-    sessionId === null
-      ? sql`${subscriptions.sessionId} is null`
-      : eq(subscriptions.sessionId, sessionId),
-  ];
-  const [dup] = await db
-    .select({ id: subscriptions.id })
-    .from(subscriptions)
-    .where(and(...dupConds))
-    .limit(1);
-  if (dup) {
-    return errorResponse("ALREADY_EXISTS", "该订阅已存在", 409);
-  }
-
-  // ── Create subscription + default link atomically (D1 batch) ──────────────
-  const subId = crypto.randomUUID();
-  const token = await generateUniqueToken((t) => linkTokenExists(db, t));
-  const linkId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const initialRunId = crypto.randomUUID();
-  const formatsJson = JSON.stringify([...LINK_FORMATS]);
-
-  try {
-    await db.batch([
-      db.insert(subscriptions).values({
-        id: subId,
-        userId: user.id,
-        sourceType: sourceTypeTyped,
-        sourceId: effectiveSourceId,
-        sourceName,
-        sessionId,
-        sessionName,
-        semesterStart,
-        isPersonal,
-        isActive: true,
-        syncStatus: "queued",
-        syncRunId: initialRunId,
-        syncTrigger: "initial",
-        syncRequestedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      }),
-      db.insert(calendarLinks).values({
-        id: linkId,
-        subscriptionId: subId,
-        token,
-        formats: formatsJson,
-        isDefault: true,
-        createdAt: now,
-        updatedAt: now,
-      }),
-    ]);
-  } catch (e) {
-    // Unique-constraint races still land here even after the pre-check above.
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/unique|constraint/i.test(msg)) {
-      return errorResponse("ALREADY_EXISTS", "该订阅已存在", 409);
-    }
-    throw e;
-  }
-
-  // Kick off an initial sync so the new subscription's links serve real data
-  // promptly instead of EMPTY_ICS until the next cron run. Best-effort: the row
-  // is already committed, and the cron will pick it up (lastSyncedAt is null →
-  // due) if this enqueue fails.
-  try {
-    await c.env.SCHEDULE_SYNC_QUEUE.send({
-      subscriptionId: subId,
-      userId: user.id,
-      trigger: "initial",
-      runId: initialRunId,
-    } satisfies ScheduleSyncMessage);
-    captureScheduleSyncStarted(c.env, executionContext(c), {
-      userId: user.id,
-      subscriptionId: subId,
-      runId: initialRunId,
-      trigger: "initial",
-    });
-  } catch (e) {
-    const won = await markSyncError(db, subId, initialRunId, {
-      code: "QUEUE_UNAVAILABLE",
-      message: "同步服务暂时不可用，请稍后重试",
-    });
-    if (won) {
-      captureScheduleSyncTerminal(c.env, executionContext(c), {
-        userId: user.id,
-        subscriptionId: subId,
-        runId: initialRunId,
-        trigger: "initial",
-        requestedAt: Date.parse(now),
-      }, "failure", "QUEUE_UNAVAILABLE");
-    }
-    console.warn(JSON.stringify({
-      event: "subscription.v2.initial_sync_enqueue_failed",
-      subscriptionId: subId,
-      error: e instanceof Error ? e.message : String(e),
-      message: "Failed to enqueue initial sync; cron will sync later",
-    }));
-  }
-
-  console.log(
-    JSON.stringify({
-      event: "subscription.v2.create",
-      userId: user.id,
-      subscriptionId: subId,
-      sourceType: sourceTypeTyped,
-      isExternal,
-      message: "Subscription created with default link",
-    }),
-  );
-
-  return c.json(
-    {
-      id: subId,
-      user_id: user.id,
-      source_type: sourceTypeTyped,
-      source_id: effectiveSourceId,
-      source_name: sourceName,
-      session_id: sessionId,
-      session_name: sessionName,
-      semester_start: semesterStart,
-      is_personal: isPersonal,
-      last_synced_at: null,
-      sync_status: "queued",
-      sync_run_id: initialRunId,
-      sync_trigger: "initial",
-      sync_requested_at: now,
-      sync_started_at: null,
-      sync_finished_at: null,
-      sync_error_code: null,
-      sync_error_message: null,
-      created_at: now,
-      updated_at: now,
-      links: [
-        toLinkSummary({
-          id: linkId,
-          token,
-          label: null,
-          formats: formatsJson,
-          isDefault: true,
-          isActive: true,
-        }),
-      ],
-    },
-    201,
-    { Location: `/api/v2/subscriptions/${subId}` },
-  );
+    const created = await createExternalSubscription(c.env, user.id, caps, c.get("cquBindStatus"), body, executionContext(c));
+    return c.json({ ...serializeSubscription(created.subscription), links: [toLinkSummary(created.link)] }, 201,
+      { Location: `/api/v2/subscriptions/${created.subscription.id}` });
+  } catch (error) { return entitlementError(error); }
 });
 
 // ── DELETE /:sid — delete a subscription (FK cascade removes its links) ──────
@@ -710,6 +530,11 @@ app.post("/:sid/syncs", async (c) => {
 
   const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
   if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  if (resolved.subscription.sourceVersion === 1 && resolved.subscription.externalState !== "active") {
+    return errorResponse(resolved.subscription.externalState === "expired" ? "EXTERNAL_TERM_EXPIRED" : "EXTERNAL_RESELECTING",
+      resolved.subscription.externalState === "expired" ? "教学班所属学期已结束，全部公开链接已停用" : "正在重新选择教学班，请等待新课表同步完成", 409);
+  }
+
   if (
     personalSubscriptionMode(c.env) === "migration"
     && PERSONAL_SOURCE_TYPES.has(resolved.subscription.sourceType)
@@ -743,6 +568,7 @@ app.post("/:sid/syncs", async (c) => {
     .select({
       id: subscriptions.id,
       sourceType: subscriptions.sourceType,
+      sourceVersion: subscriptions.sourceVersion,
       isActive: subscriptions.isActive,
       manualRefreshAt: subscriptions.manualRefreshAt,
     })
@@ -794,6 +620,26 @@ app.post("/:sid/syncs", async (c) => {
   // 已有数据保持冻结。个人订阅照常。放在 is_active 对账之后:被吊销 external 权益的
   // 外部订阅已被对账成 inactive、被重新授权的已对账成 active,然后才统一以"暂不可用"
   // 503 回应(不按权益区分响应,绝不暴露 WAF/瑞数细节)。
+  if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType) && sub.sourceVersion === 1) {
+    try {
+      const result = await requestExternalManualSync(
+        c.env,
+        user.id,
+        caps,
+        c.get("cquBindStatus"),
+        sid,
+        executionContext(c),
+      );
+      return c.json(result, 202);
+    } catch (error) {
+      if (error instanceof ExternalManualRefreshCooldownError) {
+        return manualRefreshCooldownResponse(error.manualRefreshAt, new Date());
+      }
+      if (error instanceof EntitlementError) return entitlementError(error);
+      throw error;
+    }
+  }
+
   if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
     const unavailable = externalUnavailableResponse();
     if (unavailable) return unavailable;
@@ -1126,17 +972,13 @@ app.post("/:sid/links", async (c) => {
   const now = new Date().toISOString();
   const formatsJson = JSON.stringify(formats);
 
-  await db.insert(calendarLinks).values({
-    id: linkId,
-    subscriptionId: owner.id,
-    token,
-    label,
-    formats: formatsJson,
-    personalViewType: owner.viewType,
-    isDefault: false,
-    createdAt: now,
-    updatedAt: now,
-  });
+  await c.env.DB.prepare(`INSERT INTO calendar_links
+    (id,subscription_id,token,label,formats,personal_view_type,is_default,is_active,created_at,updated_at)
+    SELECT ?,id,?,?,?,?,0,CASE WHEN source_version=1 AND external_state<>'active' THEN 0 ELSE 1 END,?,?
+    FROM subscriptions WHERE id=? AND user_id=?`)
+    .bind(linkId, token, label, formatsJson, owner.viewType, now, now, owner.id, user.id).run();
+  const [createdLink] = await db.select().from(calendarLinks).where(eq(calendarLinks.id, linkId));
+  if (!createdLink) return errorResponse("NOT_FOUND", "订阅不存在", 404);
 
   console.log(
     JSON.stringify({
@@ -1156,7 +998,7 @@ app.post("/:sid/links", async (c) => {
       label,
       formats: formatsJson,
       isDefault: false,
-      isActive: true,
+      isActive: createdLink.isActive,
     }),
     201,
     { Location: `/api/v2/subscriptions/${sid}/links/${linkId}` },
@@ -1330,12 +1172,17 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     id: sub.id,
     user_id: sub.userId,
     source_type: sub.sourceType,
+    source_version: sub.sourceVersion,
+    external_state: sub.externalState,
+    import_quality: sub.importQuality,
+    skipped_count: sub.skippedCount,
     source_id: sub.sourceId,
     source_name: sub.sourceName,
     session_id: sub.sessionId,
     session_name: sub.sessionName,
     semester_start: sub.semesterStart,
     is_personal: sub.isPersonal,
+    is_active: sub.isActive,
     last_synced_at: sub.lastSyncedAt,
     sync_status: sub.syncStatus,
     sync_run_id: sub.syncRunId,

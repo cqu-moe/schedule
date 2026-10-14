@@ -158,3 +158,14 @@ describe('ShareLinksDialog', () => {
     expect(mockToast.success).not.toHaveBeenCalled()
   })
 })
+
+it('shows inactive links and prevents copying every advertised format', async () => {
+  mountDialog([makeDefaultLink({ is_active: false }), makeShareLink({ is_active: false })]);
+  const dialog = await screen.findByRole('dialog');
+  for (const button of within(dialog).getAllByRole('button', { name: /^复制 / })) {
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+  }
+  expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+  expect(within(dialog).getAllByText('已停用')).toHaveLength(2);
+});

@@ -13,6 +13,10 @@ export interface CalendarCaps {
   share_limit: number | null;
   sync_interval: number | null; // 分钟；自动同步由 15 分钟 cron 驱动，故 15min 是有效下限，<15 实际等同每 15 分钟
   manual_refresh: number | null; // 次/天
+  /** undefined = 旧 Auth 未下发/未授予；0 = 明确关闭；正整数 = 分钟。 */
+  external_sync_interval?: number;
+  /** undefined = 旧 Auth 未下发/未授予；0 = 明确关闭；null = 明确无限。 */
+  external_manual_refresh?: number | null;
 }
 
 export interface SessionUser {
@@ -109,6 +113,13 @@ export interface GetCapsArgs {
 
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
+  cquExternalCapture?(args: {
+    clientId: string; clientSecret: string; userId: string;
+    sourceType: import("../db/schema").ExternalSourceType;
+    targetId: string; targetName: string; expectedSessionId?: string;
+    courseId?: string; courseName?: string; deadlineAt?: number;
+  }): Promise<unknown>;
+  cquExternalSearch?(args: import("./external-search").ExternalSearchArgs): Promise<import("./external-search").ExternalSearchResult | { error: string }>;
   /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
    * authenticate through the application session and native OAuth introspection. */
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;
