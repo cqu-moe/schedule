@@ -9,13 +9,16 @@ export function externalAutomaticInterval(caps: CalendarCaps | null): number | n
 }
 
 const USER_ACTION_ERRORS = new Set([
-  "NEEDS_REAUTH",
   "EXTERNAL_TARGET_FORBIDDEN",
   "TARGET_NOT_FOUND",
   "AMBIGUOUS_TARGET",
 ]);
 
-/** Terminal school-session/target failures stop automatic churn until reauthorization or reselection. */
+/**
+ * Target failures require user action. Session failures use the cron's hourly
+ * retry floor so reauthentication can restore automatic syncing without a manual
+ * refresh grant; Auth checks the current school session before browser capture.
+ */
 export function requiresUserActionAfterSyncFailure(errorCode: string | null): boolean {
   return errorCode !== null && USER_ACTION_ERRORS.has(errorCode);
 }

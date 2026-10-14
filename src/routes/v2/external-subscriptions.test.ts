@@ -178,6 +178,70 @@ describe("new external subscription first capture", () => {
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
   });
 
+  it("resumes automatic updates after school reauthentication without manual refresh rights", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.parse("2026-10-14T00:00:00Z");
+    vi.setSystemTime(start);
+    try {
+      const app = makeApp(crypto.randomUUID(), { ...CAPS, sync: false, external_sync_interval: 15 });
+      await app.select();
+      const created = await (await app.create()).json<any>();
+      const calendarUrl = `/calendar/${created.links[0].token}/calendar.ics`;
+      app.capture.mockResolvedValue(successfulCapture());
+      await consume(app);
+
+      async function cronAt(minutes: number) {
+        app.send.mockClear();
+        vi.setSystemTime(start + minutes * 60_000);
+        const context = createExecutionContext();
+        await worker.scheduled({ cron: "*/15 * * * *" } as ScheduledController, app.testEnv, context);
+        await waitOnExecutionContext(context);
+      }
+
+      app.capture.mockResolvedValue({ error: "NEEDS_REAUTH" });
+      await cronAt(15);
+      expect(app.send).toHaveBeenCalledOnce();
+      await consume(app);
+      expect(await (await app.request(`/subscriptions/${created.id}`)).json())
+        .toMatchObject({ sync_status: "error", sync_error_code: "NEEDS_REAUTH" });
+      expect(await (await app.request(calendarUrl)).text()).toContain("SUMMARY:电路基础");
+      const manualResponse = await app.request(`/subscriptions/${created.id}/syncs`, { method: "POST" });
+      expect(manualResponse.status).toBe(429);
+      expect(await manualResponse.json()).toMatchObject({
+        detail: { error: { code: "RATE_LIMITED", message: "外部手动刷新未授予或已关闭" } },
+      });
+
+      await cronAt(74);
+      expect(app.send).not.toHaveBeenCalled();
+      await cronAt(75);
+      expect(app.send).toHaveBeenCalledOnce();
+      await consume(app);
+      expect(await (await app.request(`/subscriptions/${created.id}`)).json())
+        .toMatchObject({ sync_status: "error", sync_error_code: "NEEDS_REAUTH" });
+
+      // Auth's capture contract starts succeeding only after school reauthentication.
+      app.capture.mockResolvedValue(successfulCapture([{
+        courseName: "恢复后的课表", weekDay: 2, teachingWeek: "11", period: "11000000000000",
+        assignTeachingObject: [{ adminClassId: TARGET.id }],
+      }]));
+      await cronAt(134);
+      expect(app.send).not.toHaveBeenCalled();
+      await cronAt(135);
+      expect(app.send).toHaveBeenCalledOnce();
+      expect(app.send.mock.calls[0][0]).toMatchObject({ subscriptionId: created.id, trigger: "cron" });
+      await consume(app);
+      expect(await (await app.request(`/subscriptions/${created.id}`)).json())
+        .toMatchObject({ sync_status: "success", sync_error_code: null });
+      const response = await app.request(calendarUrl);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("SUMMARY:恢复后的课表");
+      expect(await env.DB.prepare("SELECT used_count FROM external_manual_refresh_usage WHERE user_id=?")
+        .bind(app.userId).first()).toBeNull();
+      expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function successfulCapture(rows: unknown[] = [{ courseName: "电路基础", instructorName: "测试教师", roomName: "DS1001", weekDay: 1,

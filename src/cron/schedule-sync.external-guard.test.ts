@@ -268,7 +268,7 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     });
   });
 
-  it("producer: terminal user-action failures stop, while transient failures keep bounded retry", async () => {
+  it("producer: target failures stop, while transient failures keep bounded retry", async () => {
     const oldEnough = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
     await insertSub({
       id: "external-v1-transient",
@@ -286,11 +286,11 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
       userId: "user-external-retry",
       sourceType: "admin_class",
       sourceVersion: 1,
-      sourceId: "admin-reauth",
+      sourceId: "admin-target-missing",
       isPersonal: false,
       lastSyncedAt: oldEnough,
       syncStatus: "error",
-      syncErrorCode: "NEEDS_REAUTH",
+      syncErrorCode: "TARGET_NOT_FOUND",
       syncRequestedAt: oldEnough,
     });
     await env.CACHE.put("caps:user-external-retry", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
