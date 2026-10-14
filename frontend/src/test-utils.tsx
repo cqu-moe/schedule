@@ -29,6 +29,8 @@ export function mockCalendarCaps(overrides: Partial<CalendarCaps> = {}): Calenda
     share_limit: 10,
     sync_interval: 60,
     manual_refresh: 5,
+    external_sync_interval: 60,
+    external_manual_refresh: 5,
     ...overrides,
   }
 }
@@ -88,6 +90,8 @@ export const defaultMockSession: AppContextValue = {
     share_limit: 10,
     sync_interval: 3600,
     manual_refresh: 3,
+    external_sync_interval: 3600,
+    external_manual_refresh: 3,
   },
   cquBindStatus: 'active',
   publicUrl: 'https://schedule.cqu.moe',

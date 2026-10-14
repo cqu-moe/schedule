@@ -16,6 +16,8 @@ export interface CalendarCaps {
   share_limit: number | null
   sync_interval: number | null
   manual_refresh: number | null
+  external_sync_interval?: number
+  external_manual_refresh?: number | null
 }
 
 export interface NotificationSettings {

@@ -12,6 +12,36 @@ const identity = { user: { id: "alice", name: "Alice", email: "alice@example.com
 const cookie = (r: Response) => r.headers.get("set-cookie")!.split(";")[0];
 
 describe("Schedule browser session", () => {
+  it("accepts old and explicit external entitlement fields but rejects an invalid interval contract", async () => {
+    const external = {
+      external_sync_interval: 0,
+      external_manual_refresh: null,
+    };
+    const provider = await oauthProvider({
+      ...identity,
+      caps: { calendar: { ...identity.caps.calendar, ...external } },
+    });
+    const testEnv = { ...env, AUTH_ORIGIN: provider.origin, PUBLIC_URL: "https://schedule.test", CALENDAR_CLIENT_ID: "calendar", CALENDAR_CLIENT_SECRET: "test-secret" } as Env;
+    const start = await app.request("/api/v2/auth/login", {}, testEnv);
+    const callback = provider.authorize(start.headers.get("location")!);
+    const finish = await app.request(callback.href, { headers: { cookie: cookie(start) } }, testEnv);
+    const headers = { cookie: cookie(finish) };
+    const current = await app.request("/api/v2/me", { headers }, testEnv);
+    expect(current.status).toBe(200);
+    await expect(current.json()).resolves.toMatchObject({
+      caps: { calendar: { ...identity.caps.calendar, ...external } },
+    });
+
+    provider.faults.authority = {
+      caps: { calendar: { ...identity.caps.calendar, external_sync_interval: null } },
+    };
+    expect((await app.request("/api/v2/me", { headers }, testEnv)).status).toBe(503);
+    provider.faults.authority = {
+      caps: { calendar: { ...identity.caps.calendar, external_manual_refresh: 1.5 } },
+    };
+    expect((await app.request("/api/v2/me", { headers }, testEnv)).status).toBe(503);
+  });
+
   it("logs in through PKCE and a browser-bound callback, uses a host-only session, and observes central revocation", async () => {
     const provider = await oauthProvider(identity);
     const testEnv = { ...env, AUTH_ORIGIN: provider.origin, PUBLIC_URL: "https://schedule.test", CALENDAR_CLIENT_ID: "calendar", CALENDAR_CLIENT_SECRET: "test-secret" } as Env;
@@ -31,7 +61,11 @@ describe("Schedule browser session", () => {
     const sessionCookie = cookie(finish);
     expect(sessionCookie).not.toContain("access_token");
     const me = await request("/api/v2/me", { headers: { cookie: sessionCookie } });
-    expect(me.status).toBe(200); expect(await me.json()).toMatchObject(identity);
+    expect(me.status).toBe(200);
+    const oldContract = await me.json() as { caps: { calendar: Record<string, unknown> } };
+    expect(oldContract).toMatchObject(identity);
+    expect(oldContract.caps.calendar).not.toHaveProperty("external_sync_interval");
+    expect(oldContract.caps.calendar).not.toHaveProperty("external_manual_refresh");
     for (const status of ["pending", "revoked", "unbound", "deleting"]) {
       provider.faults.authority = { cquBindStatus: status };
       const current = await request("/api/v2/me", { headers: { cookie: sessionCookie } });
