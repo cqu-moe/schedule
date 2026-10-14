@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Use vi.hoisted so the mock client is available when vi.mock factory runs (hoisted above imports)
 const { mockClient } = vi.hoisted(() => {
@@ -39,6 +39,10 @@ describe('API module (v2)', () => {
     mockClient.put.mockReset()
     mockClient.patch.mockReset()
     mockClient.delete.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('posts an owner receipt to the existing target-selection endpoint and reads a reused queued run', async () => {
@@ -336,7 +340,7 @@ describe('API module (v2)', () => {
 
       expect(mockClient.get).toHaveBeenCalledWith(
         '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89',
-        { timeout: 100_000 },
+        { timeout: 100_000, signal: undefined },
       )
       expect(result).toEqual({ results: [] })
     })
@@ -355,6 +359,138 @@ describe('API module (v2)', () => {
       expect(call).toContain('department_id=dept1')
       expect(call).toContain('grade=2021')
     })
+
+    it('recovers a network loss through bounded EXTERNAL_BUSY retries without retrying terminal errors', async () => {
+      const networkError = Object.assign(new Error('Network Error'), {
+        code: 'ERR_NETWORK',
+        isAxiosError: true,
+      })
+      const busyError = {
+        response: {
+          status: 503,
+          data: { detail: { error: { code: 'EXTERNAL_BUSY', message: 'busy' } } },
+        },
+      }
+      const unauthorized = {
+        response: {
+          status: 401,
+          data: { detail: { error: { code: 'UNAUTHORIZED', message: 'unauthorized' } } },
+        },
+      }
+      const result = { results: [{ id: 'teacher', name: '张三', extra: '' }] }
+      mockClient.get.mockImplementation(async () => {
+        const attempt = mockClient.get.mock.calls.length
+        if (attempt === 1) {
+          await new Promise(resolve => setTimeout(resolve, 0))
+          throw networkError
+        }
+        if (attempt === 2) throw busyError
+        return { data: result }
+      })
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      const promise = api.searchExternal({ source_type: 'instructor', keyword: '张三' })
+      const resolution = expect(promise).resolves.toEqual(result)
+      await Promise.resolve()
+      await vi.runAllTimersAsync()
+      await resolution
+
+      expect(mockClient.get).toHaveBeenCalledTimes(3)
+
+      mockClient.get.mockReset().mockRejectedValueOnce(networkError).mockRejectedValueOnce(unauthorized)
+      const terminalPromise = api.searchExternal({ source_type: 'instructor', keyword: '李四' })
+      const terminalRejection = expect(terminalPromise).rejects.toBe(unauthorized)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(7_500)
+      await terminalRejection
+      expect(mockClient.get).toHaveBeenCalledTimes(2)
+    })
+
+    it('retries EXTERNAL_BUSY on the first response and returns the cached success', async () => {
+      const busyError = {
+        response: {
+          status: 503,
+          data: { detail: { error: { code: 'EXTERNAL_BUSY', message: 'busy' } } },
+        },
+      }
+      const result = { results: [] }
+      mockClient.get
+        .mockRejectedValueOnce(busyError)
+        .mockResolvedValueOnce({ data: result })
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      const promise = api.searchExternal({ source_type: 'instructor', keyword: '张三' })
+      const resolution = expect(promise).resolves.toEqual(result)
+      await vi.runAllTimersAsync()
+      await resolution
+
+      expect(mockClient.get).toHaveBeenCalledTimes(2)
+    })
+
+    it('stops retrying at the bounded attempt count within the external lookup budget', async () => {
+      const networkError = Object.assign(new Error('Network Error'), {
+        code: 'ERR_NETWORK',
+        isAxiosError: true,
+      })
+      const busyError = {
+        response: {
+          status: 503,
+          data: { detail: { error: { code: 'EXTERNAL_BUSY', message: 'busy' } } },
+        },
+      }
+      mockClient.get.mockImplementation(async () => {
+        const attempt = mockClient.get.mock.calls.length
+        if (attempt === 1) {
+          await new Promise(resolve => setTimeout(resolve, 30_000))
+          throw networkError
+        }
+        throw busyError
+      })
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+      const startedAt = Date.now()
+      const promise = api.searchExternal({ source_type: 'instructor', keyword: '张三' })
+      const rejection = expect(promise).rejects.toBe(busyError)
+      await vi.runAllTimersAsync()
+
+      await rejection
+      expect(mockClient.get).toHaveBeenCalledTimes(10)
+      expect(Date.now() - startedAt).toBeLessThanOrEqual(100_000)
+    })
+
+    it('propagates AbortSignal and does not recover a cancelled request', async () => {
+      const controller = new AbortController()
+      const cancelledError = Object.assign(new Error('canceled'), {
+        code: 'ERR_CANCELED',
+        name: 'CanceledError',
+      })
+      mockClient.get.mockImplementationOnce(async (_url, config) => {
+        expect(config?.signal).toBe(controller.signal)
+        controller.abort()
+        throw cancelledError
+      })
+
+      await expect(
+        api.searchExternal({ source_type: 'instructor', keyword: '张三' }, { signal: controller.signal }),
+      ).rejects.toBe(cancelledError)
+      expect(mockClient.get).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('searchTeachingClasses', () => {
+    it('GET /external/teaching-classes with the lookup timeout and AbortSignal', async () => {
+      const controller = new AbortController()
+      const result = { results: [] }
+      mockClient.get.mockResolvedValueOnce({ data: result })
+
+      await expect(
+        api.searchTeachingClasses('course-1', 'token-1', { signal: controller.signal }),
+      ).resolves.toEqual(result)
+      expect(mockClient.get).toHaveBeenCalledWith(
+        '/external/teaching-classes?course_id=course-1&selection_token=token-1',
+        { timeout: 100_000, signal: controller.signal },
+      )
+    })
   })
 
   // ── getDepartments ──
@@ -365,7 +501,7 @@ describe('API module (v2)', () => {
 
       const result = await api.getDepartments()
 
-      expect(mockClient.get).toHaveBeenCalledWith('/external/departments', { timeout: 100_000 })
+      expect(mockClient.get).toHaveBeenCalledWith('/external/departments', { timeout: 100_000, signal: undefined })
       expect(result).toEqual({ departments: [] })
     })
   })

@@ -64,7 +64,10 @@ describe('Add view (React)', () => {
     expect(input).toHaveFocus()
     await new Promise(resolve => setTimeout(resolve, 400))
     expect(mockApi.searchExternal).toHaveBeenCalledTimes(1)
-    expect(mockApi.searchExternal).toHaveBeenCalledWith(expect.objectContaining({ source_type: 'instructor', keyword: '测试' }))
+    expect(mockApi.searchExternal).toHaveBeenCalledWith(
+      expect.objectContaining({ source_type: 'instructor', keyword: '测试' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
     const selectedTab = screen.getByRole('tab', { name: '教师' })
     expect(screen.getByRole('tabpanel', { name: '教师' })).toHaveAttribute('id', selectedTab.getAttribute('aria-controls'))
   })
@@ -98,7 +101,11 @@ describe('Add view (React)', () => {
     const select = await screen.findByRole('button', { name: '选择课程大学物理' })
     select.focus(); await user.keyboard('{Enter}')
     expect(mockApi.createSubscription).not.toHaveBeenCalled()
-    expect(mockApi.searchTeachingClasses).toHaveBeenCalledWith('catalog-1', 'catalog-token')
+    expect(mockApi.searchTeachingClasses).toHaveBeenCalledWith(
+      'catalog-1',
+      'catalog-token',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
     await waitFor(() => expect(screen.getByRole('button', { name: '订阅大学物理 01班' })).toHaveFocus())
     await user.click(await screen.findByRole('button', { name: '订阅大学物理 02班' }))
     expect(mockApi.createSubscription).toHaveBeenCalledWith({ sourceType: 'course', sourceId: 'class-2', sourceName: '大学物理 02班', selectionToken: 'class-token', sessionId: 'current' })
@@ -132,7 +139,12 @@ describe('Add view (React)', () => {
     await act(async () => resolveRetry({ session: { id: 'term', name: '当前学期' }, selection_token: 'receipt',
       results: [{ id: 'class', name: '物理01班' }] }))
     expect(await screen.findByRole('button', { name: '订阅物理01班' })).toHaveFocus()
-    expect(mockApi.searchTeachingClasses).toHaveBeenNthCalledWith(2, 'course', 'catalog')
+    expect(mockApi.searchTeachingClasses).toHaveBeenNthCalledWith(
+      2,
+      'course',
+      'catalog',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
     expect(mockApi.createSubscription).not.toHaveBeenCalled()
   })
 
@@ -307,6 +319,7 @@ describe('Add view (React)', () => {
     await waitFor(() =>
       expect(mockApi.searchExternal).toHaveBeenCalledWith(
         expect.objectContaining({ source_type: 'instructor', keyword: '张三' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     )
     expect(await screen.findByText('计算机学院')).toBeInTheDocument()
@@ -391,6 +404,130 @@ describe('Add view (React)', () => {
     expect(screen.getByPlaceholderText('输入教室编号')).toBeInTheDocument()
   })
 
+  it('cancels obsolete lookups across query, type, course, department and unmount transitions', async () => {
+    await enableExternal()
+    const user = userEvent.setup()
+    const scheduledSearch: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void; promise: Promise<unknown> }> = []
+    const scheduledTeaching: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void; promise: Promise<unknown> }> = []
+    const searchDeferred: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = []
+    const teachingDeferred: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = []
+    const searchSignals: Array<AbortSignal | undefined> = []
+    const teachingSignals: Array<AbortSignal | undefined> = []
+    const cancelledError = () => Object.assign(new Error('canceled'), {
+      code: 'ERR_CANCELED',
+      name: 'CanceledError',
+    })
+    const nextSearch = () => {
+      let resolve!: (value: unknown) => void
+      let reject!: (error: unknown) => void
+      const promise = new Promise<unknown>((promiseResolve, promiseReject) => {
+        resolve = promiseResolve
+        reject = promiseReject
+      })
+      promise.catch(() => {})
+      const deferred = { resolve, reject, promise }
+      scheduledSearch.push(deferred)
+      return deferred
+    }
+    const nextTeaching = () => {
+      let resolve!: (value: unknown) => void
+      let reject!: (error: unknown) => void
+      const promise = new Promise<unknown>((promiseResolve, promiseReject) => {
+        resolve = promiseResolve
+        reject = promiseReject
+      })
+      promise.catch(() => {})
+      const deferred = { resolve, reject, promise }
+      scheduledTeaching.push(deferred)
+      return deferred
+    }
+    mockApi.searchExternal.mockImplementation((_params, options?: { signal?: AbortSignal }) => {
+      searchSignals.push(options?.signal)
+      const deferred = scheduledSearch.shift()!
+      searchDeferred.push({ resolve: deferred.resolve, reject: deferred.reject })
+      return deferred.promise
+    })
+    mockApi.searchTeachingClasses.mockImplementation((_courseId, _token, options?: { signal?: AbortSignal }) => {
+      teachingSignals.push(options?.signal)
+      const deferred = scheduledTeaching.shift()!
+      teachingDeferred.push({ resolve: deferred.resolve, reject: deferred.reject })
+      return deferred.promise
+    })
+    let departmentSignal: AbortSignal | undefined
+    mockApi.getDepartments.mockImplementationOnce((_options?: { signal?: AbortSignal }) => {
+      departmentSignal = _options?.signal
+      return new Promise<unknown>(() => {})
+    })
+
+    const view = renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const instructorInput = await screen.findByPlaceholderText('输入教师姓名或工号')
+    const firstSearch = nextSearch()
+    await user.type(instructorInput, '张三')
+    await waitFor(() => expect(searchSignals[0]).toBeDefined())
+    await user.type(instructorInput, '四')
+    expect(searchSignals[0]!.aborted).toBe(true)
+
+    const replacedSearch = nextSearch()
+    await waitFor(() => expect(searchSignals[1]).toBeDefined())
+    await user.click(screen.getByRole('tab', { name: '教室' }))
+    expect(searchSignals[1]!.aborted).toBe(true)
+    await act(async () => {
+      firstSearch.reject(cancelledError())
+      replacedSearch.reject(cancelledError())
+    })
+    expect(screen.queryByText('旧教师结果')).not.toBeInTheDocument()
+    expect(screen.queryByText('搜索失败')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: '行政班' }))
+    await waitFor(() => expect(departmentSignal).toBeDefined())
+    await user.click(screen.getByRole('tab', { name: '教师' }))
+    expect(departmentSignal!.aborted).toBe(true)
+    expect(mockToast.error).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('tab', { name: '课程' }))
+    const firstCourseSearch = nextSearch()
+    await user.type(await screen.findByPlaceholderText('输入课程名称或代码'), '物理')
+    await waitFor(() => expect(searchSignals[2]).toBeDefined())
+    await act(async () => {
+      firstCourseSearch.resolve({
+        session: { id: 'term', name: '当前学期' },
+        selection_token: 'catalog-1',
+        truncated: false,
+        results: [
+          { id: 'course-1', name: '旧物理', extra: '' },
+          { id: 'course-2', name: '新物理', extra: '' },
+        ],
+      })
+    })
+    const firstTeaching = nextTeaching()
+    await user.click(screen.getByRole('button', { name: '选择课程旧物理' }))
+    await waitFor(() => expect(teachingSignals[0]).toBeDefined())
+    await user.click(screen.getByRole('button', { name: '重新选择课程' }))
+    expect(teachingSignals[0]!.aborted).toBe(true)
+    await act(async () => firstTeaching.reject(cancelledError()))
+    expect(screen.queryByText('旧物理01班')).not.toBeInTheDocument()
+    expect(screen.queryByText('教学班查询失败，请重试或重新选择课程')).not.toBeInTheDocument()
+
+    const secondCourseSearch = nextSearch()
+    await user.type(await screen.findByPlaceholderText('输入课程名称或代码'), '英语')
+    await waitFor(() => expect(searchSignals[3]).toBeDefined())
+    await act(async () => {
+      secondCourseSearch.resolve({
+        session: { id: 'term', name: '当前学期' },
+        selection_token: 'catalog-2',
+        truncated: false,
+        results: [{ id: 'course-3', name: '新英语', extra: '' }],
+      })
+    })
+    const replacementTeaching = nextTeaching()
+    await user.click(screen.getByRole('button', { name: '选择课程新英语' }))
+    await waitFor(() => expect(teachingSignals[1]).toBeDefined())
+    view.unmount()
+    expect(teachingSignals[1]!.aborted).toBe(true)
+    await act(async () => replacementTeaching.reject(cancelledError()))
+    expect(mockToast.error).not.toHaveBeenCalled()
+  })
+
   it('searches a department filter with the newly selected value', async () => {
     await enableExternal()
     mockApi.getDepartments.mockResolvedValue({
@@ -421,7 +558,9 @@ describe('Add view (React)', () => {
       )
     })
     await user.click(screen.getByRole('button', { name: '清除学院筛选' }))
-    await waitFor(() => expect(mockApi.searchExternal).toHaveBeenLastCalledWith(expect.objectContaining({ department_id: undefined })))
+    await waitFor(() => expect(mockApi.searchExternal.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ department_id: undefined }),
+    ))
   })
 
   it('shows the setup error with a working retry after ?setup=1 fails', async () => {
