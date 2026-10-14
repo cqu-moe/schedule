@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import {
   ActionButton,
   Alert,
@@ -89,6 +89,9 @@ const SEARCH_PLACEHOLDERS: Record<ExternalSourceType, string> = {
 
 export default function Add() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const reselectId = new URLSearchParams(location.search).get('reselect')
+  const reselectMode = reselectId !== null
   const session = useSession()
   const subs = useSubscriptions()
   const setup = usePersonalSetup()
@@ -104,7 +107,7 @@ export default function Add() {
   const catalogToken = useRef<string | null>(null)
   const courseInput = useRef<HTMLInputElement>(null)
   const [selectionToken, setSelectionToken] = useState<string | null>(null)
-  const [sourceType, setSourceType] = useState<ExternalSourceType>('instructor')
+  const [sourceType, setSourceType] = useState<ExternalSourceType>(reselectMode ? 'course' : 'instructor')
   const [keyword, setKeyword] = useState('')
   const [selectedDepartment, setSelectedDepartment] = useState('')
   const [selectedGrade, setSelectedGrade] = useState('all')
@@ -125,7 +128,7 @@ export default function Add() {
   const { reloadSession } = session
   const { load: loadSubscriptions } = subs
   const { begin: beginPersonalSetup } = setup
-  const setupRequested = new URLSearchParams(location.search).get('setup') === '1'
+  const setupRequested = new URLSearchParams(location.search).get('setup') === '1' && !reselectMode
 
   const loadSubscriptionList = useCallback(
     async (noCache = false) => {
@@ -148,10 +151,11 @@ export default function Add() {
       const search_types = supported.filter(type => config.external?.search_types?.includes(type))
       const create_types = search_types.filter(type => config.external?.create_types?.includes(type))
       setAvailability({ search_types, create_types })
-      if (search_types[0]) setSourceType(search_types[0])
+      if (reselectMode) setSourceType('course')
+      else if (search_types[0]) setSourceType(search_types[0])
       setConfigStatus('ready')
     } catch { setConfigStatus('error') }
-  }, [])
+  }, [reselectMode])
 
   useEffect(() => { void loadExternalConfig() }, [loadExternalConfig])
 
@@ -170,8 +174,8 @@ export default function Add() {
   }, [reloadSession])
 
   useEffect(() => {
-    void beginPersonalSetup()
-  }, [beginPersonalSetup])
+    if (!reselectMode) void beginPersonalSetup()
+  }, [beginPersonalSetup, reselectMode])
 
   useEffect(() => {
     if (setupRequested) return
@@ -434,32 +438,44 @@ export default function Add() {
     clearError()
     try {
       await subscribeFeedback.run(async () => {
-        await api.createSubscription({
-          sourceType,
-          sourceId: item.id,
-          sourceName: item.name,
-          selectionToken,
-          sessionId: currentTerm.id,
-        })
-        toast.success(`已订阅「${item.name}」`)
-        await reloadAfterCreate()
+        const body = {
+          sourceType, sourceId: item.id, sourceName: item.name,
+          selectionToken, sessionId: currentTerm.id,
+        }
+        if (reselectMode) {
+          if (!reselectId || !canReselect) return
+          const result = await api.reselectTeachingClass(reselectId, body)
+          toast.success('已提交重选，正在重新同步；采集成功后原链接恢复可用')
+          navigate('/dashboard', { state: { reselection: { id: reselectId, runId: result.run_id } } })
+        } else {
+          await api.createSubscription(body)
+          toast.success(`已订阅「${item.name}」`)
+          await reloadAfterCreate()
+        }
       }, item.id)
     } catch (err: unknown) {
-      toast.error(parseApiError(err, '订阅失败'))
+      toast.error(parseApiError(err, reselectMode ? '重选提交失败，请重试' : '订阅失败'))
     }
   }
 
-  const busy = setup.preparing || sessionLoading
-  const externalUnavailable = availability.search_types.length === 0
+  const reselectSubscription = subs.subscriptions.find(sub => sub.id === reselectId)
+  const reselectPending = reselectSubscription?.sync_status === 'queued' || reselectSubscription?.sync_status === 'running'
+  const canReselect = Boolean(reselectSubscription && reselectSubscription.user_id === session.user?.id
+    && reselectSubscription.source_version === 1 && reselectSubscription.source_type === 'course'
+    && !reselectSubscription.is_personal && !reselectPending
+    && (reselectSubscription.external_state === 'expired'
+      || (reselectSubscription.external_state === 'reselecting' && reselectSubscription.sync_status === 'error')))
+  const busy = (!reselectMode && setup.preparing) || sessionLoading
+  const externalUnavailable = reselectMode ? !availability.search_types.includes('course') : availability.search_types.length === 0
   const externalLocked = !externalUnavailable && !canSearchExternal
-  const creationAvailable = availability.create_types.includes(sourceType)
-  const subscriptionsUnavailable = subsStatus !== 'ready' || setup.error !== null
+  const creationAvailable = reselectMode || availability.create_types.includes(sourceType)
+  const subscriptionsUnavailable = subsStatus !== 'ready' || (!reselectMode && setup.error !== null)
 
   return (
     <>
       <PageHeader
-        title="添加新订阅"
-        description="选择个人课表或外部课表，添加后可返回「我的订阅」查看日历链接。"
+        title={reselectMode ? '重新选择教学班' : '添加新订阅'}
+        description={reselectMode ? '原订阅和全部链接地址保持不变；新教学班采集成功前，公共链接保持停用。' : '选择个人课表或外部课表，添加后可返回「我的订阅」查看日历链接。'}
         actions={
           <Button asChild variant="outline" size="sm">
             <Link to="/dashboard">我的订阅</Link>
@@ -504,9 +520,12 @@ export default function Add() {
             </Button>
           }
         />
+      ) : reselectMode && !canReselect ? (
+        <PageState state="error" title={reselectPending ? '教学班正在重新同步' : '无法重选此订阅'}
+          description={reselectPending ? '请等待本次采集完成后再操作；公共链接保持停用。' : '仅支持本人已过期或重选失败的新版教学班订阅，请返回我的订阅确认状态。'} />
       ) : (
         <>
-          {setup.error && (
+          {!reselectMode && setup.error && (
             <Alert variant="destructive">
               <AlertDescription className="add-error-row">
                 <span>{setup.error}</span>
@@ -522,7 +541,7 @@ export default function Add() {
             </Alert>
           )}
 
-          <section className="add-section" aria-labelledby="personal-heading">
+          {!reselectMode && <section className="add-section" aria-labelledby="personal-heading">
             <h2 id="personal-heading" className="add-section-title">
               个人课表
             </h2>
@@ -588,7 +607,7 @@ export default function Add() {
                 )}
               </div>
             )}
-          </section>
+          </section>}
 
           <section className="add-section" aria-labelledby="external-heading">
             <h2 id="external-heading" className="add-section-title">
@@ -612,9 +631,14 @@ export default function Add() {
               <div className="add-hint-box">
                 外部订阅（教师、教室、课程、行政班等）功能尚未开通。
               </div>
+            ) : reselectMode && session.cquBindStatus !== 'active' ? (
+              <div className="add-hint-box">重选需要有效的重庆大学统一认证绑定。
+                <a href={session.cquBindStatus === 'deleting' ? `${AUTH_BASE_URL}/settings/cqu` : bindHref}>查看或修复绑定</a>
+              </div>
             ) : (
               <div className="add-card">
-                <Tabs value={sourceType} onValueChange={handleTypeChange}>
+                {reselectMode && <p className="add-hint">失败后可重新选择，提交须通过服务器的 5 分钟冷却校验。</p>}
+                {!reselectMode && <Tabs value={sourceType} onValueChange={handleTypeChange}>
                   <TabsList className="add-source-tabs" aria-label="来源类型">
                     {availability.search_types.map((type) => (
                       <TabsTrigger key={type} value={type}>
@@ -622,7 +646,7 @@ export default function Add() {
                       </TabsTrigger>
                     ))}
                   </TabsList>
-                </Tabs>
+                </Tabs>}
 
                 {currentTerm && <p className="add-result-extra">当前学期：{currentTerm.name}</p>}
                 <p className="add-result-extra">仅查询学校当前学期。</p>
@@ -726,7 +750,7 @@ export default function Add() {
                         </div>
                         {sourceType === 'course' && !selectedCourse ? (
                           <Button type="button" size="sm" aria-label={`选择课程${item.name}`} disabled={searching || !selectionToken} onClick={() => void selectCourse(item)}>选择教学班</Button>
-                        ) : isExternalSubscribed(item.id) ? (
+                        ) : !reselectMode && isExternalSubscribed(item.id) ? (
                           <Button
                             variant="outline"
                             size="sm"
@@ -742,13 +766,13 @@ export default function Add() {
                             size="sm"
                             state={subscribeFeedback.stateOf(item.id)}
                             labels={{
-                              idle: '订阅',
-                              loading: '订阅中…',
-                              success: '已订阅',
+                              idle: reselectMode ? '重选教学班' : '订阅',
+                              loading: reselectMode ? '提交中…' : '订阅中…',
+                              success: reselectMode ? '已提交' : '已订阅',
                               error: '失败，重试',
                             }}
-                            disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || subs.atLimit}
-                            aria-label={`订阅${item.name}`}
+                            disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || (!reselectMode && subs.atLimit)}
+                            aria-label={`${reselectMode ? '重选' : '订阅'}${item.name}`}
                             onClick={() => void handleExternalSubscribe(item)}
                           />
                         )}
@@ -761,7 +785,7 @@ export default function Add() {
                   <p className="add-no-results">未找到结果</p>
                 )}
 
-                {subs.atLimit && (
+                {!reselectMode && subs.atLimit && (
                   <p className="add-warning">已达最大订阅数，请先删除不需要的订阅</p>
                 )}
               </div>

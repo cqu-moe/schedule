@@ -41,6 +41,13 @@ describe('API module (v2)', () => {
     mockClient.delete.mockReset()
   })
 
+  it('posts an owner receipt to the existing target-selection endpoint and reads a reused queued run', async () => {
+    mockClient.post.mockResolvedValue({ status: 202, data: { status: 'queued', run_id: 'run-11', reused: true } })
+    const body = { sourceType: 'course', sourceId: 'class-new', sourceName: '物理01班', selectionToken: 'owner-receipt', sessionId: 'current' }
+    expect(await api.reselectTeachingClass('original', body)).toEqual({ status: 'queued', run_id: 'run-11', reused: true })
+    expect(mockClient.post).toHaveBeenCalledExactlyOnceWith('/subscriptions/original/target-selection', body)
+  })
+
   // ── Client config ──
 
   describe('client configuration', () => {

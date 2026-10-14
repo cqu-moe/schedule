@@ -155,6 +155,21 @@ describe('Dashboard view (v2)', () => {
     vi.useRealTimers()
   })
 
+  it('offers teaching-class reselection for expired and failed targets, never pending or active targets', async () => {
+    mockApi.getSubscriptions.mockResolvedValue(mockList([
+      ...(['expired', 'failed', 'pending', 'active', 'legacy'] as const).map(id => mockSubscription({
+        id, source_name: id, source_type: 'course', source_version: id === 'legacy' ? 0 : 1, is_personal: false,
+        external_state: id === 'failed' || id === 'pending' ? 'reselecting' : id === 'active' ? 'active' : 'expired',
+        sync_status: id === 'failed' ? 'error' : id === 'pending' ? 'queued' : 'idle',
+        sync_error_message: id === 'failed' ? '采集失败' : null,
+      })),
+    ]))
+    renderWithApp(<Dashboard />, { session: { quota: () => 0 } })
+    expect(await screen.findByRole('link', { name: '重新选择教学班：expired' })).toHaveAttribute('href', '/add?reselect=expired')
+    expect(screen.getByRole('link', { name: '重新选择教学班：failed' })).toHaveAttribute('href', '/add?reselect=failed')
+    expect(screen.getAllByRole('link', { name: /重新选择教学班：/ })).toHaveLength(2)
+  })
+
   it('renders the subscription list with count, badges and sync date', async () => {
     const quota = vi.fn((key: string) => (key === 'sub_limit' ? 5 : null))
     await mountDashboard(

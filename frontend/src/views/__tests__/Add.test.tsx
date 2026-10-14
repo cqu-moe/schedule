@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Add from '@/views/Add'
+import { useLocation } from 'react-router'
 import { mockSubscription, renderWithApp } from '@/test-utils'
 import type { DefaultSubscriptionsResponse } from '@/types/api'
 
@@ -12,6 +13,7 @@ const { mockApi, mockRedirect, mockToast } = vi.hoisted(() => ({
     getSubscriptions: vi.fn(),
     ensureDefaultSubscriptions: vi.fn(),
     createSubscription: vi.fn(),
+    reselectTeachingClass: vi.fn(),
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
     searchExternal: vi.fn(),
@@ -29,6 +31,11 @@ vi.mock('@cqu-moe/ui', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   toast: mockToast,
 }))
+
+function ReselectionLocation() {
+  const location = useLocation()
+  return location.pathname === '/dashboard' ? <p role="status">重新同步 {location.state?.reselection?.id} {location.state?.reselection?.runId}</p> : null
+}
 
 async function enableExternal() {
   const sources = ['instructor', 'room', 'laboratory', 'course', 'admin_class']
@@ -78,6 +85,72 @@ describe('Add view (React)', () => {
     await user.click(screen.getByRole('button', { name: '重新选择课程' }))
     expect(screen.queryByRole('button', { name: '订阅大学物理 02班' })).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('searchbox', { name: '搜索课程' })).toHaveFocus())
+  })
+
+  it('reselects on the original subscription at full quota with external permission only', async () => {
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [mockSubscription({
+      id: 'original', source_type: 'course', source_version: 1, is_personal: false,
+      external_state: 'expired',
+    })], count: 1 })
+    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['instructor', 'course'], create_types: [] } })
+    mockApi.searchExternal.mockResolvedValue({ selection_token: 'catalog', session: { id: 'term', name: '当前学期' }, results: [{ id: 'course', name: '物理' }] })
+    mockApi.searchTeachingClasses.mockResolvedValue({ selection_token: 'receipt', session: { id: 'term', name: '当前学期' }, results: [{ id: 'class', name: '物理01班' }] })
+    mockApi.reselectTeachingClass.mockResolvedValue({ status: 'queued', run_id: 'run', reused: false })
+    const user = userEvent.setup()
+    renderWithApp(<><Add /><ReselectionLocation /></>, { routerEntries: ['/add?reselect=original'], session: {
+      can: key => key === 'external', quota: () => 0,
+    } })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索课程' }), '物理')
+    expect(screen.queryByText('个人课表')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '教师' })).not.toBeInTheDocument()
+    expect(screen.getByText(/原订阅和全部链接地址保持不变/)).toBeInTheDocument()
+    const course = await screen.findByRole('button', { name: '选择课程物理' })
+    course.focus(); await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('button', { name: '重选物理01班' }))
+    await waitFor(() => expect(mockApi.reselectTeachingClass).toHaveBeenCalledWith('original', {
+      sourceType: 'course', sourceId: 'class', sourceName: '物理01班', selectionToken: 'receipt', sessionId: 'term',
+    }))
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
+    expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
+    expect(await screen.findByText('重新同步 original run')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['missing', null],
+    ['legacy', { source_version: 0 }],
+    ['active', { external_state: 'active' as const }],
+    ['other owner', { user_id: 'other' }],
+    ['pending', { external_state: 'reselecting' as const, sync_status: 'queued' as const }],
+    ['wrong type', { source_type: 'instructor' as const }],
+  ])('guards %s reselection before exposing search', async (_name, override) => {
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: override === null ? [] : [mockSubscription({
+      id: 'original', source_type: 'course', source_version: 1, is_personal: false, external_state: 'expired', ...override,
+    })], count: 1 })
+    await enableExternal()
+    renderWithApp(<Add />, { routerEntries: ['/add?reselect=original'] })
+    expect(await screen.findByText(_name === 'pending' ? '教学班正在重新同步' : '无法重选此订阅')).toBeInTheDocument()
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
+    expect(mockApi.reselectTeachingClass).not.toHaveBeenCalled()
+  })
+
+  it('keeps the preserved URL notice and receipt selection when the server rejects a retry during cooldown', async () => {
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [mockSubscription({ id: 'original', source_type: 'course', source_version: 1, is_personal: false,
+      external_state: 'reselecting', sync_status: 'error', sync_error_message: '采集失败',
+    })], count: 1 })
+    await enableExternal()
+    mockApi.searchExternal.mockResolvedValue({ selection_token: 'catalog', session: { id: 'term', name: '当前学期' }, results: [{ id: 'course', name: '物理' }] })
+    mockApi.searchTeachingClasses.mockResolvedValue({ selection_token: 'receipt', session: { id: 'term', name: '当前学期' }, results: [{ id: 'class', name: '物理01班' }] })
+    mockApi.reselectTeachingClass.mockRejectedValue({ response: { data: { detail: { error: { code: 'COOLDOWN', message: '请在5分钟后重试' } } } } })
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add?reselect=original&setup=1'] })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索课程' }), '物理')
+    await user.click(await screen.findByRole('button', { name: '选择课程物理' }))
+    await user.click(await screen.findByRole('button', { name: '重选物理01班' }))
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('请在5分钟后重试'))
+    expect(screen.getByText(/原订阅和全部链接地址保持不变/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重选物理01班' })).toBeInTheDocument()
+    expect(mockApi.ensureDefaultSubscriptions).not.toHaveBeenCalled()
   })
 
   it('renders personal subscription options', async () => {
