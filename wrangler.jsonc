@@ -89,6 +89,7 @@
   "vars": {
     "PUBLIC_URL": "https://schedule.cqu.moe",
     "PERSONAL_SUBSCRIPTION_MODE": "enabled",
+    "EXTERNAL_SUBSCRIPTION_TYPES": "admin_class,instructor,room,laboratory,course",
     "POSTHOG_HOST": "https://p.cqu.moe",
     "ENVIRONMENT": "production"
   },
