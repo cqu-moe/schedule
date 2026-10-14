@@ -506,7 +506,7 @@ export default function Dashboard() {
   }
 
   function firstSyncLinkUnavailable(sub: Subscription): boolean {
-    return (sub.source_version === 1 && sub.external_state !== undefined && sub.external_state !== 'active') || (isFirstSyncCard(sub) && !sub.last_synced_at)
+    return sub.is_active === false || (sub.source_version === 1 && sub.external_state !== undefined && sub.external_state !== 'active') || (isFirstSyncCard(sub) && !sub.last_synced_at)
   }
 
   function refreshCooldownSeconds(sub: Subscription): number {
@@ -574,6 +574,7 @@ export default function Dashboard() {
   }
 
   function syncProgressLabel(sub: Subscription): string {
+    if (sub.external_state === 'reselecting') return '重新同步中…'
     if (isFirstSyncCard(sub)) return '首次同步中…'
     return sub.sync_status === 'queued' && Boolean(sub.sync_error_code)
       ? '同步遇到临时故障，正在自动重试…'
@@ -1013,11 +1014,12 @@ export default function Dashboard() {
                     {sub.session_name && (
                       <span className="dash-semester">{sub.session_name}</span>
                     )}
-                    {sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
-                    {sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
+                    {sub.external_state === 'reselecting' && <span className="dash-sync-meta">原链接地址保留，采集成功前保持停用</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
                       <span className="dash-sync-error">
-                        同步失败{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
+                        {sub.external_state === 'expired' ? '教学班已过期' : '同步失败'}{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
                         {sub.sync_error_code === 'NEEDS_REAUTH' && (
                           <a href={repairBindHref}>重新绑定重庆大学统一认证账号</a>
                         )}
@@ -1031,7 +1033,7 @@ export default function Dashboard() {
                       sub.sync_status === 'success' &&
                       sub.last_synced_at ? (
                       <span className="dash-sync-meta">刚刚同步</span>
-                    ) : sub.last_synced_at ? (
+                    ) : sub.external_state === 'reselecting' ? null : sub.last_synced_at ? (
                       <span className="dash-sync-meta">
                         同步于 {formatDate(sub.last_synced_at)}
                       </span>
@@ -1082,6 +1084,16 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="dash-secondary-actions">
+                    {sub.user_id === session.user?.id && sub.source_version === 1 && sub.source_type === 'course'
+                      && !sub.is_personal && sub.sync_status !== 'queued' && sub.sync_status !== 'running'
+                      && !isSubSyncing(sub) && session.can('external') && session.cquBindStatus === 'active'
+                      && (sub.external_state === 'expired' || (sub.external_state === 'reselecting' && sub.sync_status === 'error')) && (
+                        <Button asChild variant="outline">
+                          <Link to={`/add?reselect=${encodeURIComponent(sub.id)}`} aria-label={`重新选择教学班：${sub.source_name}`}>
+                            重新选择教学班
+                          </Link>
+                        </Button>
+                      )}
                     <SyncActionButton
                       state={refreshButtonState(sub)}
                       labels={{

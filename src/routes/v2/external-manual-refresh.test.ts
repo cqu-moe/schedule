@@ -165,9 +165,9 @@ describe("new external manual refresh quota", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));
     const cases = [
-      { name: "legacy", sql: "source_version=0" },
-      { name: "expired", sql: "external_state='expired'" },
-      { name: "reselecting", sql: "external_state='reselecting'" },
+      { name: "legacy", sql: "source_version=0", status: 503, code: "EXTERNAL_UNAVAILABLE" },
+      { name: "expired", sql: "external_state='expired'", status: 409, code: "EXTERNAL_TERM_EXPIRED" },
+      { name: "reselecting", sql: "external_state='reselecting'", status: 409, code: "EXTERNAL_RESELECTING" },
     ] as const;
 
     for (const item of cases) {
@@ -176,8 +176,8 @@ describe("new external manual refresh quota", () => {
       await env.DB.prepare(`UPDATE subscriptions SET ${item.sql} WHERE id=?`).bind(sid).run();
       const app = makeApp(userId);
       const response = await app.request(`/subscriptions/${sid}/syncs`);
-      expect(response.status).toBe(503);
-      expect((await response.json()).detail.error.code).toBe("EXTERNAL_UNAVAILABLE");
+      expect(response.status).toBe(item.status);
+      expect((await response.json()).detail.error.code).toBe(item.code);
       expect(app.send).not.toHaveBeenCalled();
       expect(await env.DB.prepare(`SELECT used_count FROM external_manual_refresh_usage
         WHERE user_id=? AND quota_date='2026-09-06'`).bind(userId).first()).toBeNull();

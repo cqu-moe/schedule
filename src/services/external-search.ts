@@ -100,7 +100,7 @@ export async function searchExternal(env: Env, userId: string, input: Omit<Exter
   } catch { /* A cache outage must not prevent a fresh authorized search. */ }
   let raw: unknown;
   try {
-    raw = await env.AUTH.cquExternalSearch({ ...input, clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET, userId, deadlineAt: Date.now() + 90_000 });
+    raw = await env.AUTH.cquExternalSearch({ ...input, clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET, userId, deadlineAt: Math.min(input.deadlineAt ?? Infinity, Date.now() + 90_000) });
   } catch { return searchError("UNAVAILABLE"); }
   if (record(raw) && "error" in raw) return searchError(raw.error);
   const result = parseResult(raw, input.sourceType);

@@ -18,6 +18,7 @@ export const subscriptions = sqliteTable(
     /** 0 = frozen legacy/existing personal; 1 = new fixed-recipe external. */
     sourceVersion: integer("source_version").notNull().default(0),
     externalState: text("external_state").notNull().default("active").$type<"active" | "expired" | "reselecting">(),
+    reselectionRequestedAt: text("reselection_requested_at"),
     targetRevision: integer("target_revision").notNull().default(0),
     importQuality: text("import_quality").$type<"complete" | "partial" | "empty">(),
     skippedCount: integer("skipped_count").notNull().default(0),

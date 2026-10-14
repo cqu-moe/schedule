@@ -160,6 +160,25 @@ describe('Dashboard view (v2)', () => {
     vi.useRealTimers()
   })
 
+  it('offers teaching-class reselection for expired and failed targets, never pending or active targets', async () => {
+    mockApi.getSubscriptions.mockResolvedValue(mockList([
+      ...(['expired', 'failed', 'pending', 'active', 'legacy'] as const).map(id => mockSubscription({
+        id, source_name: id, source_type: 'course', source_version: id === 'legacy' ? 0 : 1, is_personal: false,
+        external_state: id === 'failed' || id === 'pending' ? 'reselecting' : id === 'active' ? 'active' : 'expired',
+        sync_status: id === 'failed' ? 'error' : id === 'pending' ? 'queued' : 'idle',
+        sync_error_message: id === 'failed' ? '采集失败' : null,
+        import_quality: id === 'pending' ? 'empty' : undefined,
+        last_synced_at: id === 'pending' ? '2025-09-01T00:00:00Z' : null,
+      })),
+    ]))
+    renderWithApp(<Dashboard />, { session: { quota: () => 0 } })
+    expect(await screen.findByRole('link', { name: '重新选择教学班：expired' })).toHaveAttribute('href', '/add?reselect=expired')
+    expect(screen.getByRole('link', { name: '重新选择教学班：failed' })).toHaveAttribute('href', '/add?reselect=failed')
+    expect(screen.getAllByRole('link', { name: /重新选择教学班：/ })).toHaveLength(2)
+    expect(screen.queryByText('当前学期暂无课表安排')).not.toBeInTheDocument()
+    expect(screen.queryByText(/同步于/)).not.toBeInTheDocument()
+  })
+
   it('renders the subscription list with count, badges and sync date', async () => {
     const quota = vi.fn((key: string) => (key === 'sub_limit' ? 5 : null))
     await mountDashboard(
