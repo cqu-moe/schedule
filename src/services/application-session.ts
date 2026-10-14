@@ -54,8 +54,18 @@ export interface Credentials {
 function calendarCaps(value: unknown): value is CalendarCaps {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
+  const externalSyncInterval = v.external_sync_interval;
+  const optionalQuota = (key: string, allowUnlimited: boolean) =>
+    v[key] === undefined ||
+    (allowUnlimited && v[key] === null) ||
+    (typeof v[key] === "number" && Number.isInteger(v[key]) && v[key] >= 0);
   return ["sync", "external", "share", "change_notification"].every(k => typeof v[k] === "boolean") &&
-    ["sub_limit", "share_limit", "sync_interval", "manual_refresh"].every(k => v[k] === null || typeof v[k] === "number" && Number.isFinite(v[k]) && v[k] >= 0);
+    ["sub_limit", "share_limit", "sync_interval", "manual_refresh"].every(k => v[k] === null || typeof v[k] === "number" && Number.isFinite(v[k]) && v[k] >= 0) &&
+    optionalQuota("external_sync_interval", false) &&
+    (externalSyncInterval === undefined ||
+      externalSyncInterval === 0 ||
+      (typeof externalSyncInterval === "number" && externalSyncInterval >= 15)) &&
+    optionalQuota("external_manual_refresh", true);
 }
 export async function authority(env: Env, credentials: Credentials): Promise<VerifiedSession | null> {
   const { as, client, clientAuth } = oauthConfiguration(env);

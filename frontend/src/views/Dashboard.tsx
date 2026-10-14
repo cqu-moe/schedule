@@ -45,6 +45,7 @@ import { captureScheduleEvent } from '@/lib/posthog'
 import { useSession } from '@/providers/app'
 import type {
   CalendarLink,
+  CalendarCaps,
   PersonalSetupSummary,
   SourceType,
   Subscription,
@@ -100,6 +101,23 @@ function formatDate(isoString: string): string {
 
 function cooldownLabel(seconds: number): string {
   return `${Math.ceil(seconds / 60)} 分钟后可同步`
+}
+
+function externalSyncIntervalLabel(caps: CalendarCaps | null): string {
+  if (!caps) return '外部自动同步状态未知'
+  if (!caps.external) return '外部自动同步需先开通外部订阅'
+  if (caps.external_sync_interval === undefined) return '外部自动同步未授予'
+  if (caps.external_sync_interval === 0) return '外部自动同步已关闭'
+  return `外部自动同步每 ${caps.external_sync_interval} 分钟`
+}
+
+function externalManualRefreshLabel(caps: CalendarCaps | null): string {
+  if (!caps) return '外部手动刷新状态未知'
+  if (!caps.external) return '外部手动刷新需先开通外部订阅'
+  if (caps.external_manual_refresh === undefined) return '外部手动刷新未授予'
+  if (caps.external_manual_refresh === 0) return '外部手动刷新已关闭'
+  if (caps.external_manual_refresh === null) return '外部手动刷新无限'
+  return `外部手动刷新 ${caps.external_manual_refresh} 次/天`
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -861,6 +879,18 @@ export default function Dashboard() {
         <p className={session.can('sync') ? 'dash-sync-status is-on' : 'dash-sync-status'}>
           <span className="dash-status-dot" aria-hidden="true" />
           {session.can('sync') ? '自动同步已开启' : '自动同步未开通'}
+        </p>
+        <p className={session.can('external') ? 'dash-sync-status is-on' : 'dash-sync-status'}>
+          <span className="dash-status-dot" aria-hidden="true" />
+          {session.can('external') ? '外部订阅已开通' : '外部订阅未开通'}
+        </p>
+        <p className="dash-sync-status">
+          <span className="dash-status-dot" aria-hidden="true" />
+          {externalSyncIntervalLabel(session.caps)}
+        </p>
+        <p className="dash-sync-status">
+          <span className="dash-status-dot" aria-hidden="true" />
+          {externalManualRefreshLabel(session.caps)}
         </p>
         {atLimit && <p className="dash-limit-note">已达订阅上限</p>}
       </div>

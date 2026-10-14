@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
@@ -196,6 +196,60 @@ describe('Dashboard view (v2)', () => {
       screen.getByText('添加课表订阅后，课表会自动同步到你的日历应用。'),
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '添加新订阅' })).toBeInTheDocument()
+  })
+
+  it('shows personal and external entitlement states separately without treating absent rights as failures', async () => {
+    await mountDashboard([mockSubscription()], {
+      session: {
+        caps: {
+          ...mockMeResponse().caps.calendar,
+          external_sync_interval: undefined,
+          external_manual_refresh: undefined,
+        },
+      },
+    })
+    expect(screen.getByText('自动同步已开启')).toBeInTheDocument()
+    expect(screen.getByText('外部订阅已开通')).toBeInTheDocument()
+    expect(screen.getByText('外部自动同步未授予')).toBeInTheDocument()
+    expect(screen.getByText('外部手动刷新未授予')).toBeInTheDocument()
+
+    cleanup()
+    await mountDashboard([mockSubscription()], {
+      session: {
+        caps: {
+          ...mockMeResponse().caps.calendar,
+          external_sync_interval: 0,
+          external_manual_refresh: null,
+        },
+      },
+    })
+    expect(screen.getByText('外部自动同步已关闭')).toBeInTheDocument()
+    expect(screen.getByText('外部手动刷新无限')).toBeInTheDocument()
+
+    cleanup()
+    await mountDashboard([mockSubscription()], {
+      session: {
+        caps: {
+          ...mockMeResponse().caps.calendar,
+          external_sync_interval: 30,
+          external_manual_refresh: 7,
+        },
+      },
+    })
+    expect(screen.getByText('外部自动同步每 30 分钟')).toBeInTheDocument()
+    expect(screen.getByText('外部手动刷新 7 次/天')).toBeInTheDocument()
+
+    cleanup()
+    await mountDashboard([mockSubscription()], {
+      session: {
+        caps: {
+          ...mockMeResponse().caps.calendar,
+          external: false,
+        },
+      },
+    })
+    expect(screen.getByText('外部自动同步需先开通外部订阅')).toBeInTheDocument()
+    expect(screen.getByText('外部手动刷新需先开通外部订阅')).toBeInTheDocument()
   })
 
   it('shows an error state with retry when the list fails to load', async () => {

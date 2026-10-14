@@ -13,6 +13,10 @@ export interface CalendarCaps {
   share_limit: number | null;
   sync_interval: number | null; // 分钟；自动同步由 15 分钟 cron 驱动，故 15min 是有效下限，<15 实际等同每 15 分钟
   manual_refresh: number | null; // 次/天
+  /** undefined = 旧 Auth 未下发/未授予；0 = 明确关闭；正整数 = 分钟。 */
+  external_sync_interval?: number;
+  /** undefined = 旧 Auth 未下发/未授予；0 = 明确关闭；null = 明确无限。 */
+  external_manual_refresh?: number | null;
 }
 
 export interface SessionUser {
