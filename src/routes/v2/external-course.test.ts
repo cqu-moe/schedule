@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { businessIdentity } from "../../test-utils/business-identity";
 import type { SessionEnv } from "../../middleware/session";
 import type { Env } from "../../types";
+import type { ExternalSearchArgs, ExternalSearchResult } from "../../services/external-search";
 import worker from "../../index";
 import external from "./external";
 import subscriptions from "./subscriptions";
@@ -63,6 +64,44 @@ async function consumeTermChecks(app: ReturnType<typeof harness>) {
     .map(body => ({ body, attempts: 1, ack: vi.fn(), retry: vi.fn() }));
   await processScheduleSyncBatch({ queue: "schedule-sync", messages } as unknown as MessageBatch<any>, app.testEnv);
 }
+
+it("sends strict Auth RPC payloads for course catalog and teaching-class search", async () => {
+  const app = harness();
+  app.testEnv.CALENDAR_CLIENT_ID = "fixture-calendar-client";
+  app.testEnv.CALENDAR_CLIENT_SECRET = "fixture-calendar-secret";
+  const common = {
+    clientId: app.testEnv.CALENDAR_CLIENT_ID,
+    clientSecret: app.testEnv.CALENDAR_CLIENT_SECRET,
+    userId: app.userId,
+    deadlineAt: expect.any(Number),
+  };
+  // Auth parseExternalSearchArgs rejects extra keys even when their values are
+  // empty. Keep this RPC fixture strict; success-only mocks hid that rejection.
+  const search = vi.fn(async (args: ExternalSearchArgs): Promise<ExternalSearchResult | { error: string }> => {
+    if (args.sourceType !== "course_catalog" && args.sourceType !== "course") return { error: "INVALID_REQUEST" };
+    const keys = ["clientId", "clientSecret", "userId", "sourceType", "deadlineAt",
+      ...(args.sourceType === "course_catalog" ? ["keyword"] : ["courseId", "courseName", "expectedSessionId"])];
+    if (Object.keys(args).some(key => !keys.includes(key)) || !Number.isSafeInteger(args.deadlineAt)) {
+      return { error: "INVALID_REQUEST" };
+    }
+    if (args.sourceType === "course_catalog") return { contractVersion: 1, sourceType: "course_catalog",
+      session: app.term, truncated: false, items: [{ ...app.course, extra: "PHYS1001" }] };
+    return { contractVersion: 1, sourceType: "course", session: app.term, truncated: false,
+      course: app.course, items: [{ id: "class-02", name: "大学物理 02班", extra: "教师乙" }] };
+  });
+  app.testEnv.AUTH.cquExternalSearch = search;
+  const catalogResponse = await app.request("/external/search?source_type=course&keyword=物理");
+  expect(search).toHaveBeenNthCalledWith(1, { ...common, sourceType: "course_catalog", keyword: "物理" });
+  expect(catalogResponse.status).toBe(200);
+  const catalog = await catalogResponse.json<any>();
+  expect(catalog).toMatchObject({ stage: "courses", results: [{ id: app.course.id, name: app.course.name }] });
+  const classesResponse = await app.request(`/external/teaching-classes?course_id=${app.course.id}&selection_token=${catalog.selection_token}`);
+  expect(search).toHaveBeenNthCalledWith(2, { ...common, sourceType: "course",
+    courseId: app.course.id, courseName: app.course.name, expectedSessionId: app.term.id });
+  expect(classesResponse.status).toBe(200);
+  expect(await classesResponse.json()).toMatchObject({ stage: "classes", course: app.course,
+    results: [{ id: "class-02", name: "大学物理 02班" }], selection_token: expect.any(String) });
+});
 
 it("selects course then exact teaching class and publishes ordinary and experiment events", async () => {
   const app = harness(); const created = await app.create();
