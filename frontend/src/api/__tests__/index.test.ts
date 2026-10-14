@@ -329,6 +329,7 @@ describe('API module (v2)', () => {
 
       expect(mockClient.get).toHaveBeenCalledWith(
         '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89',
+        { timeout: 100_000 },
       )
       expect(result).toEqual({ results: [] })
     })
@@ -357,7 +358,7 @@ describe('API module (v2)', () => {
 
       const result = await api.getDepartments()
 
-      expect(mockClient.get).toHaveBeenCalledWith('/external/departments')
+      expect(mockClient.get).toHaveBeenCalledWith('/external/departments', { timeout: 100_000 })
       expect(result).toEqual({ departments: [] })
     })
   })

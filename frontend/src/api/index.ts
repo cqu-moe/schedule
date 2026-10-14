@@ -7,7 +7,8 @@ import type {
   CreateLinkBody,
   PatchLinkBody,
   RotateLinkResult,
-  SearchResult,
+  ExternalSearchResponse,
+  ExternalSession,
   DepartmentNode,
   AppConfig,
   CalendarData,
@@ -186,20 +187,18 @@ export default {
   async searchExternal(params: {
     source_type: string
     keyword: string
-    session_id?: string
     department_id?: string
     grade?: string
-  }): Promise<{ results: SearchResult[] }> {
+  }): Promise<ExternalSearchResponse> {
     const query = new URLSearchParams({ source_type: params.source_type, keyword: params.keyword })
-    if (params.session_id) query.append('session_id', params.session_id)
     if (params.department_id) query.append('department_id', params.department_id)
     if (params.grade) query.append('grade', params.grade)
-    const response = await client.get<{ results: SearchResult[] }>(`/external/search?${query}`)
+    const response = await client.get<ExternalSearchResponse>(`/external/search?${query}`, { timeout: 100_000 })
     return response.data
   },
 
-  async getDepartments(): Promise<{ departments: DepartmentNode[] }> {
-    const response = await client.get<{ departments: DepartmentNode[] }>('/external/departments')
+  async getDepartments(): Promise<{ session: ExternalSession; departments: DepartmentNode[] }> {
+    const response = await client.get<{ session: ExternalSession; departments: DepartmentNode[] }>('/external/departments', { timeout: 100_000 })
     return response.data
   },
 

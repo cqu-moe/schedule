@@ -117,6 +117,18 @@ export interface SubscriptionList {
 
 // ── v2 search / department types ─────────────────────────────────────────────
 
+export type ExternalSourceType = Extract<SourceType, 'instructor' | 'room' | 'laboratory' | 'course' | 'admin_class'>
+export interface ExternalSession { id: string; name: string }
+export interface ExternalSearchResponse {
+  session: ExternalSession
+  results: SearchResult[]
+  truncated: boolean
+}
+export interface ExternalAvailability {
+  search_types: ExternalSourceType[]
+  create_types: ExternalSourceType[]
+}
+
 export interface SearchResult {
   id: string
   name: string
@@ -152,6 +164,7 @@ export interface RotateLinkResult {
 
 export interface AppConfig {
   public_url: string
+  external?: ExternalAvailability
 }
 
 // ── calendar / view page types (unchanged; used by Calendar.vue / FE-4) ──────

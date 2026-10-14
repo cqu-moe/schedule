@@ -27,13 +27,9 @@ import { useButtonFeedback } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
 import { useSubscriptions } from '@/hooks/useSubscriptions'
 import { useSession } from '@/providers/app'
-import type { DepartmentNode, SearchResult, SourceType } from '@/types/api'
+import type { DepartmentNode, SearchResult, SourceType, ExternalAvailability, ExternalSession } from '@/types/api'
 import { apiErrorCode, parseApiError } from '@/utils/error'
 import './add.css'
-
-// 外部课表软禁用（可逆）：瑞数化后外部课表无法获取，前端隐藏入口标「暂不可用」。
-// 恢复只需把 enabled 改回 true；测试通过修改此对象覆盖。绝不在 UI 暴露瑞数/WAF/风控原因。
-export const externalSubscriptions = { enabled: false }
 
 type ExternalSourceType = Extract<
   SourceType,
@@ -100,6 +96,10 @@ export default function Add() {
   const subscribeFeedback = useButtonFeedback()
 
   const [sessionLoading, setSessionLoading] = useState(true)
+  const [availability, setAvailability] = useState<ExternalAvailability>({ search_types: [], create_types: [] })
+  const [configStatus, setConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [currentTerm, setCurrentTerm] = useState<ExternalSession | null>(null)
+  const [truncated, setTruncated] = useState(false)
   const [sourceType, setSourceType] = useState<ExternalSourceType>('instructor')
   const [keyword, setKeyword] = useState('')
   const [selectedDepartment, setSelectedDepartment] = useState('')
@@ -135,6 +135,21 @@ export default function Add() {
     },
     [loadSubscriptions],
   )
+
+  const loadExternalConfig = useCallback(async () => {
+    setConfigStatus('loading')
+    try {
+      const config = await api.getConfig()
+      const supported = Object.keys(SOURCE_LABELS) as ExternalSourceType[]
+      const search_types = supported.filter(type => config.external?.search_types?.includes(type))
+      const create_types = search_types.filter(type => config.external?.create_types?.includes(type))
+      setAvailability({ search_types, create_types })
+      if (search_types[0]) setSourceType(search_types[0])
+      setConfigStatus('ready')
+    } catch { setConfigStatus('error') }
+  }, [])
+
+  useEffect(() => { void loadExternalConfig() }, [loadExternalConfig])
 
   useEffect(() => {
     let active = true
@@ -221,19 +236,27 @@ export default function Add() {
     }
   }
 
-  async function loadDepartments() {
+  const loadDepartments = useCallback(async () => {
     setDepartmentsLoading(true)
     setDepartmentsError(false)
     try {
       const data = await api.getDepartments()
       setDepartments(data.departments)
+      setCurrentTerm(data.session ?? null)
     } catch (err: unknown) {
       setDepartmentsError(true)
       toast.error(parseApiError(err, '加载院系列表失败'))
     } finally {
       setDepartmentsLoading(false)
     }
-  }
+  }, [])
+
+  const canSearchExternal = session.can('external')
+  useEffect(() => {
+    if (!sessionLoading && canSearchExternal && availability.search_types.includes('admin_class') && sourceType === 'admin_class') {
+      void loadDepartments()
+    }
+  }, [sessionLoading, canSearchExternal, availability, sourceType, loadDepartments])
 
   function handleTypeChange(next: string) {
     const type = next as ExternalSourceType
@@ -244,10 +267,8 @@ export default function Add() {
     setSelectedDepartment('')
     setSearchResults([])
     setSearched(false)
+    setTruncated(false)
     clearError()
-    if (type === 'admin_class' && departments.length === 0 && !departmentsLoading) {
-      void loadDepartments()
-    }
   }
 
   async function runSearch(request: SearchRequest) {
@@ -255,6 +276,7 @@ export default function Add() {
     lastSearchRef.current = request
     setSearching(true)
     setSearched(false)
+    setTruncated(false)
     clearError()
     try {
       const data = await api.searchExternal({
@@ -271,6 +293,8 @@ export default function Add() {
       })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
+      setCurrentTerm(data.session ?? null)
+      setTruncated(data.truncated === true)
     } catch (err: unknown) {
       if (seq !== searchSeq.current) return
       const code = apiErrorCode(err)
@@ -294,6 +318,8 @@ export default function Add() {
     searchSeq.current += 1
     clearPendingSearch()
     setSearching(false)
+    setSearchResults([])
+    setTruncated(false)
   }
 
   function retrySearch() {
@@ -377,8 +403,9 @@ export default function Add() {
   }
 
   const busy = setup.preparing || sessionLoading
-  const externalUnavailable = !externalSubscriptions.enabled
-  const externalLocked = externalSubscriptions.enabled && !session.can('external')
+  const externalUnavailable = availability.search_types.length === 0
+  const externalLocked = !externalUnavailable && !canSearchExternal
+  const creationAvailable = availability.create_types.includes(sourceType)
   const subscriptionsUnavailable = subsStatus !== 'ready' || setup.error !== null
 
   return (
@@ -523,7 +550,14 @@ export default function Add() {
                 {externalUnavailable ? '暂不可用' : externalLocked ? '未开通' : null}
               </span>
             </h2>
-            {externalUnavailable ? (
+            {configStatus === 'loading' ? (
+              <p role="status">正在确认外部订阅可用性…</p>
+            ) : configStatus === 'error' ? (
+              <Alert variant="destructive"><AlertDescription>
+                无法确认外部订阅可用性。
+                <Button variant="outline" onClick={() => void loadExternalConfig()}>重试加载</Button>
+              </AlertDescription></Alert>
+            ) : externalUnavailable ? (
               <div className="add-hint-box">
                 外部订阅（教师、教室、课程、行政班等）功能暂不可用。
               </div>
@@ -535,7 +569,7 @@ export default function Add() {
               <div className="add-card">
                 <Tabs value={sourceType} onValueChange={handleTypeChange}>
                   <TabsList className="add-source-tabs" aria-label="来源类型">
-                    {(Object.keys(SOURCE_LABELS) as ExternalSourceType[]).map((type) => (
+                    {availability.search_types.map((type) => (
                       <TabsTrigger key={type} value={type}>
                         {SOURCE_LABELS[type]}
                       </TabsTrigger>
@@ -543,6 +577,9 @@ export default function Add() {
                   </TabsList>
                 </Tabs>
 
+                {currentTerm && <p className="add-result-extra">当前学期：{currentTerm.name}</p>}
+                <p className="add-result-extra">仅查询学校当前学期。</p>
+                {!creationAvailable && <p className="add-result-extra">当前支持搜索，订阅创建暂未开放。</p>}
                 {sourceType === 'admin_class' && (
                   <div className="add-admin-filters">
                     <div className="add-field">
@@ -553,6 +590,12 @@ export default function Add() {
                         value={selectedDepartment}
                         onChange={handleDepartmentChange}
                       />
+                      {selectedDepartment && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => handleDepartmentChange('')}>
+                          清除学院筛选
+                        </Button>
+                      )}
+                      {departmentsLoading && <p role="status" className="add-result-extra">正在加载学院…</p>}
                     </div>
                     <div className="add-field">
                       <Label htmlFor="grade-select">年级</Label>
@@ -612,6 +655,12 @@ export default function Add() {
                   </div>
                 )}
 
+                <Button type="button" variant="outline"
+                  disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
+                  onClick={() => { clearPendingSearch(); void runSearch({ sourceType, keyword, departmentId: selectedDepartment, grade: selectedGrade }) }}>
+                  搜索
+                </Button>
+                {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
                 {searching && (
                   <p className="add-searching" role="status">
                     搜索中…
@@ -647,7 +696,7 @@ export default function Add() {
                               success: '已订阅',
                               error: '失败，重试',
                             }}
-                            disabled={subscriptionsUnavailable || subs.atLimit}
+                            disabled={!creationAvailable || searching || subscriptionsUnavailable || subs.atLimit}
                             aria-label={`订阅${item.name}`}
                             onClick={() => void handleExternalSubscribe(item)}
                           />
@@ -657,7 +706,7 @@ export default function Add() {
                   </ul>
                 )}
 
-                {searched && !searching && searchResults.length === 0 && (
+                {searched && !searching && !errorMessage && searchResults.length === 0 && (
                   <p className="add-no-results">未找到结果</p>
                 )}
 

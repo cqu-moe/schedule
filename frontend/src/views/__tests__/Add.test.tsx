@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import Add, { externalSubscriptions } from '@/views/Add'
+import Add from '@/views/Add'
 import { mockSubscription, renderWithApp } from '@/test-utils'
 import type { DefaultSubscriptionsResponse } from '@/types/api'
 
@@ -30,19 +30,32 @@ vi.mock('@cqu-moe/ui', async (importOriginal) => ({
 }))
 
 async function enableExternal() {
-  externalSubscriptions.enabled = true
+  const sources = ['instructor', 'room', 'laboratory', 'course', 'admin_class']
+  mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: sources, create_types: sources } })
 }
 
 describe('Add view (React)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    externalSubscriptions.enabled = false
+    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: [], create_types: [] } })
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
     mockApi.getDepartments.mockResolvedValue({ departments: [] })
   })
 
-  afterEach(() => {
-    externalSubscriptions.enabled = false
+  it('uses server availability and shows the current term and truncated results', async () => {
+    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: ['admin_class'], create_types: [] } })
+    mockApi.searchExternal.mockResolvedValue({
+      session: { id: 'term-26', name: '2026秋' }, truncated: true,
+      results: [{ id: 'class-1', name: '电气测试班', extra: '2026级' }],
+    })
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索班级' }), '电气')
+    expect(await screen.findByText('当前学期：2026秋')).toBeInTheDocument()
+    expect(screen.getByText('结果可能不完整，请缩小搜索范围。')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '教师' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '订阅电气测试班' })).toBeDisabled()
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
   })
 
   it('renders personal subscription options', async () => {
@@ -203,6 +216,7 @@ describe('Add view (React)', () => {
     renderWithApp(<Add />, { routerEntries: ['/add'] })
     await user.type(await screen.findByPlaceholderText('输入教师姓名或工号'), '张三')
     expect(await screen.findByText('搜索失败')).toBeInTheDocument()
+    expect(screen.queryByText('未找到结果')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '重试搜索' }))
     expect(await screen.findByText('张三')).toBeInTheDocument()
   })
@@ -255,6 +269,8 @@ describe('Add view (React)', () => {
         }),
       )
     })
+    await user.click(screen.getByRole('button', { name: '清除学院筛选' }))
+    await waitFor(() => expect(mockApi.searchExternal).toHaveBeenLastCalledWith(expect.objectContaining({ department_id: undefined })))
   })
 
   it('shows the setup error with a working retry after ?setup=1 fails', async () => {
