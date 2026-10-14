@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import { env } from "cloudflare:test";
+import { env, applyD1Migrations } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { subscriptions } from "../db/schema";
@@ -25,6 +25,7 @@ const FULL_CAPS = {
 };
 
 beforeAll(async () => {
+  await applyD1Migrations(env.DB, env.TEST_MIGRATIONS.filter(migration => migration.name.startsWith("0020_")));
   await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_setup").run();
   await env.DB.prepare("DROP TABLE IF EXISTS calendar_links").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();

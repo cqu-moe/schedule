@@ -136,7 +136,7 @@ export default function ShareLinksDialog({
     shareLimit === null
       ? `共享链接 ${shareLinkCount} / 无限`
       : `共享链接 ${shareLinkCount} / ${shareLimit}`
-  const subscriptionUnavailable = subscription.source_version === 1 && subscription.external_state !== undefined && subscription.external_state !== 'active'
+  const subscriptionUnavailable = subscription.is_active === false || subscription.source_version === 1 && subscription.external_state !== undefined && subscription.external_state !== 'active'
   const linkUnavailable = (link: CalendarLink) => subscriptionUnavailable || link.is_active === false
   const shareFooterHint = subscriptionUnavailable
     ? '教学班已停用，全部公开链接暂不可用；日历客户端已下载的历史事件无法撤回。'

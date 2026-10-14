@@ -1,7 +1,7 @@
 import { checkExternalTerms, processExternalTermCheck } from "../services/external-term";
 import { processExternalSyncMessage } from "../services/external-sync";
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   subscriptions,
   calendarLinks,
@@ -149,7 +149,8 @@ async function markTerminalSuccess(
  * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
-  await Promise.all([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env)]);
+  const results = await Promise.allSettled([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env)]);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
 }
 
 async function enqueueRegularScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
@@ -224,7 +225,7 @@ async function enqueueRegularScheduleSync(env: Env, lifecycle?: ExecutionContext
     // the link stops serving (public 403 LINK_INACTIVE); re-granted → it resumes.
     // Default links are NOT touched — their gate is subscriptions.isActive above.
     // Same fail-safe as is_active: null caps (transient outage) skips to avoid
-    // flapping; the ne() guard makes already-matching rows a no-op.
+    // flapping. Read the current lifecycle again when writing link state.
     if (caps !== null) {
       await env.DB.prepare(`UPDATE calendar_links SET is_active=CASE WHEN EXISTS
         (SELECT 1 FROM subscriptions WHERE id=? AND (source_version<>1 OR external_state='active'))

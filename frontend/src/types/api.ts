@@ -44,6 +44,7 @@ export type CquBindStatus = 'pending' | 'active' | 'revoked' | 'deleting' | 'unb
 export type LinkFormat = 'ics' | 'origin_json' | 'data_json' | 'csv' | 'web'
 
 export interface CalendarLink {
+  is_active?: boolean
   id: string
   token: string
   label: string | null

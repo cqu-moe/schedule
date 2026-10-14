@@ -506,7 +506,7 @@ export default function Dashboard() {
   }
 
   function firstSyncLinkUnavailable(sub: Subscription): boolean {
-    return (sub.source_version === 1 && sub.external_state !== undefined && sub.external_state !== 'active') || (isFirstSyncCard(sub) && !sub.last_synced_at)
+    return sub.is_active === false || (sub.source_version === 1 && sub.external_state !== undefined && sub.external_state !== 'active') || (isFirstSyncCard(sub) && !sub.last_synced_at)
   }
 
   function refreshCooldownSeconds(sub: Subscription): number {

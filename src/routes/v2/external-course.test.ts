@@ -56,6 +56,9 @@ function harness() {
 
 async function runTermCheck(app: ReturnType<typeof harness>) {
   await enqueueScheduleSync(app.testEnv);
+  await consumeTermChecks(app);
+}
+async function consumeTermChecks(app: ReturnType<typeof harness>) {
   const messages = app.send.mock.calls.map(([body]) => body).filter(body => body.purpose === "external_term_check")
     .map(body => ({ body, attempts: 1, ack: vi.fn(), retry: vi.fn() }));
   await processScheduleSyncBatch({ queue: "schedule-sync", messages } as unknown as MessageBatch<any>, app.testEnv);
@@ -241,4 +244,20 @@ it("releases a failed term-check enqueue and retries after a bounded five-minute
   const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6 * 60_000);
   try { await enqueueScheduleSync(app.testEnv); expect(sendBatch).toHaveBeenCalledTimes(2); }
   finally { clock.mockRestore(); }
+});
+
+it("bounds each producer batch and eventually checks owners beyond its first batch", async () => {
+  const app = harness(); await app.create();
+  await env.DB.batch(Array.from({ length: 32 }, (_, index) => env.DB.prepare(`INSERT INTO subscriptions
+    (id,user_id,source_type,source_id,source_name,session_id,source_version,created_at,updated_at)
+    VALUES (?,?,'course','class','课程','current',1,datetime('now'),datetime('now'))`)
+    .bind(crypto.randomUUID(), `budget-${index}-${crypto.randomUUID()}`)));
+  const search = vi.fn().mockResolvedValue({ contractVersion: 1, sourceType: "department", session: { id: "next", name: "新学期" }, departments: [] });
+  app.testEnv.AUTH.cquExternalSearch = search;
+  await enqueueScheduleSync(app.testEnv);
+  expect(search).not.toHaveBeenCalled();
+  expect(app.send.mock.calls.filter(([body]) => body.purpose === "external_term_check")).toHaveLength(32);
+  await consumeTermChecks(app); expect(search).toHaveBeenCalledTimes(32);
+  await runTermCheck(app); expect(search).toHaveBeenCalledTimes(33);
+  expect(new Set(search.mock.calls.map(([args]: any) => args.userId)).size).toBe(33);
 });
