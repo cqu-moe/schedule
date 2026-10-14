@@ -18,6 +18,11 @@ import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
 import { reselectExternalCourse } from "../../services/external-reselection";
 import { createExternalSubscription } from "../../services/external-subscriptions";
+import {
+  ExternalManualRefreshCooldownError,
+  getExternalManualRemaining,
+  requestExternalManualSync,
+} from "../../services/external-manual-sync";
 import { externalUnavailableResponse } from "../../config/external-availability";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
@@ -222,12 +227,18 @@ app.get("/", async (c) => {
   }
 
   const setup = await getPersonalSetup(c.env.DB, user.id);
+  const manualRemaining = await getExternalManualRemaining(
+    c.env,
+    user.id,
+    c.get("caps").calendar,
+  );
   c.header("Cache-Control", "private, no-store");
   return c.json({
     subscriptions: serialized,
     count: serialized.length,
     quota_count: subs.filter(sub => sub.sourceVersion === 1).length,
     personal_setup: setup ? summarizePersonalSetup(setup) : null,
+    manual_remaining: manualRemaining,
   });
 });
 
@@ -552,6 +563,7 @@ app.post("/:sid/syncs", async (c) => {
     .select({
       id: subscriptions.id,
       sourceType: subscriptions.sourceType,
+      sourceVersion: subscriptions.sourceVersion,
       isActive: subscriptions.isActive,
       manualRefreshAt: subscriptions.manualRefreshAt,
     })
@@ -603,6 +615,26 @@ app.post("/:sid/syncs", async (c) => {
   // 已有数据保持冻结。个人订阅照常。放在 is_active 对账之后:被吊销 external 权益的
   // 外部订阅已被对账成 inactive、被重新授权的已对账成 active,然后才统一以"暂不可用"
   // 503 回应(不按权益区分响应,绝不暴露 WAF/瑞数细节)。
+  if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType) && sub.sourceVersion === 1) {
+    try {
+      const result = await requestExternalManualSync(
+        c.env,
+        user.id,
+        caps,
+        c.get("cquBindStatus"),
+        sid,
+        executionContext(c),
+      );
+      return c.json(result, 202);
+    } catch (error) {
+      if (error instanceof ExternalManualRefreshCooldownError) {
+        return manualRefreshCooldownResponse(error.manualRefreshAt, new Date());
+      }
+      if (error instanceof EntitlementError) return entitlementError(error);
+      throw error;
+    }
+  }
+
   if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
     const unavailable = externalUnavailableResponse();
     if (unavailable) return unavailable;
@@ -1149,6 +1181,7 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     session_name: sub.sessionName,
     semester_start: sub.semesterStart,
     is_personal: sub.isPersonal,
+    is_active: sub.isActive,
     last_synced_at: sub.lastSyncedAt,
     sync_status: sub.syncStatus,
     sync_run_id: sub.syncRunId,

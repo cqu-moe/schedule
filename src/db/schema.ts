@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, uniqueIndex, index, check, primaryKey } from "drizzle-orm/sqlite-core";
 
 // ── Subscriptions table ──────────────────────────────────────────────────────
 
@@ -104,6 +104,21 @@ export const subscriptions = sqliteTable(
       .where(sql`${table.sourceType} = 'personal'`),
     index("idx_subscriptions_user_id").on(table.userId), // Dedicated index for userId-only queries; composite uq_user_source_session also covers this prefix but with wider entries
   ],
+);
+
+export const externalManualRefreshUsage = sqliteTable(
+  "external_manual_refresh_usage",
+  {
+    userId: text("user_id").notNull(),
+    /** Asia/Shanghai calendar day in YYYY-MM-DD form. */
+    quotaDate: text("quota_date").notNull(),
+    usedCount: integer("used_count").notNull().default(0),
+    /** Scratch token used to correlate an atomic per-request reservation with its claim. */
+    lastRunId: text("last_run_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.quotaDate] })],
 );
 
 export const notificationState = sqliteTable("notification_state", {
@@ -259,6 +274,7 @@ export type NotificationState = typeof notificationState.$inferSelect;
 export type CalendarLink = typeof calendarLinks.$inferSelect;
 export type NewCalendarLink = typeof calendarLinks.$inferInsert;
 export type PersonalSubscriptionSetup = typeof personalSubscriptionSetup.$inferSelect;
+export type ExternalManualRefreshUsage = typeof externalManualRefreshUsage.$inferSelect;
 export type PersonalSubscriptionView = typeof personalSubscriptionViews.$inferSelect;
 export type NewPersonalSubscriptionView = typeof personalSubscriptionViews.$inferInsert;
 
