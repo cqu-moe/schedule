@@ -68,7 +68,9 @@ app.get("/search", async (c) => {
     departmentName = department.name;
   }
   const queryType = sourceType === "course" ? "course_catalog" : sourceType;
-  const result = await searchCurrentTerm(c.env, userId, { sourceType: queryType, keyword, departmentId, departmentName, grade });
+  const result = await searchCurrentTerm(c.env, userId, sourceType === "course"
+    ? { sourceType: "course_catalog", keyword }
+    : { sourceType: queryType, keyword, departmentId, departmentName, grade });
   if (result instanceof Response) return result;
   if (result.sourceType !== queryType) return errorResponse("EXTERNAL_INVALID_RESPONSE", "搜索结果暂不可用", 502);
   const selectionToken = await issueExternalSelection(c.env, userId, result).catch(() => null);
