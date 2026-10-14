@@ -137,6 +137,19 @@ export default {
     return response.data
   },
 
+  async reselectTeachingClass(sid: string, body: {
+    sourceType: string
+    sourceId: string
+    sourceName: string
+    selectionToken: string
+    sessionId: string
+  }): Promise<{ status: 'queued'; run_id: string; reused: boolean }> {
+    const response = await client.post<{ status: 'queued'; run_id: string; reused: boolean }>(
+      `/subscriptions/${encodeURIComponent(sid)}/target-selection`, body,
+    )
+    return response.data
+  },
+
   async deleteSubscription(sid: string): Promise<void> {
     await client.delete(`/subscriptions/${sid}`)
   },

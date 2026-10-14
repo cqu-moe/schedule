@@ -30,7 +30,7 @@ beforeAll(async () => {
   await env.DB.prepare("DROP TABLE IF EXISTS personal_subscription_views").run();
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
   await env.DB.prepare(`CREATE TABLE subscriptions (
-      source_course_id text, source_course_name text,
+      source_course_id text, source_course_name text, reselection_requested_at text,
       source_version integer NOT NULL DEFAULT 0,
       external_state text NOT NULL DEFAULT 'active',
       target_revision integer NOT NULL DEFAULT 0,

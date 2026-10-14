@@ -75,6 +75,7 @@ export interface Subscription {
   session_name: string | null
   semester_start: string | null
   is_personal: boolean
+  is_active: boolean
   last_synced_at: string | null
   sync_status: 'idle' | 'queued' | 'running' | 'success' | 'error'
   sync_run_id: string | null
@@ -95,6 +96,7 @@ export interface SyncQueuedResponse {
   run_id: string
   affected_subscription_ids: string[]
   cooldown_until: string
+  manual_remaining?: number | null
 }
 
 export type PersonalSetupDispatchStatus = 'pending' | 'sending' | 'sent' | 'failed'
@@ -117,6 +119,7 @@ export interface SubscriptionList {
   subscriptions: Subscription[]
   count: number
   personal_setup?: PersonalSetupSummary | null
+  manual_remaining?: number | null
 }
 
 // ── v2 search / department types ─────────────────────────────────────────────

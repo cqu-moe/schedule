@@ -57,6 +57,7 @@ export function mockSubscription(
     session_name: null,
     semester_start: '2025-09-01',
     is_personal: true,
+    is_active: true,
     last_synced_at: null,
     sync_status: 'idle',
     sync_run_id: null,

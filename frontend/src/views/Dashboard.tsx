@@ -111,13 +111,17 @@ function externalSyncIntervalLabel(caps: CalendarCaps | null): string {
   return `外部自动同步每 ${caps.external_sync_interval} 分钟`
 }
 
-function externalManualRefreshLabel(caps: CalendarCaps | null): string {
+function externalManualRefreshLabel(
+  caps: CalendarCaps | null,
+  remaining: number | null | undefined,
+): string {
   if (!caps) return '外部手动刷新状态未知'
   if (!caps.external) return '外部手动刷新需先开通外部订阅'
   if (caps.external_manual_refresh === undefined) return '外部手动刷新未授予'
   if (caps.external_manual_refresh === 0) return '外部手动刷新已关闭'
-  if (caps.external_manual_refresh === null) return '外部手动刷新无限'
-  return `外部手动刷新 ${caps.external_manual_refresh} 次/天`
+  if (remaining === undefined) return '外部手动刷新剩余未知'
+  if (remaining === null) return '外部手动刷新剩余无限'
+  return `外部手动刷新剩余 ${remaining} 次`
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -164,6 +168,7 @@ interface EnrichedSub {
 interface SubscriptionsData {
   subscriptions: Subscription[]
   personalSetup: PersonalSetupSummary | null
+  manualRemaining?: number | null
 }
 
 export default function Dashboard() {
@@ -192,6 +197,7 @@ export default function Dashboard() {
       const next: SubscriptionsData = {
         subscriptions: result.subscriptions,
         personalSetup: result.personal_setup ?? null,
+        manualRemaining: result.manual_remaining,
       }
       dataRef.current = next
       setData(next)
@@ -474,6 +480,8 @@ export default function Dashboard() {
   const atShareLimit = shareLimit !== null && shareLinkCount >= shareLimit
   const personalSubs = subscriptions.filter((s) => s.is_personal)
   const canManualRefresh = session.quota('manual_refresh') !== 0
+  const externalManualRemaining = data.manualRemaining
+  const externalManualGrant = session.caps?.external_manual_refresh
   const canChangeNotification = session.can('change_notification')
 
   const firstSyncTargetIds =
@@ -520,6 +528,35 @@ export default function Dashboard() {
     return () => window.clearInterval(timer)
   }, [hasActiveCooldown])
 
+  function isNewExternal(sub: Subscription): boolean {
+    return !sub.is_personal && sub.source_version === 1
+  }
+
+  function canRefreshSub(sub: Subscription): boolean {
+    if (sub.is_personal) return canManualRefresh
+    if (!isNewExternal(sub)) return false
+    return session.can('external') &&
+      externalManualGrant !== undefined &&
+      externalManualGrant !== 0 &&
+      sub.is_active &&
+      sub.external_state === 'active' &&
+      externalManualRemaining !== undefined &&
+      externalManualRemaining !== 0
+  }
+
+  function refreshIdleLabel(sub: Subscription): string {
+    if (refreshCooldownSeconds(sub) > 0) return cooldownLabel(refreshCooldownSeconds(sub))
+    if (sub.is_personal) return '同步'
+    if (!isNewExternal(sub)) return '暂不可用'
+    if (!session.can('external')) return '外部订阅未开通'
+    if (externalManualGrant === undefined) return '外部手动刷新未授予'
+    if (externalManualGrant === 0) return '外部手动刷新已关闭'
+    if (!sub.is_active || sub.external_state !== 'active') return '暂不可用'
+    if (externalManualRemaining === undefined) return '外部手动刷新剩余未知'
+    if (externalManualRemaining === 0) return '今日额度已用完'
+    return '同步'
+  }
+
   function isSubSyncing(sub: Subscription): boolean {
     return (
       sub.id in pendingRefreshRef.current ||
@@ -537,6 +574,7 @@ export default function Dashboard() {
   }
 
   function syncProgressLabel(sub: Subscription): string {
+    if (sub.external_state === 'reselecting') return '重新同步中…'
     if (isFirstSyncCard(sub)) return '首次同步中…'
     return sub.sync_status === 'queued' && Boolean(sub.sync_error_code)
       ? '同步遇到临时故障，正在自动重试…'
@@ -649,6 +687,11 @@ export default function Dashboard() {
           ? await api.refreshPersonalSubscription()
           : await api.refreshSubscription(sid)
         toast.success('已加入刷新队列')
+        if (isNewExternal(sub) && result.manual_remaining !== undefined) {
+          const next = { ...dataRef.current, manualRemaining: result.manual_remaining }
+          dataRef.current = next
+          setData(next)
+        }
         const affectedIds = result.affected_subscription_ids?.length
           ? result.affected_subscription_ids
           : [sid]
@@ -660,6 +703,7 @@ export default function Dashboard() {
       }, sid)
     } catch (error) {
       toast.error(parseApiError(error, '刷新失败'))
+      if (isNewExternal(sub)) await loadSubscriptions(true).catch(() => {})
     }
   }
 
@@ -890,7 +934,7 @@ export default function Dashboard() {
         </p>
         <p className="dash-sync-status">
           <span className="dash-status-dot" aria-hidden="true" />
-          {externalManualRefreshLabel(session.caps)}
+          {externalManualRefreshLabel(session.caps, externalManualRemaining)}
         </p>
         {atLimit && <p className="dash-limit-note">已达订阅上限</p>}
       </div>
@@ -970,8 +1014,9 @@ export default function Dashboard() {
                     {sub.session_name && (
                       <span className="dash-semester">{sub.session_name}</span>
                     )}
-                    {sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
-                    {sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
+                    {sub.external_state === 'reselecting' && <span className="dash-sync-meta">原链接地址保留，采集成功前保持停用</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
                       <span className="dash-sync-error">
                         {sub.external_state === 'expired' ? '教学班已过期' : '同步失败'}{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
@@ -988,7 +1033,7 @@ export default function Dashboard() {
                       sub.sync_status === 'success' &&
                       sub.last_synced_at ? (
                       <span className="dash-sync-meta">刚刚同步</span>
-                    ) : sub.last_synced_at ? (
+                    ) : sub.external_state === 'reselecting' ? null : sub.last_synced_at ? (
                       <span className="dash-sync-meta">
                         同步于 {formatDate(sub.last_synced_at)}
                       </span>
@@ -1039,17 +1084,25 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="dash-secondary-actions">
+                    {sub.user_id === session.user?.id && sub.source_version === 1 && sub.source_type === 'course'
+                      && !sub.is_personal && sub.sync_status !== 'queued' && sub.sync_status !== 'running'
+                      && !isSubSyncing(sub) && session.can('external') && session.cquBindStatus === 'active'
+                      && (sub.external_state === 'expired' || (sub.external_state === 'reselecting' && sub.sync_status === 'error')) && (
+                        <Button asChild variant="outline">
+                          <Link to={`/add?reselect=${encodeURIComponent(sub.id)}`} aria-label={`重新选择教学班：${sub.source_name}`}>
+                            重新选择教学班
+                          </Link>
+                        </Button>
+                      )}
                     <SyncActionButton
                       state={refreshButtonState(sub)}
                       labels={{
-                        idle: refreshCooldownSeconds(sub) > 0
-                          ? cooldownLabel(refreshCooldownSeconds(sub))
-                          : '同步',
+                        idle: refreshIdleLabel(sub),
                         loading: '同步中',
                         success: '已刷新',
                         error: isFirstSyncCard(sub) ? '重试同步' : '失败',
                       }}
-                      disabled={!canManualRefresh || isRefreshCoolingDown(sub) || (sub.source_version === 1 && sub.external_state !== 'active')}
+                      disabled={!canRefreshSub(sub) || isRefreshCoolingDown(sub)}
                       onClick={() => void handleRefreshSub(sub.id)}
                     />
                     {link && (
