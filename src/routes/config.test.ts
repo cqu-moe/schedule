@@ -53,7 +53,7 @@ describe("GET /config", () => {
 
 
 it("exposes only implemented and explicitly enabled external sources", async () => {
-  const response = await get("/config", { ...mockEnv, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class,instructor,room,student" });
-  expect(await response.json()).toMatchObject({ external: { search_types: ["admin_class", "instructor", "room"], create_types: ["admin_class", "instructor", "room"] } });
+  const response = await get("/config", { ...mockEnv, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class,instructor,room,laboratory,student" });
+  expect(await response.json()).toMatchObject({ external: { search_types: ["admin_class", "instructor", "room", "laboratory"], create_types: ["admin_class", "instructor", "room", "laboratory"] } });
   expect(await (await get("/config")).json()).toMatchObject({ external: { search_types: [], create_types: [] } });
 });

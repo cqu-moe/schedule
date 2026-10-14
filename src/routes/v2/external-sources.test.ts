@@ -13,7 +13,7 @@ import { processScheduleSyncBatch } from "../../cron/schedule-sync";
 beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS));
 beforeEach(() => resetPersonalData(env.DB));
 
-const sources = [{ type: "instructor", target: "teacher-b", name: "同名教师", extra: "学院乙 · T002", owner: { instructorIdList: ["teacher-b", "teacher-c"] } }, { type: "room", target: "room-b", name: "同名教室", extra: "虎溪 · 一教101", owner: { roomId: "room-b" } }] as const;
+const sources = [{ type: "instructor", target: "teacher-b", name: "同名教师", extra: "学院乙 · T002", owner: { instructorIdList: ["teacher-b", "teacher-c"] } }, { type: "room", target: "room-b", name: "同名教室", extra: "虎溪 · 一教101", owner: { roomId: "room-b" } }, { type: "laboratory", target: "lab-b", name: "实验室乙", extra: "虎溪 · 实验楼201", owner: { roomId: "lab-b", exprProjectName: "电路实验项目" } }] as const;
 
 describe.each(sources)("new $type source", ({ type, target, name, extra, owner }) => {
   function harness() {
@@ -58,7 +58,8 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     const app = harness(); const created = await app.create(); await app.consume();
     expect(app.capture).toHaveBeenCalledWith(expect.objectContaining({ sourceType: type, targetId: target, expectedSessionId: "current" }));
     const response = await app.request(`/calendar/${created.links[0].token}/calendar.ics`);
-    expect(response.status).toBe(200); expect(await response.text()).toContain("SUMMARY:目标课程");
+    expect(response.status).toBe(200); const body = await response.text(); expect(body).toContain("SUMMARY:目标课程");
+    if (type === "laboratory") expect(body).toContain("实验内容：电路实验项目");
     expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ source_type: type, source_id: target, import_quality: "complete", source_version: 1 });
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
   });
