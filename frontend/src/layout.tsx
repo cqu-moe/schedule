@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useMatches, useNavigation } from 'react-router'
 import {
   AppShell,
@@ -7,11 +7,25 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  ThemeMenu,
+  useTheme,
 } from '@cqu-moe/ui'
-import { BookOpen, CalendarDays, House, LogOut, Plus, UserRound } from 'lucide-react'
+import { normalizePreference } from '@cqu-moe/theme'
+import {
+  BookOpen,
+  CalendarDays,
+  House,
+  LogOut,
+  Monitor,
+  Moon,
+  Plus,
+  Sun,
+  UserRound,
+} from 'lucide-react'
 import { useSession } from '@/providers/app'
 import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
 import { captureSchedulePageview, syncPostHogReplay } from '@/lib/posthog'
@@ -57,6 +71,36 @@ function AccountMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
     </>
+  )
+}
+
+function AppearanceMenu() {
+  const { preference, setPreference } = useTheme()
+  const [open, setOpen] = useState(false)
+  const Icon = preference === 'system' ? Monitor : preference === 'dark' ? Moon : Sun
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label="外观设置">
+          <Icon aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>外观</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={preference}
+          onValueChange={(value) => {
+            setPreference(normalizePreference(value))
+            setOpen(false)
+          }}
+        >
+          <DropdownMenuRadioItem value="light">浅色</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">深色</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">跟随系统</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -106,7 +150,7 @@ export default function Layout() {
   )
   const utilities = (
     <>
-      <ThemeMenu />
+      <AppearanceMenu />
       <AccountMenu />
     </>
   )
