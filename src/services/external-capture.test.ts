@@ -148,7 +148,7 @@ describe("buildExternalCaptureResult", () => {
       expect(error.message, name).not.toContain("secretField");
     }
 
-    expect(captureError(payload, { sourceType: "room", sourceId: "SYNTH-ADMIN-001" }).code)
+    expect(captureError(payload, { sourceType: "student" as never, sourceId: "SYNTH-ADMIN-001" }).code)
       .toBe("UNSUPPORTED_SOURCE_TYPE");
   });
 
@@ -302,4 +302,10 @@ describe("buildExternalCaptureResult", () => {
       expect(captureError(value).code, name).toBe("INVALID_CAPTURE_PAYLOAD");
     }
   });
+  it.each([-1, 1.5, "3", null, 100001])("rejects malformed completeness counts %s", (count) => {
+    const invalid = structuredClone(payload);
+    (invalid.timetable as Record<string, unknown>).unverifiedItemCount = count;
+    expect(captureError(invalid).code).toBe("INVALID_CAPTURE_PAYLOAD");
+  });
+
 });

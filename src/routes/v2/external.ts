@@ -32,7 +32,7 @@ app.get("/search", async (c) => {
   const denied = authorize(c);
   if (denied) return denied;
   const sourceType = c.req.query("source_type");
-  if ((sourceType !== "admin_class" && sourceType !== "instructor") || !externalAvailability(c.env).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
+  if ((sourceType !== "admin_class" && sourceType !== "instructor" && sourceType !== "room") || !externalAvailability(c.env).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
   if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
   const keyword = (c.req.query("keyword") ?? "").trim();
   const departmentId = c.req.query("department_id") ?? "";

@@ -13,7 +13,7 @@ import { processScheduleSyncBatch } from "../../cron/schedule-sync";
 beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS));
 beforeEach(() => resetPersonalData(env.DB));
 
-const sources = [{ type: "instructor", target: "teacher-b", name: "同名教师", extra: "学院乙 · T002", owner: { instructorIdList: ["teacher-b", "teacher-c"] } }] as const;
+const sources = [{ type: "instructor", target: "teacher-b", name: "同名教师", extra: "学院乙 · T002", owner: { instructorIdList: ["teacher-b", "teacher-c"] } }, { type: "room", target: "room-b", name: "同名教室", extra: "虎溪 · 一教101", owner: { roomId: "room-b" } }] as const;
 
 describe.each(sources)("new $type source", ({ type, target, name, extra, owner }) => {
   function harness() {
@@ -33,7 +33,11 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     const app = new Hono<SessionEnv>();
     app.use("/search/*", businessIdentity); app.use("/subscriptions/*", businessIdentity);
     app.route("/search", external); app.route("/subscriptions", subscriptions); app.route("/calendar", calendar);
-    const request = (path: string, init?: RequestInit) => app.request(path, init, testEnv);
+    const request = (path: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("CF-Connecting-IP", `2001:db8:${userId.slice(0, 4)}:${userId.slice(4, 8)}::1`);
+      return app.request(path, { ...init, headers }, testEnv);
+    };
     async function create() {
       const found = await request(`/search/search?source_type=${type}&keyword=同名`);
       expect(found.status).toBe(200);
@@ -67,6 +71,14 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ sync_status: "success", import_quality: "empty", source_id: target });
     const calendar = await app.request(`/calendar/${created.links[0].token}/calendar.ics`);
     expect(calendar.status).toBe(200); expect(await calendar.text()).not.toContain("BEGIN:VEVENT");
+  });
+
+  it("reports unverified extra activities instead of claiming an empty complete calendar", async () => {
+    const app = harness(); const created = await app.create();
+    app.capture.mockResolvedValue({ contractVersion: 1, sourceType: type, target: { id: target, name }, session: { id: "current", name: "当前学期", beginDate: "2026-09-07" },
+      timetable: { maxSection: 12, classTimetableVOList: [], unverifiedItemCount: 3 } });
+    await app.consume();
+    expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ sync_status: "success", import_quality: "partial", skipped_count: 3 });
   });
 
   it("fails the whole capture if a row belongs to another target", async () => {
