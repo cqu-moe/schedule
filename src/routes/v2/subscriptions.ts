@@ -16,6 +16,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
+import { reselectExternalCourse } from "../../services/external-reselection";
 import { createExternalSubscription } from "../../services/external-subscriptions";
 import { externalUnavailableResponse } from "../../config/external-availability";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
@@ -358,6 +359,15 @@ app.get("/:sid", async (c) => {
     ...(view ? serializePersonalView(sub, view) : serializeSubscription(sub)),
     links: links.map(toLinkSummary),
   });
+});
+
+app.post("/:sid/target-selection", async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return errorResponse("INVALID_INPUT", "无效的 JSON 请求体", 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("INVALID_INPUT", "请求体必须为对象", 400);
+  try {
+    return c.json(await reselectExternalCourse(c.env, c.get("user").id, c.req.param("sid"), c.get("caps").calendar, c.get("cquBindStatus"), body, executionContext(c)), 202);
+  } catch (error) { return entitlementError(error); }
 });
 
 // ── POST / — create a subscription + its default (all-format) link ───────────
