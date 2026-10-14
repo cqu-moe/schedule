@@ -972,8 +972,8 @@ export default function Dashboard() {
                       <span className="dash-semester">{sub.session_name}</span>
                     )}
                     {sub.external_state === 'reselecting' && <span className="dash-sync-meta">原链接地址保留，采集成功前保持停用</span>}
-                    {sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
-                    {sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
+                    {sub.external_state !== 'reselecting' && sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
                       <span className="dash-sync-error">
                         同步失败{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
@@ -990,7 +990,7 @@ export default function Dashboard() {
                       sub.sync_status === 'success' &&
                       sub.last_synced_at ? (
                       <span className="dash-sync-meta">刚刚同步</span>
-                    ) : sub.last_synced_at ? (
+                    ) : sub.external_state === 'reselecting' ? null : sub.last_synced_at ? (
                       <span className="dash-sync-meta">
                         同步于 {formatDate(sub.last_synced_at)}
                       </span>

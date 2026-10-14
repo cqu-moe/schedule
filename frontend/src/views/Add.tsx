@@ -637,7 +637,7 @@ export default function Add() {
               </div>
             ) : (
               <div className="add-card">
-                {reselectMode && <p className="add-hint">失败后可重新选择，提交须通过服务器的 5 分钟冷却校验。</p>}
+                {reselectMode && <p className="add-hint">重选失败后，可在上次提交5分钟后重试。</p>}
                 {!reselectMode && <Tabs value={sourceType} onValueChange={handleTypeChange}>
                   <TabsList className="add-source-tabs" aria-label="来源类型">
                     {availability.search_types.map((type) => (
