@@ -126,6 +126,7 @@ export default {
   async createSubscription(body: {
     sourceType: string
     sourceId?: string
+    selectionToken?: string
     sourceName: string
     sessionId?: string
     sessionName?: string

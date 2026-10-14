@@ -53,13 +53,13 @@ function parseResult(value: unknown, sourceType: ExternalSearchArgs["sourceType"
 }
 function searchError(code: unknown): Response {
   switch (code) {
-    case "TGT_EXPIRED": case "NO_CQU_BINDING": case "CQU_SESSION_INACTIVE": case "needs_reauth": case "NEEDS_REAUTH":
+    case "TGT_EXPIRED": case "SESSION_INACTIVE": case "NO_CQU_BINDING": case "CQU_SESSION_INACTIVE": case "needs_reauth": case "NEEDS_REAUTH":
       return errorResponse("CQU_SESSION_INACTIVE", "重庆大学统一认证登录状态已失效，请重新绑定", 409);
     case "FORBIDDEN":
       return errorResponse("FEATURE_NOT_ENABLED", "外部订阅功能未开通", 403);
     case "PAGE_PERMISSION_DENIED": case "SOURCE_FORBIDDEN": case "SEARCH_FORBIDDEN":
       return errorResponse("EXTERNAL_TARGET_FORBIDDEN", "当前账号无权查看该目标", 403);
-    case "BUSY": case "BROWSER_BUSY": case "SESSION_BUSY":
+    case "BUSY": case "BROWSER_BUSY": case "SESSION_BUSY": case "RATE_LIMITED":
       return errorResponse("EXTERNAL_BUSY", "学校会话正在处理其他请求，请稍后重试", 503);
     case "SCHEMA_INVALID":
       return errorResponse("EXTERNAL_INVALID_RESPONSE", "学校返回的数据暂时无法识别，请稍后重试", 502);

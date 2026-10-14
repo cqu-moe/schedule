@@ -3,6 +3,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
 import { externalAvailability } from "../../config/external-availability";
 import { findDepartment, searchExternal } from "../../services/external-search";
+import { issueExternalSelection } from "../../services/external-target";
 import { errorResponse } from "../../utils/error";
 
 const app = new Hono<SessionEnv>();
@@ -52,7 +53,9 @@ app.get("/search", async (c) => {
   const result = await searchExternal(c.env, userId, { sourceType, keyword, departmentId, departmentName, grade });
   if (result instanceof Response) return result;
   if (result.sourceType !== "admin_class") return errorResponse("EXTERNAL_INVALID_RESPONSE", "搜索结果暂不可用", 502);
-  return c.json({ session: result.session, results: result.items, truncated: result.truncated });
+  const selectionToken = await issueExternalSelection(c.env, userId, result).catch(() => null);
+  if (!selectionToken) return errorResponse("EXTERNAL_UNAVAILABLE", "暂时无法保存搜索结果，请稍后重试", 503);
+  return c.json({ session: result.session, results: result.items, truncated: result.truncated, selection_token: selectionToken });
 });
 
 app.get("/departments", async (c) => {

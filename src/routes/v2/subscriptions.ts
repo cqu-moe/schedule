@@ -16,6 +16,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, assertQuota, EntitlementError } from "../../middleware/entitlements";
 import { resolveQuota } from "../../services/auth-rpc";
 import { errorResponse } from "../../utils/error";
+import { createExternalSubscription } from "../../services/external-subscriptions";
 import { externalUnavailableResponse } from "../../config/external-availability";
 import { generateUniqueToken, linkTokenExists } from "../../utils/token";
 import { parseFormats, buildCalendarUrl } from "../../services/links";
@@ -224,6 +225,7 @@ app.get("/", async (c) => {
   return c.json({
     subscriptions: serialized,
     count: serialized.length,
+    quota_count: subs.filter(sub => sub.sourceVersion === 1).length,
     personal_setup: setup ? summarizePersonalSetup(setup) : null,
   });
 });
@@ -419,214 +421,11 @@ app.post("/", async (c) => {
     return errorResponse("INVALID_INPUT", "semesterStart 长度不能超过 10", 400);
   }
 
-  const sourceTypeTyped = sourceType as SourceType;
-  const isExternal = EXTERNAL_SOURCE_TYPES.has(sourceTypeTyped);
-
-  const sessionId =
-    typeof body.sessionId === "string" && body.sessionId.length > 0
-      ? body.sessionId
-      : null;
-  const sessionName =
-    typeof body.sessionName === "string" && body.sessionName.length > 0
-      ? body.sessionName
-      : null;
-  const semesterStart =
-    typeof body.semesterStart === "string" && body.semesterStart.length > 0
-      ? body.semesterStart
-      : null;
-  // is_personal is DERIVED from the validated sourceType — never trusted from the
-  // client. Sync/entitlement classify by sourceType, and the frontend relies on
-  // is_personal for dedup/grouping/Sync All, so a client-supplied value (e.g.
-  // instructor + isPersonal:true) would misclassify the subscription.
-  const isPersonal = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped);
-
-  // ── Personal-subscription identity binding (security invariant) ───────────
-  //  For personal source types, the personal schedule is fetched against the
-  //  AUTHENTICATED bearer's own 学号 at sync time (see schedule-sync consumer);
-  //  the stored sourceId never reaches the CQU API. We therefore IGNORE any
-  //  client-supplied sourceId and pin it to the trusted auth `user.id` so it is
-  //  a stable per-user identifier (uniqueness/ICS UID namespace) that cannot be
-  //  abused to reference another student. External types keep the client
-  //  sourceId — those are public timetables and the target id is meant to vary.
-  //  (For external types the validation above guarantees a non-empty string;
-  //  personal types pin to user.id so the client sourceId is never read.)
-  const effectiveSourceId = PERSONAL_SOURCE_TYPES.has(sourceTypeTyped)
-    ? user.id
-    : (sourceId as string);
-
-  // ── Entitlement gating ────────────────────────────────────────────────────
   try {
-    if (isExternal) {
-      // 外部课表软禁用(可逆):瑞数化后无法 harvest,拒绝新增外部订阅。在配额/写库
-      // 之前短路,不暴露 WAF。个人订阅不受影响。
-      const unavailable = externalUnavailableResponse();
-      if (unavailable) return unavailable;
-      assertFlag(caps, "external", "外部订阅");
-    } else {
-      assertFlag(caps, "sync", "日历同步");
-    }
-
-    // best-effort 配额：count-then-insert 存在 TOCTOU，并发下可能 +1 超配；无 DB 层兜底（软业务限制，可接受）
-    const [countRow] = await db
-      .select({ cnt: sql<number>`count(*)` })
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, user.id));
-    assertQuota(caps, "sub_limit", countRow?.cnt ?? 0, "订阅数量");
-  } catch (e) {
-    return entitlementError(e);
-  }
-
-  // ── Duplicate check (uq_user_source_session) ──────────────────────────────
-  const dupConds = [
-    eq(subscriptions.userId, user.id),
-    eq(subscriptions.sourceType, sourceTypeTyped),
-    eq(subscriptions.sourceId, effectiveSourceId),
-    sessionId === null
-      ? sql`${subscriptions.sessionId} is null`
-      : eq(subscriptions.sessionId, sessionId),
-  ];
-  const [dup] = await db
-    .select({ id: subscriptions.id })
-    .from(subscriptions)
-    .where(and(...dupConds))
-    .limit(1);
-  if (dup) {
-    return errorResponse("ALREADY_EXISTS", "该订阅已存在", 409);
-  }
-
-  // ── Create subscription + default link atomically (D1 batch) ──────────────
-  const subId = crypto.randomUUID();
-  const token = await generateUniqueToken((t) => linkTokenExists(db, t));
-  const linkId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const initialRunId = crypto.randomUUID();
-  const formatsJson = JSON.stringify([...LINK_FORMATS]);
-
-  try {
-    await db.batch([
-      db.insert(subscriptions).values({
-        id: subId,
-        userId: user.id,
-        sourceType: sourceTypeTyped,
-        sourceId: effectiveSourceId,
-        sourceName,
-        sessionId,
-        sessionName,
-        semesterStart,
-        isPersonal,
-        isActive: true,
-        syncStatus: "queued",
-        syncRunId: initialRunId,
-        syncTrigger: "initial",
-        syncRequestedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      }),
-      db.insert(calendarLinks).values({
-        id: linkId,
-        subscriptionId: subId,
-        token,
-        formats: formatsJson,
-        isDefault: true,
-        createdAt: now,
-        updatedAt: now,
-      }),
-    ]);
-  } catch (e) {
-    // Unique-constraint races still land here even after the pre-check above.
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/unique|constraint/i.test(msg)) {
-      return errorResponse("ALREADY_EXISTS", "该订阅已存在", 409);
-    }
-    throw e;
-  }
-
-  // Kick off an initial sync so the new subscription's links serve real data
-  // promptly instead of EMPTY_ICS until the next cron run. Best-effort: the row
-  // is already committed, and the cron will pick it up (lastSyncedAt is null →
-  // due) if this enqueue fails.
-  try {
-    await c.env.SCHEDULE_SYNC_QUEUE.send({
-      subscriptionId: subId,
-      userId: user.id,
-      trigger: "initial",
-      runId: initialRunId,
-    } satisfies ScheduleSyncMessage);
-    captureScheduleSyncStarted(c.env, executionContext(c), {
-      userId: user.id,
-      subscriptionId: subId,
-      runId: initialRunId,
-      trigger: "initial",
-    });
-  } catch (e) {
-    const won = await markSyncError(db, subId, initialRunId, {
-      code: "QUEUE_UNAVAILABLE",
-      message: "同步服务暂时不可用，请稍后重试",
-    });
-    if (won) {
-      captureScheduleSyncTerminal(c.env, executionContext(c), {
-        userId: user.id,
-        subscriptionId: subId,
-        runId: initialRunId,
-        trigger: "initial",
-        requestedAt: Date.parse(now),
-      }, "failure", "QUEUE_UNAVAILABLE");
-    }
-    console.warn(JSON.stringify({
-      event: "subscription.v2.initial_sync_enqueue_failed",
-      subscriptionId: subId,
-      error: e instanceof Error ? e.message : String(e),
-      message: "Failed to enqueue initial sync; cron will sync later",
-    }));
-  }
-
-  console.log(
-    JSON.stringify({
-      event: "subscription.v2.create",
-      userId: user.id,
-      subscriptionId: subId,
-      sourceType: sourceTypeTyped,
-      isExternal,
-      message: "Subscription created with default link",
-    }),
-  );
-
-  return c.json(
-    {
-      id: subId,
-      user_id: user.id,
-      source_type: sourceTypeTyped,
-      source_id: effectiveSourceId,
-      source_name: sourceName,
-      session_id: sessionId,
-      session_name: sessionName,
-      semester_start: semesterStart,
-      is_personal: isPersonal,
-      last_synced_at: null,
-      sync_status: "queued",
-      sync_run_id: initialRunId,
-      sync_trigger: "initial",
-      sync_requested_at: now,
-      sync_started_at: null,
-      sync_finished_at: null,
-      sync_error_code: null,
-      sync_error_message: null,
-      created_at: now,
-      updated_at: now,
-      links: [
-        toLinkSummary({
-          id: linkId,
-          token,
-          label: null,
-          formats: formatsJson,
-          isDefault: true,
-          isActive: true,
-        }),
-      ],
-    },
-    201,
-    { Location: `/api/v2/subscriptions/${subId}` },
-  );
+    const created = await createExternalSubscription(c.env, user.id, caps, c.get("cquBindStatus"), body, executionContext(c));
+    return c.json({ ...serializeSubscription(created.subscription), links: [toLinkSummary(created.link)] }, 201,
+      { Location: `/api/v2/subscriptions/${created.subscription.id}` });
+  } catch (error) { return entitlementError(error); }
 });
 
 // ── DELETE /:sid — delete a subscription (FK cascade removes its links) ──────
@@ -1330,6 +1129,10 @@ function serializeSubscription(sub: typeof subscriptions.$inferSelect) {
     id: sub.id,
     user_id: sub.userId,
     source_type: sub.sourceType,
+    source_version: sub.sourceVersion,
+    external_state: sub.externalState,
+    import_quality: sub.importQuality,
+    skipped_count: sub.skippedCount,
     source_id: sub.sourceId,
     source_name: sub.sourceName,
     session_id: sub.sessionId,

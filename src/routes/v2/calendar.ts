@@ -44,6 +44,9 @@ interface ResolvedLink {
   semesterStart: string | null;
   sessionName: string | null;
   sourceType: string;
+  sourceVersion: number;
+  externalState: string;
+  lastSyncedAt: string | null;
   sourceId: string;
   personalViewType: PersonalViewType | null;
 }
@@ -69,6 +72,9 @@ async function resolveLink(
       semesterStart: subscriptions.semesterStart,
       sessionName: subscriptions.sessionName,
       sourceType: subscriptions.sourceType,
+      sourceVersion: subscriptions.sourceVersion,
+      externalState: subscriptions.externalState,
+      lastSyncedAt: subscriptions.lastSyncedAt,
       sourceId: subscriptions.sourceId,
       personalViewType: calendarLinks.personalViewType,
     })
@@ -97,6 +103,10 @@ async function resolveLinkOr404(
   // serving; their gate is the subscription isActive check above.
   if (!link.isDefault && !link.linkIsActive) {
     return errorResponse("LINK_INACTIVE", "该链接已停用", 403);
+  }
+  if (link.sourceVersion === 1) {
+    if (link.externalState !== "active") return errorResponse("SUBSCRIPTION_INACTIVE", "该订阅已停用，请主人重新选择教学班", 403);
+    if (!link.lastSyncedAt) return errorResponse("INITIAL_SYNC_PENDING", "首次同步尚未完成，请稍后重试", 503);
   }
   const view = link.sourceType === "personal" ? link.personalViewType : null;
   if (link.sourceType === "personal" && !view) {

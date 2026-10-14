@@ -43,6 +43,7 @@ export function useSubscriptions(): SubscriptionsState {
   }, [])
 
   const count = subscriptions.length
+  const creationCount = subscriptions.filter(sub => sub.source_version === 1).length
   const subLimit = quota('sub_limit')
   const shareLimit = quota('share_limit')
   const shareLinkCount = subscriptions.reduce(
@@ -54,7 +55,7 @@ export function useSubscriptions(): SubscriptionsState {
     subscriptions,
     personalSetup,
     count,
-    atLimit: subLimit !== null && count >= subLimit,
+    atLimit: subLimit !== null && creationCount >= subLimit,
     shareLinkCount,
     atShareLimit: shareLimit !== null && shareLinkCount >= shareLimit,
     load,

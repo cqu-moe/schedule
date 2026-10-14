@@ -113,6 +113,11 @@ export interface GetCapsArgs {
 
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
+  cquExternalCapture?(args: {
+    clientId: string; clientSecret: string; userId: string;
+    sourceType: import("../db/schema").ExternalSourceType;
+    targetId: string; targetName: string; expectedSessionId?: string; courseId?: string; deadlineAt?: number;
+  }): Promise<unknown>;
   cquExternalSearch?(args: import("./external-search").ExternalSearchArgs): Promise<import("./external-search").ExternalSearchResult | { error: string }>;
   /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
    * authenticate through the application session and native OAuth introspection. */

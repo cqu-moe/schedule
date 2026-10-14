@@ -112,7 +112,7 @@ describe('Add view (React)', () => {
 
   it('disables subscribe buttons and explains the limit when at sub_limit', async () => {
     const fiveSubs = Array.from({ length: 5 }, (_, i) =>
-      mockSubscription({ id: `sub-${i}`, source_type: 'course', source_id: `c${i}`, is_personal: false }),
+      mockSubscription({ id: `sub-${i}`, source_type: 'course', source_version: 1, source_id: `c${i}`, is_personal: false }),
     )
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: fiveSubs, count: 5 })
     renderWithApp(
@@ -151,6 +151,7 @@ describe('Add view (React)', () => {
   it('searches, renders results and creates an external subscription with sourceId', async () => {
     await enableExternal()
     mockApi.searchExternal.mockResolvedValue({
+      session: { id: 'term-26', name: '2026秋' }, selection_token: 'selection-1', truncated: false,
       results: [{ id: 'teacher-1', name: '张三', extra: '计算机学院' }],
     })
     mockApi.createSubscription.mockResolvedValue({ id: 'ext-new' })
@@ -170,6 +171,8 @@ describe('Add view (React)', () => {
         sourceType: 'instructor',
         sourceId: 'teacher-1',
         sourceName: '张三',
+        selectionToken: 'selection-1',
+        sessionId: 'term-26',
       }),
     )
     expect(mockToast.success).toHaveBeenCalledWith('已订阅「张三」')
@@ -189,11 +192,12 @@ describe('Add view (React)', () => {
     await enableExternal()
     mockApi.getSubscriptions.mockResolvedValue({
       subscriptions: [
-        mockSubscription({ source_type: 'instructor', source_id: 'teacher-1', is_personal: false }),
+        mockSubscription({ source_type: 'instructor', source_version: 1, source_id: 'teacher-1', is_personal: false }),
       ],
       count: 1,
     })
     mockApi.searchExternal.mockResolvedValue({
+      session: { id: 'term-26', name: '2026秋' }, selection_token: 'selection-1', truncated: false,
       results: [{ id: 'teacher-1', name: '张三', extra: '' }],
     })
     const user = userEvent.setup()
@@ -210,7 +214,8 @@ describe('Add view (React)', () => {
       response: { data: { detail: { error: { code: 'UPSTREAM_ERROR', message: '搜索失败' } } } },
       })
       .mockResolvedValueOnce({
-        results: [{ id: 'teacher-1', name: '张三', extra: '计算机学院' }],
+        session: { id: 'term-26', name: '2026秋' }, selection_token: 'selection-1', truncated: false,
+      results: [{ id: 'teacher-1', name: '张三', extra: '计算机学院' }],
       })
     const user = userEvent.setup()
     renderWithApp(<Add />, { routerEntries: ['/add'] })
@@ -223,7 +228,7 @@ describe('Add view (React)', () => {
 
   it('discards an in-flight search when the source type changes', async () => {
     await enableExternal()
-    let resolveInstructor!: (result: { results: { id: string; name: string; extra: string }[] }) => void
+    let resolveInstructor!: (result: unknown) => void
     mockApi.searchExternal.mockImplementationOnce(
       () => new Promise((resolve) => { resolveInstructor = resolve }),
     )
@@ -233,7 +238,8 @@ describe('Add view (React)', () => {
     await waitFor(() => expect(mockApi.searchExternal).toHaveBeenCalledTimes(1))
     await user.click(screen.getByRole('tab', { name: '教室' }))
     await act(async () => {
-      resolveInstructor({ results: [{ id: 'teacher-1', name: '旧教师结果', extra: '' }] })
+      resolveInstructor({ session: { id: 'term-26', name: '2026秋' }, selection_token: 'selection-1', truncated: false,
+      results: [{ id: 'teacher-1', name: '旧教师结果', extra: '' }] })
     })
     expect(screen.queryByText('旧教师结果')).not.toBeInTheDocument()
     expect(screen.queryByRole('status', { name: '搜索中…' })).not.toBeInTheDocument()
@@ -313,8 +319,8 @@ describe('Add view (React)', () => {
       status: 'existing', subscription_ids: ['sub-1'], run_id: null, dispatch_status: 'none',
     }))
     expect(await screen.findByRole('button', { name: '已订阅' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '订阅我的课程' })).toBeDisabled()
-    expect(screen.getByText('已达订阅上限，请先删除不需要的订阅')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '订阅我的课程' })).toBeEnabled()
+    expect(screen.queryByText('已达订阅上限，请先删除不需要的订阅')).not.toBeInTheDocument()
   })
 
   it('recovers with retry when reloadSession rejects', async () => {

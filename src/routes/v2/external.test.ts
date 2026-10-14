@@ -112,6 +112,7 @@ describe("current semester external search", () => {
     const response = await app.request("/search?source_type=admin_class&keyword=电气");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
+      selection_token: expect.any(String),
       session: { id: "term-26", name: "2026秋" },
       results: [{ id: "class-1", name: "电气测试班", extra: "电气学院 · 2026级" }], truncated: true,
     });
@@ -195,6 +196,8 @@ describe("external search admission and cache", () => {
   it.each([
     ["CQU_SESSION_INACTIVE", 409, "CQU_SESSION_INACTIVE"],
     ["TGT_EXPIRED", 409, "CQU_SESSION_INACTIVE"],
+    ["SESSION_INACTIVE", 409, "CQU_SESSION_INACTIVE"],
+    ["RATE_LIMITED", 503, "EXTERNAL_BUSY"],
     ["PAGE_PERMISSION_DENIED", 403, "EXTERNAL_TARGET_FORBIDDEN"],
     ["BROWSER_BUSY", 503, "EXTERNAL_BUSY"],
     ["SOURCE_FORBIDDEN", 403, "EXTERNAL_TARGET_FORBIDDEN"],
