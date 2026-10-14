@@ -41,8 +41,8 @@ export type ExternalSourceType = "instructor" | "room" | "laboratory" | "course"
 /** New-version capabilities are independent from the permanently retired legacy path. */
 export function externalAvailability(env: { EXTERNAL_SUBSCRIPTION_TYPES?: string }) {
   const configured = new Set((env.EXTERNAL_SUBSCRIPTION_TYPES ?? "").split(",").map(s => s.trim()));
-  const search: ExternalSourceType[] = ["admin_class", "instructor"];
-  const create: ExternalSourceType[] = ["admin_class", "instructor"];
+  const search: ExternalSourceType[] = ["admin_class", "instructor", "room"];
+  const create: ExternalSourceType[] = ["admin_class", "instructor", "room"];
   return {
     search_types: search.filter(type => configured.has(type)),
     create_types: create.filter(type => configured.has(type)),

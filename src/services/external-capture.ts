@@ -189,13 +189,22 @@ function buildExternalCoursesIcs(
   return calendars[0] ?? generateCoursesIcs([], semesterStart, baseNamespace);
 }
 
+function ownsExternalRow(row: Record<string, unknown>, sourceId: string, sourceType: ExternalSourceType): boolean {
+  switch (sourceType) {
+    case "admin_class": return ownsAdminClassRow(row, sourceId);
+    case "instructor": return Array.isArray(row.instructorIdList) && row.instructorIdList.includes(sourceId);
+    case "room": return row.roomId === sourceId;
+    default: return false;
+  }
+}
+
 function parseExternalRow(
   row: unknown,
   sourceId: string,
   maxSection: number,
   sourceType: ExternalSourceType,
 ): CourseEntry[] {
-  if (!isPlainObject(row) || !(sourceType === "admin_class" ? ownsAdminClassRow(row, sourceId) : Array.isArray(row.instructorIdList) && row.instructorIdList.includes(sourceId))) {
+  if (!isPlainObject(row) || !ownsExternalRow(row, sourceId, sourceType)) {
     throw new ExternalCaptureError(
       "TARGET_MISMATCH",
       "The external capture target does not own every timetable row.",
@@ -248,7 +257,7 @@ export function buildExternalCaptureResult(
   payload: unknown,
   expected: ExpectedSource,
 ): ExternalCaptureResult {
-  if (expected.sourceType !== "admin_class" && expected.sourceType !== "instructor") {
+  if (expected.sourceType !== "admin_class" && expected.sourceType !== "instructor" && expected.sourceType !== "room") {
     throw new ExternalCaptureError(
       "UNSUPPORTED_SOURCE_TYPE",
       "This external source type is not supported yet.",
@@ -320,7 +329,11 @@ export function buildExternalCaptureResult(
 
   const courses: CourseEntry[] = [];
   const seen = new Set<string>();
-  let skippedCount = 0;
+  const unverifiedItemCount = timetable.unverifiedItemCount === undefined ? 0 : timetable.unverifiedItemCount;
+  if (typeof unverifiedItemCount !== "number" || !Number.isSafeInteger(unverifiedItemCount) || unverifiedItemCount < 0 || unverifiedItemCount > 100_000) {
+    throw new ExternalCaptureError("INVALID_CAPTURE_PAYLOAD", "The external capture completeness information is invalid.");
+  }
+  let skippedCount = unverifiedItemCount;
 
   for (const row of rows) {
     const parsed = parseExternalRow(row, sourceId, maxSection, expected.sourceType);
@@ -336,7 +349,7 @@ export function buildExternalCaptureResult(
     }
   }
 
-  const quality: ExternalCaptureQuality = rows.length === 0
+  const quality: ExternalCaptureQuality = rows.length === 0 && skippedCount === 0
     ? "empty"
     : courses.length > 0 && skippedCount === 0
       ? "complete"
