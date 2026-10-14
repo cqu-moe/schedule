@@ -400,3 +400,17 @@ describe("new external manual refresh quota", () => {
       WHERE user_id=? AND quota_date='2026-09-06'`).bind(userId).first()).toEqual({ used_count: 1 });
   });
 });
+
+it("pilot gate denies refresh without quota spending or queueing and admits the owner", async () => {
+  const userId = "fixture-manual-pilot", sid = await seedExternalSubscription(userId, "pilot");
+  const app = makeApp(userId); app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = "fixture-other";
+  const denied = await app.request(`/subscriptions/${sid}/syncs`);
+  expect(denied.status).toBe(503);
+  expect(await denied.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_UNAVAILABLE" } } });
+  expect(app.send).not.toHaveBeenCalled();
+  expect(await env.DB.prepare("SELECT used_count FROM external_manual_refresh_usage WHERE user_id=?").bind(userId).first()).toBeNull();
+  expect(await env.DB.prepare("SELECT sync_status,manual_refresh_at FROM subscriptions WHERE id=?").bind(sid).first()).toEqual({ sync_status: "success", manual_refresh_at: null });
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ` ${userId} `;
+  expect((await app.request(`/subscriptions/${sid}/syncs`)).status).toBe(202);
+  expect(app.send).toHaveBeenCalledOnce();
+});

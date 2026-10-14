@@ -341,3 +341,30 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     expect(batch.map((message) => message.delaySeconds)).toEqual([0, 300, 600]);
   });
 });
+
+it("pilot gate selects only listed external owners while reconciling non-pilots and syncing personal rows", async () => {
+  const caps = { ...FULL_CAPS, external_sync_interval: 15 };
+  const fixtureCaps = {
+    "fixture-cron-pilot": caps,
+    "fixture-cron-outsider": caps,
+    "fixture-cron-revoked": { ...caps, external: false, share: false },
+  };
+  for (const [userId, calendar] of Object.entries(fixtureCaps)) {
+    await env.CACHE.put(`caps:${userId}`, JSON.stringify(calendar));
+    await insertSub({ id: userId, userId, sourceType: "admin_class", sourceVersion: 1, sourceId: userId, isPersonal: false });
+  }
+  await insertSub({ id: "fixture-personal", userId: "fixture-cron-outsider", sourceType: "personal_all" });
+  const now = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO calendar_links(id,subscription_id,token,formats,is_default,is_active,created_at,updated_at)
+    VALUES('fixture-revoked-share','fixture-cron-revoked','fixture-share-token','["ics"]',0,1,?,?)`).bind(now, now).run();
+  const sendBatch = vi.fn().mockResolvedValue(undefined);
+  const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: " fixture-cron-pilot ",
+    SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+  await enqueueScheduleSync(testEnv);
+  expect(sendBatch.mock.calls.flatMap(([messages]) => messages.map((m: { body: ScheduleSyncMessage }) => m.body.subscriptionId)).sort())
+    .toEqual(["fixture-cron-pilot", "fixture-personal"]);
+  expect(await env.DB.prepare("SELECT is_active FROM subscriptions WHERE id='fixture-cron-revoked'").first()).toEqual({ is_active: 0 });
+  expect(await env.DB.prepare("SELECT is_active FROM calendar_links WHERE id='fixture-revoked-share'").first()).toEqual({ is_active: 0 });
+  expect(await env.DB.prepare("SELECT is_active,sync_status,sync_run_id FROM subscriptions WHERE id='fixture-cron-outsider'").first())
+    .toEqual({ is_active: 1, sync_status: "idle", sync_run_id: null });
+});

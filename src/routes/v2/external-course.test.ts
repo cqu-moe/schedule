@@ -358,3 +358,17 @@ it("fences a term-change error reconciliation against a newer target selected du
     external_state: "reselecting", session_id: "new-selected", sync_run_id: "new-run", sync_status: "queued",
   });
 });
+
+it("pilot gate leaves term-expiry safety running for an excluded owner", async () => {
+  const app = harness(), sub = await app.create(); await app.consume();
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = "   ";
+  app.capture.mockClear(); app.send.mockClear();
+  app.testEnv.AUTH.cquExternalSearch = vi.fn().mockResolvedValue({ contractVersion: 1, sourceType: "department",
+    session: { id: "next", name: "下学期" }, departments: [] });
+  await runTermCheck(app);
+  expect(app.capture).not.toHaveBeenCalled();
+  expect(app.testEnv.AUTH.cquExternalSearch).toHaveBeenCalledOnce();
+  expect(await env.DB.prepare("SELECT external_state,is_active FROM subscriptions WHERE id=?").bind(sub.id).first())
+    .toEqual({ external_state: "expired", is_active: 0 });
+  expect(await env.DB.prepare("SELECT is_active FROM calendar_links WHERE subscription_id=?").bind(sub.id).first()).toEqual({ is_active: 0 });
+});

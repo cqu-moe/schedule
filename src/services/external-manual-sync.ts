@@ -106,7 +106,7 @@ function assertExternalManualAdmission(
   sub: ExternalManualSubscription,
 ): void {
   if (
-    !externalAvailability(env).create_types.includes(sub.source_type) ||
+    !externalAvailability(env, sub.user_id).create_types.includes(sub.source_type) ||
     !env.AUTH.cquExternalCapture
   ) {
     throw new EntitlementError("EXTERNAL_UNAVAILABLE", 503, "外部订阅功能暂不可用");

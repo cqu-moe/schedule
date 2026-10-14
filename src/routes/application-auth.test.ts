@@ -12,6 +12,33 @@ const identity = { user: { id: "alice", name: "Alice", email: "alice@example.com
 const cookie = (r: Response) => r.headers.get("set-cookie")!.split(";")[0];
 
 describe("Schedule browser session", () => {
+  it("separates public cached config from authenticated pilot availability", async () => {
+    const provider = await oauthProvider(identity);
+    const types = ["admin_class", "instructor", "room", "laboratory", "course"];
+    const testEnv = { ...env, AUTH_ORIGIN: provider.origin, PUBLIC_URL: "https://schedule.test",
+      CALENDAR_CLIENT_ID: "calendar", CALENDAR_CLIENT_SECRET: "test-secret",
+      EXTERNAL_SUBSCRIPTION_TYPES: types.join(","), EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: " alice,fixture-other " } as Env;
+    expect((await app.request("/api/v2/me", {}, testEnv)).status).toBe(401);
+    const start = await app.request("/api/v2/auth/login", {}, testEnv);
+    const finish = await app.request(provider.authorize(start.headers.get("location")!).href, { headers: { cookie: cookie(start) } }, testEnv);
+    const headers = { cookie: cookie(finish) };
+    const pilot = await app.request("/api/v2/me", { headers }, testEnv);
+    expect(pilot.status).toBe(200);
+    expect(pilot.headers.get("Cache-Control")).toContain("no-store");
+    expect(await pilot.json()).toMatchObject({ external: { search_types: types, create_types: types } });
+    for (const pilots of ["fixture-other", "", "   "]) {
+      const denied = await app.request("/api/v2/me", { headers }, { ...testEnv, EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: pilots });
+      expect(denied.status).toBe(200);
+      expect(denied.headers.get("Cache-Control")).toContain("no-store");
+      expect(await denied.json()).toMatchObject({ external: { search_types: [], create_types: [] } });
+    }
+    for (const authHeaders of [{}, headers]) {
+      const publicConfig = await app.request("/api/v2/config", { headers: authHeaders }, testEnv);
+      expect(publicConfig.headers.get("Cache-Control")).toBe("public, max-age=300");
+      expect(await publicConfig.json()).toEqual({ public_url: testEnv.PUBLIC_URL, external: { search_types: [], create_types: [] } });
+    }
+  });
+
   it("accepts old and explicit external entitlement fields but rejects an invalid interval contract", async () => {
     const external = {
       external_sync_interval: 0,

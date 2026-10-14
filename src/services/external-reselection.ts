@@ -22,7 +22,7 @@ export async function reselectExternalCourse(env: Env, userId: string, id: strin
   assertFlag(caps, "external", "外部订阅");
   if (binding === undefined) throw new EntitlementError("CQU_BINDING_STATUS_UNKNOWN", 503, "暂时无法确认学校绑定状态");
   if (binding !== "active") throw new EntitlementError("CQU_SESSION_INACTIVE", 409, "请先绑定有效的重庆大学统一认证账号");
-  if (!externalAvailability(env).create_types.includes("course") || !env.AUTH.cquExternalCapture) throw new EntitlementError("EXTERNAL_UNAVAILABLE", 503, "教学班订阅暂不可用");
+  if (!externalAvailability(env, userId).create_types.includes("course") || !env.AUTH.cquExternalCapture) throw new EntitlementError("EXTERNAL_UNAVAILABLE", 503, "教学班订阅暂不可用");
   const selection = await resolveExternalSelection(env, userId, body);
   if (selection.sourceType !== "course" || !selection.course) throw new EntitlementError("INVALID_INPUT", 400, "请选择当前学期教学班");
   if (sub.externalState === "reselecting" && ["queued", "running"].includes(sub.syncStatus)) {

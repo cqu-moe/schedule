@@ -69,8 +69,9 @@ describe("new external subscription first capture", () => {
     expect(await publicResponse.json()).toMatchObject({ detail: { error: { code: "INITIAL_SYNC_PENDING" } } });
   });
 
-  it("publishes a validated first capture and ignores repeated queue delivery", async () => {
+  it("publishes a validated first capture for a pilot and ignores repeated queue delivery", async () => {
     const app = makeApp();
+    app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ` ${app.userId} `;
     await app.select();
     const created = await (await app.create()).json<any>();
     app.capture.mockResolvedValue({ contractVersion: 1, sourceType: "admin_class", target: TARGET,
@@ -395,4 +396,45 @@ it("follows the current term for the same administrative class only after an aut
   await consume(app.send.mock.calls[1][0]);
   expect(app.capture.mock.lastCall?.[0]).not.toHaveProperty("expectedSessionId");
   expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ source_id: TARGET.id, session_id: "new-current", sync_status: "success" });
+});
+
+it("pilot gate checks valid creation receipts before writing and admits the listed user", async () => {
+  const app = makeApp("fixture-create-pilot"); await app.select();
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = "fixture-other";
+  const denied = await app.create();
+  expect(denied.status).toBe(503);
+  expect(await denied.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_UNAVAILABLE" } } });
+  expect(await env.DB.prepare("SELECT count(*) AS count FROM subscriptions WHERE user_id=?").bind(app.userId).first()).toEqual({ count: 0 });
+  expect(app.send).not.toHaveBeenCalled();
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ` ${app.userId} `;
+  expect((await app.create()).status).toBe(201);
+  expect(app.send).toHaveBeenCalledOnce();
+});
+
+it.each(["initial", "manual", "cron"] as const)("pilot gate stops an already queued %s capture and still reconciles sharing", async trigger => {
+  const app = makeApp("fixture-consumer-pilot", { ...CAPS, external_sync_interval: 15 });
+  await app.select(); const created = await (await app.create()).json<any>();
+  const now = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO calendar_links(id,subscription_id,token,formats,is_default,is_active,created_at,updated_at)
+    VALUES('fixture-share',?,'fixture-share-token','["ics"]',0,1,?,?)`).bind(created.id, now, now).run();
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = "fixture-other";
+  vi.mocked(app.testEnv.AUTH.getCaps!).mockResolvedValue({ calendar: { ...CAPS, share: false, external_sync_interval: 15 } });
+  app.capture.mockResolvedValue(successfulCapture());
+  const message = await consume(app, { trigger });
+  expect(app.capture).not.toHaveBeenCalled();
+  expect(message.ack).toHaveBeenCalledOnce(); expect(message.retry).not.toHaveBeenCalled();
+  expect(await env.DB.prepare("SELECT sync_status,sync_error_code,last_synced_at FROM subscriptions WHERE id=?").bind(created.id).first())
+    .toEqual({ sync_status: "error", sync_error_code: "EXTERNAL_UNAVAILABLE", last_synced_at: null });
+  expect(await env.DB.prepare("SELECT is_active FROM calendar_links WHERE id='fixture-share'").first()).toEqual({ is_active: 0 });
+});
+
+it("pilot gate rechecks membership after capture before publishing", async () => {
+  const app = makeApp("fixture-midflight-pilot");
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = app.userId;
+  await app.select(); const created = await (await app.create()).json<any>();
+  app.capture.mockImplementation(async () => { app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ""; return successfulCapture(); });
+  await consume(app);
+  expect(app.capture).toHaveBeenCalledOnce();
+  expect(await env.DB.prepare("SELECT sync_error_code,last_synced_at FROM subscriptions WHERE id=?").bind(created.id).first())
+    .toEqual({ sync_error_code: "EXTERNAL_UNAVAILABLE", last_synced_at: null });
 });

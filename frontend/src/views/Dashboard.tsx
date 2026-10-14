@@ -45,6 +45,7 @@ import { captureScheduleEvent } from '@/lib/posthog'
 import { useSession } from '@/providers/app'
 import type {
   CalendarLink,
+  ExternalSourceType,
   CalendarCaps,
   PersonalSetupSummary,
   SourceType,
@@ -537,6 +538,7 @@ export default function Dashboard() {
     if (sub.is_personal) return canManualRefresh
     if (!isNewExternal(sub)) return false
     return session.can('external') &&
+      session.externalAvailability.create_types.includes(sub.source_type as ExternalSourceType) &&
       externalManualGrant !== undefined &&
       externalManualGrant !== 0 &&
       sub.is_active &&
@@ -550,6 +552,7 @@ export default function Dashboard() {
     if (sub.is_personal) return '同步'
     if (!isNewExternal(sub)) return '暂不可用'
     if (!session.can('external')) return '外部订阅未开通'
+    if (!session.externalAvailability.create_types.includes(sub.source_type as ExternalSourceType)) return '暂不可用'
     if (externalManualGrant === undefined) return '外部手动刷新未授予'
     if (externalManualGrant === 0) return '外部手动刷新已关闭'
     if (!sub.is_active || sub.external_state !== 'active') return '暂不可用'
@@ -1101,6 +1104,7 @@ export default function Dashboard() {
                     {sub.user_id === session.user?.id && sub.source_version === 1 && sub.source_type === 'course'
                       && !sub.is_personal && sub.sync_status !== 'queued' && sub.sync_status !== 'running'
                       && !isSubSyncing(sub) && session.can('external') && session.cquBindStatus === 'active'
+                      && session.externalAvailability.create_types.includes('course')
                       && (sub.external_state === 'expired' || (sub.external_state === 'reselecting' && sub.sync_status === 'error')) && (
                         <Button asChild variant="outline">
                           <Link to={`/add?reselect=${encodeURIComponent(sub.id)}`} aria-label={`重新选择教学班：${sub.source_name}`}>

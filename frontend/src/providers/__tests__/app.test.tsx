@@ -25,6 +25,7 @@ function Probe() {
     <div>
       <span data-testid="public-url">{app.publicUrl}</span>
       <span data-testid="authenticated">{String(app.isAuthenticated)}</span>
+      <span data-testid="external-types">{app.externalAvailability?.create_types.join(",")}</span>
       <span data-testid="can-sync">{String(app.can('sync'))}</span>
       <span data-testid="quota-sub">{app.quota('sub_limit') ?? 'null'}</span>
       <button onClick={() => void app.reloadSession().catch(() => {})}>reload</button>
@@ -103,5 +104,15 @@ describe('AppProvider session and config', () => {
     button.click()
     expect(mockApi.getMe).toHaveBeenCalledTimes(1)
   })
-})
 
+  it('pilot availability comes only from me and clears on session failure', async () => {
+    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: ['room'], create_types: ['room'] } })
+    mockApi.getMe.mockResolvedValue({ ...mockMeResponse(), external: { search_types: ['course'], create_types: ['course'] } })
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId('external-types')).toHaveTextContent('course'))
+    mockApi.getMe.mockRejectedValueOnce(new Error('401'))
+    screen.getByText('reload').click()
+    await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
+    expect(screen.getByTestId('external-types')).toBeEmptyDOMElement()
+  });
+})

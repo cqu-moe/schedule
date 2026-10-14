@@ -165,7 +165,7 @@ export default function Add() {
   const loadExternalConfig = useCallback(async () => {
     setConfigStatus('loading')
     try {
-      const config = await api.getConfig()
+      const config = await api.getMe()
       const supported = Object.keys(SOURCE_LABELS) as ExternalSourceType[]
       const search_types = supported.filter(type => config.external?.search_types?.includes(type))
       const create_types = search_types.filter(type => config.external?.create_types?.includes(type))

@@ -57,3 +57,12 @@ it("exposes only implemented and explicitly enabled external sources", async () 
   expect(await response.json()).toMatchObject({ external: { search_types: ["admin_class", "instructor", "room", "laboratory"], create_types: ["admin_class", "instructor", "room", "laboratory"] } });
   expect(await (await get("/config")).json()).toMatchObject({ external: { search_types: [], create_types: [] } });
 });
+
+it.each(["", "   ", "fixture-pilot"])("public config hides pilot types and IDs for %j even with a cookie", async pilots => {
+  const response = await configApp.request("/config", { headers: { cookie: "session=fixture-pilot" } }, {
+    ...mockEnv, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class,instructor,room,laboratory,course",
+    EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: pilots,
+  });
+  expect(response.headers.get("Cache-Control")).toBe("public, max-age=300");
+  expect(await response.json()).toEqual({ public_url: mockEnv.PUBLIC_URL, external: { search_types: [], create_types: [] } });
+});

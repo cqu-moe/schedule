@@ -681,4 +681,15 @@ describe('Dashboard view (v2)', () => {
     expect(toggle).toBeEnabled()
     expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
+
+  it('pilot gate disables external refresh and hides reselection for an excluded user', async () => {
+    const active = mockSubscription({ id: 'fixture-active', source_name: '试点行政班', source_type: 'admin_class', source_version: 1,
+      is_personal: false, external_state: 'active', last_synced_at: '2026-09-01T00:00:00Z' })
+    const expired = mockSubscription({ id: 'fixture-expired', source_name: '过期教学班', source_type: 'course', source_version: 1,
+      is_personal: false, external_state: 'expired', is_active: false })
+    await mountDashboard([active, expired], { session: { externalAvailability: { search_types: [], create_types: [] } } })
+    expect(screen.queryByRole('link', { name: '重新选择教学班：过期教学班' })).not.toBeInTheDocument()
+    for (const button of screen.getAllByRole('button', { name: '暂不可用' })) expect(button).toBeDisabled()
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+  });
 })

@@ -68,7 +68,7 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
         .where(and(eq(subscriptions.id, sub.id), eq(subscriptions.userId, sub.userId)));
       await fail("FEATURE_NOT_ENABLED"); return false;
     }
-    if (!externalAvailability(env).create_types.includes(sub.sourceType as ExternalSourceType)) { await fail("EXTERNAL_UNAVAILABLE"); return false; }
+    if (!externalAvailability(env, sub.userId).create_types.includes(sub.sourceType as ExternalSourceType)) { await fail("EXTERNAL_UNAVAILABLE"); return false; }
     if (message.body.trigger === "cron" && externalAutomaticInterval(caps) === null) { await fail("EXTERNAL_AUTO_DISABLED"); return false; }
     return true;
   }

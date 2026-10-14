@@ -238,7 +238,7 @@ async function enqueueRegularScheduleSync(env: Env, lifecycle?: ExecutionContext
       // Legacy external rows remain frozen. New v1 rows use their independent
       // automatic interval and the external capture consumer; neither ever falls
       // back to the personal interval or harvest provider.
-      if (sub.sourceVersion !== 1 || sub.externalState !== "active" || !externalAvailability(env).create_types.some(type => type === sub.sourceType)) continue;
+      if (sub.sourceVersion !== 1 || sub.externalState !== "active" || !externalAvailability(env, sub.userId).create_types.some(type => type === sub.sourceType)) continue;
       if (!entitled) continue;
       const automaticInterval = externalAutomaticInterval(caps);
       if (automaticInterval === null) continue;

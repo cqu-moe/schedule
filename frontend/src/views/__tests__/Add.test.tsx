@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Add from '@/views/Add'
-import { useLocation } from 'react-router'
-import { mockSubscription, renderWithApp } from '@/test-utils'
+import { AppProvider } from '@/providers/app'
+import { MemoryRouter, useLocation } from 'react-router'
+import { mockMeResponse, mockSubscription, renderWithApp } from '@/test-utils'
 import type { DefaultSubscriptionsResponse } from '@/types/api'
 
 const { mockApi, mockRedirect, mockToast } = vi.hoisted(() => ({
@@ -39,13 +40,13 @@ function ReselectionLocation() {
 
 async function enableExternal() {
   const sources = ['instructor', 'room', 'laboratory', 'course', 'admin_class']
-  mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: sources, create_types: sources } })
+  mockApi.getMe.mockResolvedValue({ public_url: '', external: { search_types: sources, create_types: sources } })
 }
 
 describe('Add view (React)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: [], create_types: [] } })
+    mockApi.getMe.mockResolvedValue({ public_url: '', external: { search_types: [], create_types: [] } })
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
     mockApi.getDepartments.mockResolvedValue({ departments: [] })
   })
@@ -69,7 +70,7 @@ describe('Add view (React)', () => {
   })
 
   it('uses server availability and shows the current term and truncated results', async () => {
-    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: ['admin_class'], create_types: [] } })
+    mockApi.getMe.mockResolvedValue({ public_url: '', external: { search_types: ['admin_class'], create_types: [] } })
     mockApi.searchExternal.mockResolvedValue({
       session: { id: 'term-26', name: '2026秋' }, truncated: true,
       results: [{ id: 'class-1', name: '电气测试班', extra: '2026级' }],
@@ -85,7 +86,7 @@ describe('Add view (React)', () => {
   })
 
   it('selects a course before selecting and subscribing to its teaching class', async () => {
-    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
+    mockApi.getMe.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
     mockApi.searchExternal.mockResolvedValue({ stage: 'courses', session: { id: 'current', name: '当前学期' }, selection_token: 'catalog-token', truncated: false,
       results: [{ id: 'catalog-1', name: '大学物理', extra: 'PHYS1001' }] })
     mockApi.searchTeachingClasses.mockResolvedValue({ stage: 'classes', course: { id: 'catalog-1', name: '大学物理' }, session: { id: 'current', name: '当前学期' }, selection_token: 'class-token', truncated: false,
@@ -107,7 +108,7 @@ describe('Add view (React)', () => {
   })
 
   it('retains keyboard focus through teaching-class loading, failure, retry and success', async () => {
-    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
+    mockApi.getMe.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
     mockApi.searchExternal.mockResolvedValue({ session: { id: 'term', name: '当前学期' }, selection_token: 'catalog',
       results: [{ id: 'course', name: '大学物理' }] })
     let rejectLookup!: (error: unknown) => void
@@ -140,7 +141,7 @@ describe('Add view (React)', () => {
       id: 'original', source_type: 'course', source_version: 1, is_personal: false,
       external_state: 'expired',
     })], count: 1 })
-    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['instructor', 'course'], create_types: [] } })
+    mockApi.getMe.mockResolvedValue({ external: { search_types: ['instructor', 'course'], create_types: [] } })
     mockApi.searchExternal.mockResolvedValue({ selection_token: 'catalog', session: { id: 'term', name: '当前学期' }, results: [{ id: 'course', name: '物理' }] })
     mockApi.searchTeachingClasses.mockResolvedValue({ selection_token: 'receipt', session: { id: 'term', name: '当前学期' }, results: [{ id: 'class', name: '物理01班' }] })
     mockApi.reselectTeachingClass.mockResolvedValue({ status: 'queued', run_id: 'run', reused: false })
@@ -495,4 +496,19 @@ describe('Add view (React)', () => {
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(await screen.findByRole('button', { name: '已订阅' })).toBeDisabled()
   })
+
+  it('pilot UI searches and creates using authenticated availability while public config is closed', async () => {
+    mockApi.getConfig.mockResolvedValue({ public_url: '', external: { search_types: [], create_types: [] } })
+    mockApi.getMe.mockResolvedValue({ ...mockMeResponse(), cquBindStatus: 'active',
+      external: { search_types: ['instructor'], create_types: ['instructor'] } })
+    mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
+    mockApi.searchExternal.mockResolvedValue({ session: { id: 'term', name: '当前学期' }, selection_token: 'fixture-selection', truncated: false,
+      results: [{ id: 'fixture-teacher', name: '试点教师', extra: '' }] })
+    mockApi.createSubscription.mockResolvedValue({ id: 'fixture-sub' })
+    const user = userEvent.setup()
+    render(<AppProvider><MemoryRouter initialEntries={['/add']}><Add /></MemoryRouter></AppProvider>)
+    await user.type(await screen.findByRole('searchbox', { name: '搜索教师' }), '试点{Enter}')
+    await user.click(await screen.findByRole('button', { name: '订阅试点教师' }))
+    expect(mockApi.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ sourceType: 'instructor', sourceId: 'fixture-teacher', selectionToken: 'fixture-selection' }))
+  });
 })

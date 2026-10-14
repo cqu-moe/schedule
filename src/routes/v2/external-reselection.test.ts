@@ -50,7 +50,7 @@ function harness() {
   async function consume(index = send.mock.calls.length - 1) {
     await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body: send.mock.calls[index][0], attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, testEnv);
   }
-  return { request, search, capture, send, catalog, classes, create, consume, userId, term, course, row, caps };
+  return { request, search, capture, send, catalog, classes, create, consume, userId, term, course, row, caps, testEnv };
 }
 
 
@@ -156,4 +156,22 @@ it("never recreates a deleted subscription from an in-flight result", async () =
   await app.consume();
   expect((await app.request(`/calendar/${sub.links[0].token}/calendar.ics`)).status).toBe(404);
   expect(await env.DB.prepare("SELECT count(*) AS count FROM calendar_links WHERE subscription_id=?").bind(sub.id).first()).toEqual({count:0});
+});
+
+it("pilot gate denies reselection with a valid receipt without changing the expired target", async () => {
+  const app = harness(), sub = await expired(app), found = await app.classes();
+  const submit = () => app.request(`/subscriptions/${sub.id}/target-selection`, { method: "POST", body: JSON.stringify({
+    sourceType: "course", sourceId: "class-02", sessionId: app.term.id, selectionToken: found.selection_token,
+  }) });
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = "fixture-other";
+  const denied = await submit(); expect(denied.status).toBe(503);
+  expect(await denied.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_UNAVAILABLE" } } });
+  expect(app.send).not.toHaveBeenCalled();
+  expect(await env.DB.prepare("SELECT external_state,session_id,target_revision FROM subscriptions WHERE id=?").bind(sub.id).first())
+    .toEqual({ external_state: "expired", session_id: "current", target_revision: 1 });
+  app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ` ${app.userId} `;
+  expect((await submit()).status).toBe(202);
+  await app.consume();
+  expect(await env.DB.prepare("SELECT external_state,sync_status,session_id FROM subscriptions WHERE id=?").bind(sub.id).first())
+    .toEqual({ external_state: "active", sync_status: "success", session_id: "next" });
 });
