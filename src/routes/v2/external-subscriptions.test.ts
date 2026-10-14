@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyD1Migrations, env } from "cloudflare:test";
+import { applyD1Migrations, createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { businessIdentity } from "../../test-utils/business-identity";
 import type { SessionEnv } from "../../middleware/session";
@@ -10,6 +10,8 @@ import external from "./external";
 import subscriptions from "./subscriptions";
 import calendar from "./calendar";
 import { processScheduleSyncBatch } from "../../cron/schedule-sync";
+import type { ScheduleSyncMessage } from "../../cron/schedule-sync";
+import worker from "../../index";
 
 const CAPS: CalendarCaps = { sync: true, external: true, share: true, change_notification: false,
   sub_limit: 1, share_limit: 5, sync_interval: 60, manual_refresh: 5 };
@@ -86,6 +88,92 @@ describe("new external subscription first capture", () => {
     expect(app.capture).toHaveBeenCalledOnce();
     const owner = await (await app.request(`/subscriptions/${created.id}`)).json<any>();
     expect(owner).toMatchObject({ sync_status: "success", import_quality: "complete", skipped_count: 0 });
+    expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a due external subscription through the real cron and queue entrypoints", async () => {
+    const app = makeApp("cron-user", { ...CAPS, external_sync_interval: 15 });
+    let calendarReads = 0;
+    const readCalendar = (token: string) => {
+      calendarReads += 1;
+      return app.request(`/calendar/${token}/calendar.ics`, {
+        headers: { "CF-Connecting-IP": `203.0.113.${calendarReads}` },
+      });
+    };
+    await app.select();
+    const created = await (await app.create()).json<any>();
+    app.capture.mockResolvedValue(successfulCapture());
+    const initialBody = app.send.mock.calls[0][0];
+    const initialMessage = { body: initialBody, attempts: 1, ack: vi.fn(), retry: vi.fn() };
+    const initialContext = createExecutionContext();
+    await worker.queue(
+      { queue: "schedule-sync", messages: [initialMessage] } as unknown as MessageBatch<any>,
+      app.testEnv,
+      initialContext,
+    );
+    await waitOnExecutionContext(initialContext);
+    expect(await (await readCalendar(created.links[0].token)).text())
+      .toContain("SUMMARY:电路基础");
+
+    await env.DB.prepare("UPDATE subscriptions SET last_synced_at=? WHERE id=?")
+      .bind(new Date(Date.now() - 16 * 60_000).toISOString(), created.id)
+      .run();
+    app.capture.mockResolvedValue(successfulCapture([{
+      courseName: "自动更新课程", instructorName: "测试教师", roomName: "DS1002", weekDay: 2,
+      teachingWeek: "11", period: "11000000000000", assignTeachingObject: [{ adminClassId: TARGET.id }],
+    }]));
+    let cronMessages: Array<{ body: ScheduleSyncMessage; delaySeconds: number }> = [];
+    const sendBatch = vi.fn(async (messages: Array<{ body: ScheduleSyncMessage }>) => {
+      cronMessages = messages;
+    });
+    app.testEnv.SCHEDULE_SYNC_QUEUE = { send: app.send, sendBatch } as unknown as Env["SCHEDULE_SYNC_QUEUE"];
+    const firstContext = createExecutionContext();
+    const secondContext = createExecutionContext();
+    await Promise.all([
+      worker.scheduled({ cron: "*/15 * * * *" } as ScheduledController, app.testEnv, firstContext),
+      worker.scheduled({ cron: "*/15 * * * *" } as ScheduledController, app.testEnv, secondContext),
+    ]);
+    await waitOnExecutionContext(firstContext);
+    await waitOnExecutionContext(secondContext);
+
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    expect(cronMessages).toHaveLength(1);
+    expect(cronMessages[0]).toEqual({
+      body: {
+        subscriptionId: created.id,
+        userId: "cron-user",
+        sourceVersion: 1,
+        targetRevision: 0,
+        trigger: "cron",
+        runId: expect.any(String),
+      },
+      delaySeconds: 0,
+    });
+    const cronMessage = {
+      body: cronMessages[0].body,
+      attempts: 1,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const cronContext = createExecutionContext();
+    await worker.queue(
+      { queue: "schedule-sync", messages: [cronMessage] } as unknown as MessageBatch<any>,
+      app.testEnv,
+      cronContext,
+    );
+    await waitOnExecutionContext(cronContext);
+
+    const calendar = await (await readCalendar(created.links[0].token)).text();
+    expect(calendar).toContain("SUMMARY:自动更新课程");
+    expect(calendar).not.toContain("SUMMARY:电路基础");
+    expect(await env.DB.prepare(
+      "SELECT sync_trigger,manual_refresh_at,sync_error_code FROM subscriptions WHERE id=?",
+    ).bind(created.id).first()).toEqual({
+      sync_trigger: "cron",
+      manual_refresh_at: null,
+      sync_error_code: null,
+    });
+    expect(cronMessage.ack).toHaveBeenCalledOnce();
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
   });
 
