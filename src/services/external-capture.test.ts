@@ -148,7 +148,7 @@ describe("buildExternalCaptureResult", () => {
       expect(error.message, name).not.toContain("secretField");
     }
 
-    expect(captureError(payload, { sourceType: "room", sourceId: "SYNTH-ADMIN-001" }).code)
+    expect(captureError(payload, { sourceType: "student" as never, sourceId: "SYNTH-ADMIN-001" }).code)
       .toBe("UNSUPPORTED_SOURCE_TYPE");
   });
 
@@ -203,6 +203,25 @@ describe("buildExternalCaptureResult", () => {
       expect(captured.skippedCount).toBe(1);
       expect(captured.courses).toEqual([]);
     }
+  });
+
+  it("skips an owned row whose active period exceeds the captured maxSection", () => {
+    const boundedPayload = structuredClone(payload);
+    const rows = boundedPayload.timetable.classTimetableVOList;
+    rows.push({
+      ...structuredClone(rows[0]),
+      courseName: "Synthetic Course Beyond Bound",
+      period: "0".repeat(13) + "1",
+    });
+
+    const captured = buildExternalCaptureResult(boundedPayload, {
+      sourceType: "admin_class",
+      sourceId: "SYNTH-ADMIN-001",
+    });
+
+    expect(captured.quality).toBe("partial");
+    expect(captured.skippedCount).toBe(1);
+    expect(captured.courses.map((course) => course.name)).toEqual(["Synthetic Course A"]);
   });
 
   it("splits noncontiguous periods, preserves experiments, and deduplicates exact rows", () => {
@@ -283,4 +302,10 @@ describe("buildExternalCaptureResult", () => {
       expect(captureError(value).code, name).toBe("INVALID_CAPTURE_PAYLOAD");
     }
   });
+  it.each([-1, 1.5, "3", null, 100001])("rejects malformed completeness counts %s", (count) => {
+    const invalid = structuredClone(payload);
+    (invalid.timetable as Record<string, unknown>).unverifiedItemCount = count;
+    expect(captureError(invalid).code).toBe("INVALID_CAPTURE_PAYLOAD");
+  });
+
 });
