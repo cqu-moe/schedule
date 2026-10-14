@@ -198,6 +198,12 @@ export default {
     return response.data
   },
 
+  async searchTeachingClasses(courseId: string, selectionToken: string): Promise<ExternalSearchResponse> {
+    const query = new URLSearchParams({ course_id: courseId, selection_token: selectionToken })
+    const response = await client.get<ExternalSearchResponse>(`/external/teaching-classes?${query}`, { timeout: 100_000 })
+    return response.data
+  },
+
   async getDepartments(): Promise<{ session: ExternalSession; departments: DepartmentNode[] }> {
     const response = await client.get<{ session: ExternalSession; departments: DepartmentNode[] }>('/external/departments', { timeout: 100_000 })
     return response.data

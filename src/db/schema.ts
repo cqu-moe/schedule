@@ -23,6 +23,8 @@ export const subscriptions = sqliteTable(
     skippedCount: integer("skipped_count").notNull().default(0),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
+    sourceCourseId: text("source_course_id"),
+    sourceCourseName: text("source_course_name"),
 
     sessionId: text("session_id"),
     sessionName: text("session_name"),

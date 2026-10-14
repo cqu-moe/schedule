@@ -15,6 +15,7 @@ const { mockApi, mockRedirect, mockToast } = vi.hoisted(() => ({
     deleteSubscription: vi.fn(),
     refreshSubscription: vi.fn(),
     searchExternal: vi.fn(),
+    searchTeachingClasses: vi.fn(),
     getDepartments: vi.fn(),
     getViewData: vi.fn(),
   },
@@ -56,6 +57,27 @@ describe('Add view (React)', () => {
     expect(screen.queryByRole('tab', { name: '教师' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '订阅电气测试班' })).toBeDisabled()
     expect(mockApi.createSubscription).not.toHaveBeenCalled()
+  })
+
+  it('selects a course before selecting and subscribing to its teaching class', async () => {
+    mockApi.getConfig.mockResolvedValue({ external: { search_types: ['course'], create_types: ['course'] } })
+    mockApi.searchExternal.mockResolvedValue({ stage: 'courses', session: { id: 'current', name: '当前学期' }, selection_token: 'catalog-token', truncated: false,
+      results: [{ id: 'catalog-1', name: '大学物理', extra: 'PHYS1001' }] })
+    mockApi.searchTeachingClasses.mockResolvedValue({ stage: 'classes', course: { id: 'catalog-1', name: '大学物理' }, session: { id: 'current', name: '当前学期' }, selection_token: 'class-token', truncated: false,
+      results: [{ id: 'class-1', name: '大学物理 01班', extra: '教师甲' }, { id: 'class-2', name: '大学物理 02班', extra: '教师乙' }] })
+    mockApi.createSubscription.mockResolvedValue({ id: 'new-course' })
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索课程' }), '物理')
+    const select = await screen.findByRole('button', { name: '选择课程大学物理' })
+    select.focus(); await user.keyboard('{Enter}')
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
+    expect(mockApi.searchTeachingClasses).toHaveBeenCalledWith('catalog-1', 'catalog-token')
+    await user.click(await screen.findByRole('button', { name: '订阅大学物理 02班' }))
+    expect(mockApi.createSubscription).toHaveBeenCalledWith({ sourceType: 'course', sourceId: 'class-2', sourceName: '大学物理 02班', selectionToken: 'class-token', sessionId: 'current' })
+    await user.click(screen.getByRole('button', { name: '重新选择课程' }))
+    expect(screen.queryByRole('button', { name: '订阅大学物理 02班' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: '搜索课程' })).toHaveFocus())
   })
 
   it('renders personal subscription options', async () => {

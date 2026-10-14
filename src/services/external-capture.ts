@@ -192,6 +192,7 @@ function buildExternalCoursesIcs(
 function ownsExternalRow(row: Record<string, unknown>, sourceId: string, sourceType: ExternalSourceType): boolean {
   switch (sourceType) {
     case "admin_class": return ownsAdminClassRow(row, sourceId);
+    case "course": return row.classId === sourceId;
     case "instructor": return Array.isArray(row.instructorIdList) && row.instructorIdList.includes(sourceId);
     case "room":
     case "laboratory": return row.roomId === sourceId;
@@ -258,7 +259,7 @@ export function buildExternalCaptureResult(
   payload: unknown,
   expected: ExpectedSource,
 ): ExternalCaptureResult {
-  if (expected.sourceType !== "admin_class" && expected.sourceType !== "instructor" && expected.sourceType !== "room" && expected.sourceType !== "laboratory") {
+  if (expected.sourceType !== "admin_class" && expected.sourceType !== "instructor" && expected.sourceType !== "room" && expected.sourceType !== "laboratory" && expected.sourceType !== "course") {
     throw new ExternalCaptureError(
       "UNSUPPORTED_SOURCE_TYPE",
       "This external source type is not supported yet.",

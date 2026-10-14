@@ -67,7 +67,8 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
     if (!env.AUTH.cquExternalCapture) { await fail("EXTERNAL_SYNC_UNAVAILABLE"); return; }
     payload = await env.AUTH.cquExternalCapture({ clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET,
       userId: sub.userId, sourceType: sub.sourceType as ExternalSourceType, targetId: sub.sourceId, targetName: sub.sourceName,
-      ...(sub.sessionId ? { expectedSessionId: sub.sessionId } : {}), deadlineAt });
+      ...(sub.sessionId ? { expectedSessionId: sub.sessionId } : {}),
+      ...(sub.sourceType === "course" ? { courseId: sub.sourceCourseId ?? undefined, courseName: sub.sourceCourseName ?? undefined } : {}), deadlineAt });
   } catch { payload = { error: "EXTERNAL_NETWORK_ERROR" }; }
   if (payload && typeof payload === "object" && "error" in payload) {
     const rawCode = typeof payload.error === "string" ? payload.error : "EXTERNAL_SYNC_UNAVAILABLE";
@@ -81,6 +82,7 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
   let parsed: ReturnType<typeof buildExternalCaptureResult>;
   try { parsed = buildExternalCaptureResult(payload, { sourceType: sub.sourceType as ExternalSourceType, sourceId: sub.sourceId }); }
   catch (error) { await fail(error instanceof ExternalCaptureError ? error.code : "INVALID_CAPTURE_PAYLOAD"); return; }
+  if (sub.sourceType === "course" && parsed.session.id !== sub.sessionId) { await fail("CURRENT_SESSION_CHANGED"); return; }
   // Re-check authority after a slow browser capture; a mid-flight revocation cannot publish.
   if (!(await reconcile(await currentCaps(env, sub.userId)))) return;
   const now = new Date().toISOString();

@@ -31,11 +31,11 @@ export async function createExternalSubscription(env: Env, userId: string, caps:
   try {
     const results = await env.DB.batch([
       env.DB.prepare(`INSERT INTO subscriptions
-        (id,user_id,source_type,source_id,source_name,session_id,session_name,source_version,is_personal,is_active,
+        (id,user_id,source_type,source_id,source_name,session_id,session_name,source_course_id,source_course_name,source_version,is_personal,is_active,
          sync_status,sync_run_id,sync_trigger,sync_requested_at,created_at,updated_at)
-        SELECT ?,?,?,?,?,?,?,1,0,1,'queued',?,'initial',?,?,?
+        SELECT ?,?,?,?,?,?,?,?,?,1,0,1,'queued',?,'initial',?,?,?
         WHERE (SELECT count(*) FROM subscriptions WHERE user_id=? AND source_version=1) < ?`)
-        .bind(id, userId, selection.sourceType, selection.target.id, selection.target.name, selection.session.id, selection.session.name,
+        .bind(id, userId, selection.sourceType, selection.target.id, selection.target.name, selection.session.id, selection.session.name, selection.course?.id ?? null, selection.course?.name ?? null,
           runId, now, now, now, userId, Number.isFinite(limit) ? limit : Number.MAX_SAFE_INTEGER),
       env.DB.prepare(`INSERT INTO calendar_links
         (id,subscription_id,token,formats,is_default,is_active,created_at,updated_at)
