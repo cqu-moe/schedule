@@ -494,11 +494,11 @@ export default function Dashboard() {
   const showFirstSyncNotice = !firstSyncDismissed && firstSyncContext && firstSyncPhase !== null
 
   function isFirstSyncCard(sub: Subscription): boolean {
-    return firstSyncContext && firstSyncTargetIds.includes(sub.id)
+    return (sub.source_version === 1 && !sub.last_synced_at) || (firstSyncContext && firstSyncTargetIds.includes(sub.id))
   }
 
   function firstSyncLinkUnavailable(sub: Subscription): boolean {
-    return isFirstSyncCard(sub) && !sub.last_synced_at
+    return (sub.source_version === 1 && sub.external_state !== undefined && sub.external_state !== 'active') || (isFirstSyncCard(sub) && !sub.last_synced_at)
   }
 
   function refreshCooldownSeconds(sub: Subscription): number {
@@ -970,9 +970,11 @@ export default function Dashboard() {
                     {sub.session_name && (
                       <span className="dash-semester">{sub.session_name}</span>
                     )}
+                    {sub.import_quality === 'partial' && <span className="dash-sync-error">部分内容未导入（{sub.skipped_count ?? 0} 项）</span>}
+                    {sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
                       <span className="dash-sync-error">
-                        同步失败{!isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
+                        同步失败{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
                         {sub.sync_error_code === 'NEEDS_REAUTH' && (
                           <a href={repairBindHref}>重新绑定重庆大学统一认证账号</a>
                         )}

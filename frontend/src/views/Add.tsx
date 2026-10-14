@@ -100,6 +100,7 @@ export default function Add() {
   const [configStatus, setConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [currentTerm, setCurrentTerm] = useState<ExternalSession | null>(null)
   const [truncated, setTruncated] = useState(false)
+  const [selectionToken, setSelectionToken] = useState<string | null>(null)
   const [sourceType, setSourceType] = useState<ExternalSourceType>('instructor')
   const [keyword, setKeyword] = useState('')
   const [selectedDepartment, setSelectedDepartment] = useState('')
@@ -220,7 +221,7 @@ export default function Add() {
 
   function isExternalSubscribed(sourceId: string): boolean {
     return subs.subscriptions.some(
-      (s) => s.source_id === sourceId && s.source_type === sourceType,
+      (s) => s.source_version === 1 && s.source_id === sourceId && s.source_type === sourceType,
     )
   }
 
@@ -293,6 +294,7 @@ export default function Add() {
       })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
+      setSelectionToken(data.selection_token ?? null)
       setCurrentTerm(data.session ?? null)
       setTruncated(data.truncated === true)
     } catch (err: unknown) {
@@ -318,6 +320,7 @@ export default function Add() {
     searchSeq.current += 1
     clearPendingSearch()
     setSearching(false)
+    setSelectionToken(null)
     setSearchResults([])
     setTruncated(false)
   }
@@ -386,6 +389,7 @@ export default function Add() {
   }
 
   async function handleExternalSubscribe(item: SearchResult) {
+    if (!selectionToken || !currentTerm) return
     clearError()
     try {
       await subscribeFeedback.run(async () => {
@@ -393,6 +397,8 @@ export default function Add() {
           sourceType,
           sourceId: item.id,
           sourceName: item.name,
+          selectionToken,
+          sessionId: currentTerm.id,
         })
         toast.success(`已订阅「${item.name}」`)
         await reloadAfterCreate()
@@ -696,7 +702,7 @@ export default function Add() {
                               success: '已订阅',
                               error: '失败，重试',
                             }}
-                            disabled={!creationAvailable || searching || subscriptionsUnavailable || subs.atLimit}
+                            disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || subs.atLimit}
                             aria-label={`订阅${item.name}`}
                             onClick={() => void handleExternalSubscribe(item)}
                           />

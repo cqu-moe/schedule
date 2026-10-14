@@ -15,6 +15,12 @@ export const subscriptions = sqliteTable(
 
     /** Source type: see SourceType union */
     sourceType: text("source_type").notNull().$type<SourceType>(),
+    /** 0 = frozen legacy/existing personal; 1 = new fixed-recipe external. */
+    sourceVersion: integer("source_version").notNull().default(0),
+    externalState: text("external_state").notNull().default("active").$type<"active" | "expired" | "reselecting">(),
+    targetRevision: integer("target_revision").notNull().default(0),
+    importQuality: text("import_quality").$type<"complete" | "partial" | "empty">(),
+    skippedCount: integer("skipped_count").notNull().default(0),
     sourceId: text("source_id").notNull(),
     sourceName: text("source_name").notNull(),
 
@@ -77,7 +83,10 @@ export const subscriptions = sqliteTable(
       table.sourceType,
       table.sourceId,
       table.sessionId,
-    ),
+    ).where(sql`${table.sourceVersion} = 0`),
+    uniqueIndex("uq_external_v1_target")
+      .on(table.userId, table.sourceType, table.sourceId)
+      .where(sql`${table.sourceVersion} = 1`),
     // Personal subscriptions identify by (user, type, source) ONLY — session_id is
     // informational and gets overwritten to the current semester on first sync, so
     // it must not be part of their uniqueness. (uq_user_source_session can't enforce

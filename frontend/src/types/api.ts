@@ -66,6 +66,10 @@ export interface Subscription {
   user_id: string
   source_type: SourceType
   source_id: string
+  source_version?: number
+  external_state?: 'active' | 'expired' | 'reselecting'
+  import_quality?: 'complete' | 'partial' | 'empty' | null
+  skipped_count?: number
   source_name: string
   session_id: string | null
   session_name: string | null
@@ -120,6 +124,7 @@ export interface SubscriptionList {
 export type ExternalSourceType = Extract<SourceType, 'instructor' | 'room' | 'laboratory' | 'course' | 'admin_class'>
 export interface ExternalSession { id: string; name: string }
 export interface ExternalSearchResponse {
+  selection_token: string
   session: ExternalSession
   results: SearchResult[]
   truncated: boolean

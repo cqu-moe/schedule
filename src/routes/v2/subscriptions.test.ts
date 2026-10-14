@@ -114,6 +114,11 @@ beforeAll(async () => {
 
   await env.DB.prepare(
     `CREATE TABLE subscriptions (
+      source_version integer NOT NULL DEFAULT 0,
+      external_state text NOT NULL DEFAULT 'active',
+      target_revision integer NOT NULL DEFAULT 0,
+      import_quality text,
+      skipped_count integer NOT NULL DEFAULT 0,
       id text PRIMARY KEY NOT NULL,
       user_id text NOT NULL,
       source_type text NOT NULL,

@@ -290,6 +290,14 @@ describe('Dashboard view (v2)', () => {
     })
   })
 
+  it('keeps new external links unavailable before first successful capture', async () => {
+    await mountDashboard([mockSubscription({ source_type: 'admin_class', source_version: 1, is_personal: false,
+      source_name: '首次行政班', last_synced_at: null, sync_status: 'error', sync_error_message: '学校暂时不可用', links: [defaultLink()] })])
+    expect(screen.getByRole('button', { name: '查看课表：首次行政班' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '复制链接' })).toBeDisabled()
+    expect(screen.getByText('同步失败：学校暂时不可用')).toBeInTheDocument()
+  })
+
   it('reports a failed calendar-link copy without exposing its URL', async () => {
     vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error('denied'))
     await mountDashboard([mockSubscription({ links: [defaultLink('tok-abc')] })])

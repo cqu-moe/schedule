@@ -1,3 +1,4 @@
+import { processExternalSyncMessage } from "../services/external-sync";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
@@ -63,6 +64,8 @@ import { resolveOwnedSubscription } from "../services/personal-subscription-view
 export interface ScheduleSyncMessage {
   subscriptionId: string;
   userId: string;
+  sourceVersion?: number;
+  targetRevision?: number;
   /**
    * What enqueued this message. `"cron"` messages are re-checked for due-ness in
    * the consumer — the producer spreads each due batch over
@@ -406,6 +409,7 @@ export async function processScheduleSyncBatch(
   type PersonalHarvest = Awaited<ReturnType<typeof fetchPersonalHarvest>>;
   const personalHarvestByUser = new Map<string, Promise<PersonalHarvest>>();
   const personalNotificationByUser = new Map<string, Promise<void>>();
+  const externalByUser = new Map<string, Promise<void>>();
 
   function fetchBatchPersonalHarvest(userId: string): Promise<PersonalHarvest> {
     const existing = personalHarvestByUser.get(userId);
@@ -479,6 +483,13 @@ export async function processScheduleSyncBatch(
         }
         if (sub.userId !== userId) {
           message.ack();
+          return;
+        }
+        if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType) && sub.sourceVersion === 1) {
+          const previous = externalByUser.get(userId) ?? Promise.resolve();
+          const next = previous.catch(() => {}).then(() => processExternalSyncMessage(env, message, sub!, deadlineAt, lifecycle));
+          externalByUser.set(userId, next);
+          await next;
           return;
         }
         if (mode === "migration" && PERSONAL_SOURCE_TYPES.has(sub.sourceType)) {
