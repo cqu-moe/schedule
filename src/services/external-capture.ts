@@ -189,7 +189,11 @@ function buildExternalCoursesIcs(
   return calendars[0] ?? generateCoursesIcs([], semesterStart, baseNamespace);
 }
 
-function parseAdminClassRow(row: unknown, sourceId: string): CourseEntry[] {
+function parseAdminClassRow(
+  row: unknown,
+  sourceId: string,
+  maxSection: number,
+): CourseEntry[] {
   if (!isPlainObject(row) || !ownsAdminClassRow(row, sourceId)) {
     throw new ExternalCaptureError(
       "TARGET_MISMATCH",
@@ -209,6 +213,7 @@ function parseAdminClassRow(row: unknown, sourceId: string): CourseEntry[] {
   const weeks = parseBitmap(row.teachingWeek, MAX_TEACHING_WEEK_BITS);
   const sessions = parseBitmap(row.period, MAX_PERIOD_BITS);
   if (weeks.length === 0 || sessions.length === 0) return [];
+  if (sessions.some((session) => session > maxSection)) return [];
 
   const lecturer = optionalText(row.instructorName);
   const room = optionalText(row.roomName);
@@ -317,7 +322,7 @@ export function buildExternalCaptureResult(
   let skippedCount = 0;
 
   for (const row of rows) {
-    const parsed = parseAdminClassRow(row, sourceId);
+    const parsed = parseAdminClassRow(row, sourceId, maxSection);
     if (parsed.length === 0) {
       skippedCount += 1;
       continue;
