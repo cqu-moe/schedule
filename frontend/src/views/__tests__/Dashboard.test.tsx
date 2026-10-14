@@ -49,8 +49,12 @@ vi.mock('@/components/ShareLinksDialog', () => ({
 
 const { default: Dashboard } = await import('@/views/Dashboard')
 
-function mockList(subs: Subscription[], setup: PersonalSetupSummary | null = null): SubscriptionList {
-  return { subscriptions: subs, count: subs.length, personal_setup: setup }
+function mockList(
+  subs: Subscription[],
+  setup: PersonalSetupSummary | null = null,
+  manualRemaining: number | null = 5,
+): SubscriptionList {
+  return { subscriptions: subs, count: subs.length, personal_setup: setup, manual_remaining: manualRemaining }
 }
 
 function defaultLink(token = 'tok1') {
@@ -111,9 +115,10 @@ async function mountDashboard(
     session?: Partial<AppContextValue>
     setup?: PersonalSetupSummary | null
     route?: string
+    manualRemaining?: number | null
   } = {},
 ) {
-  mockApi.getSubscriptions.mockResolvedValue(mockList(subs, options.setup ?? null))
+  mockApi.getSubscriptions.mockResolvedValue({ ...mockList(subs, options.setup ?? null), manual_remaining: 'manualRemaining' in options ? options.manualRemaining : 5 })
   const view = renderWithApp(<Dashboard />, {
     session: options.session,
     routerEntries: [options.route ?? '/dashboard'],
@@ -211,7 +216,7 @@ describe('Dashboard view (v2)', () => {
     expect(screen.getByText('自动同步已开启')).toBeInTheDocument()
     expect(screen.getByText('外部订阅已开通')).toBeInTheDocument()
     expect(screen.getByText('外部自动同步未授予')).toBeInTheDocument()
-    expect(screen.getByText('外部手动刷新未授予')).toBeInTheDocument()
+    expect(screen.getAllByText('外部手动刷新未授予').length).toBeGreaterThan(0)
 
     cleanup()
     await mountDashboard([mockSubscription()], {
@@ -222,9 +227,10 @@ describe('Dashboard view (v2)', () => {
           external_manual_refresh: null,
         },
       },
+      manualRemaining: null,
     })
     expect(screen.getByText('外部自动同步已关闭')).toBeInTheDocument()
-    expect(screen.getByText('外部手动刷新无限')).toBeInTheDocument()
+    expect(screen.getAllByText('外部手动刷新剩余无限').length).toBeGreaterThan(0)
 
     cleanup()
     await mountDashboard([mockSubscription()], {
@@ -235,9 +241,10 @@ describe('Dashboard view (v2)', () => {
           external_manual_refresh: 7,
         },
       },
+      manualRemaining: 7,
     })
     expect(screen.getByText('外部自动同步每 30 分钟')).toBeInTheDocument()
-    expect(screen.getByText('外部手动刷新 7 次/天')).toBeInTheDocument()
+    expect(screen.getAllByText('外部手动刷新剩余 7 次').length).toBeGreaterThan(0)
 
     cleanup()
     await mountDashboard([mockSubscription()], {
@@ -364,6 +371,9 @@ describe('Dashboard view (v2)', () => {
       mockSubscription({
         id: 'ext-1',
         source_type: 'instructor',
+        source_version: 1,
+        external_state: 'active',
+        is_active: true,
         is_personal: false,
         last_synced_at: '2026-03-01T10:00:00Z',
       }),
@@ -373,6 +383,115 @@ describe('Dashboard view (v2)', () => {
       expect(mockApi.refreshSubscription).toHaveBeenCalledWith('ext-1')
       expect(mockApi.refreshPersonalSubscription).not.toHaveBeenCalled()
     })
+  })
+
+  it('uses the list-owned external manual quota while keeping personal refresh independent', async () => {
+    const personal = mockSubscription({
+      id: 'personal-1',
+      last_synced_at: '2026-03-01T10:00:00Z',
+      links: [defaultLink()],
+    })
+    const external = mockSubscription({
+      id: 'ext-quota',
+      source_type: 'admin_class',
+      source_version: 1,
+      external_state: 'active',
+      is_active: true,
+      is_personal: false,
+      last_synced_at: '2026-03-01T10:00:00Z',
+      links: [defaultLink('ext-tok')],
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockList([personal, external], null, 0))
+    renderWithApp(<Dashboard />)
+    await screen.findAllByText('我的课表')
+
+    expect(screen.getByText('外部手动刷新剩余 0 次')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '今日额度已用完' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '同步' }))
+    await waitFor(() => expect(mockApi.refreshPersonalSubscription).toHaveBeenCalledOnce())
+    expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+
+    cleanup()
+    mockApi.refreshSubscription.mockResolvedValue({
+      status: 'queued',
+      run_id: 'run-unlimited',
+      affected_subscription_ids: ['ext-quota'],
+      cooldown_until: '',
+      manual_remaining: null,
+    })
+    mockApi.getSubscriptions.mockResolvedValue(mockList([external], null, null))
+    renderWithApp(<Dashboard />)
+    const unlimitedButton = await screen.findByRole('button', { name: '同步' })
+    expect(screen.getAllByText('外部手动刷新剩余无限').length).toBeGreaterThan(0)
+    expect(unlimitedButton).toBeEnabled()
+    unlimitedButton.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(mockApi.refreshSubscription).toHaveBeenCalledWith('ext-quota'))
+  })
+
+  it('keeps external refresh admission dependent on current rights, lifecycle, and known remaining quota', async () => {
+    const external = mockSubscription({
+      id: 'ext-admission',
+      source_type: 'admin_class',
+      source_version: 1,
+      external_state: 'active',
+      is_active: true,
+      is_personal: false,
+      last_synced_at: '2026-03-01T10:00:00Z',
+    })
+    const baseCaps = mockMeResponse().caps.calendar
+    const cases = [
+      {
+        label: '外部订阅未开通',
+        sub: external,
+        caps: { ...baseCaps, external: false },
+        remaining: 5,
+      },
+      {
+        label: '外部手动刷新未授予',
+        sub: external,
+        caps: { ...baseCaps, external_manual_refresh: undefined },
+        remaining: 5,
+      },
+      {
+        label: '外部手动刷新已关闭',
+        sub: external,
+        caps: { ...baseCaps, external_manual_refresh: 0 },
+        remaining: 0,
+      },
+      {
+        label: '外部手动刷新剩余未知',
+        sub: external,
+        caps: baseCaps,
+        remaining: undefined,
+      },
+      {
+        label: '暂不可用',
+        sub: { ...external, external_state: 'expired' as const },
+        caps: baseCaps,
+        remaining: 5,
+      },
+      {
+        label: '暂不可用',
+        sub: { ...external, is_active: false },
+        caps: baseCaps,
+        remaining: 5,
+      },
+    ]
+
+    for (const item of cases) {
+      mockApi.getSubscriptions.mockResolvedValue({
+        ...mockList([item.sub], null, item.remaining ?? 5),
+        manual_remaining: item.remaining,
+      })
+      await mountDashboard([item.sub], {
+        session: { caps: item.caps, can: key => item.caps[key] === true },
+        manualRemaining: item.remaining,
+      })
+      expect(screen.getByRole('button', { name: item.label })).toBeDisabled()
+      expect(mockApi.refreshSubscription).not.toHaveBeenCalled()
+      cleanup()
+    }
   })
 
   it('opens the share links dialog from the more menu', async () => {

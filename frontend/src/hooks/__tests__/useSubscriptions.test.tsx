@@ -62,6 +62,28 @@ describe('useSubscriptions', () => {
     expect(result.current.personalSetup).toBeNull()
   })
 
+  it('keeps the external manual remaining value owned by the subscription list', async () => {
+    mockApi.getSubscriptions.mockResolvedValueOnce({
+      subscriptions: [mockSubscription()],
+      count: 1,
+      manual_remaining: 2,
+    })
+    const { result } = renderHook(() => useSubscriptions(), { wrapper })
+    await act(() => result.current.load())
+    expect(result.current.manualRemaining).toBe(2)
+
+    mockApi.getSubscriptions.mockResolvedValueOnce({
+      subscriptions: [mockSubscription()],
+      count: 1,
+      manual_remaining: null,
+    })
+    await act(() => result.current.load())
+    expect(result.current.manualRemaining).toBeNull()
+
+    act(() => result.current.reset())
+    expect(result.current.manualRemaining).toBeUndefined()
+  })
+
   it('derives share link usage and limits from session quotas', async () => {
     const sub = (id: string, shareLinks: number) =>
       mockSubscription({

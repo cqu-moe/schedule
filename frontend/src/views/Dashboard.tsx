@@ -111,13 +111,17 @@ function externalSyncIntervalLabel(caps: CalendarCaps | null): string {
   return `外部自动同步每 ${caps.external_sync_interval} 分钟`
 }
 
-function externalManualRefreshLabel(caps: CalendarCaps | null): string {
+function externalManualRefreshLabel(
+  caps: CalendarCaps | null,
+  remaining: number | null | undefined,
+): string {
   if (!caps) return '外部手动刷新状态未知'
   if (!caps.external) return '外部手动刷新需先开通外部订阅'
   if (caps.external_manual_refresh === undefined) return '外部手动刷新未授予'
   if (caps.external_manual_refresh === 0) return '外部手动刷新已关闭'
-  if (caps.external_manual_refresh === null) return '外部手动刷新无限'
-  return `外部手动刷新 ${caps.external_manual_refresh} 次/天`
+  if (remaining === undefined) return '外部手动刷新剩余未知'
+  if (remaining === null) return '外部手动刷新剩余无限'
+  return `外部手动刷新剩余 ${remaining} 次`
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -164,6 +168,7 @@ interface EnrichedSub {
 interface SubscriptionsData {
   subscriptions: Subscription[]
   personalSetup: PersonalSetupSummary | null
+  manualRemaining?: number | null
 }
 
 export default function Dashboard() {
@@ -192,6 +197,7 @@ export default function Dashboard() {
       const next: SubscriptionsData = {
         subscriptions: result.subscriptions,
         personalSetup: result.personal_setup ?? null,
+        manualRemaining: result.manual_remaining,
       }
       dataRef.current = next
       setData(next)
@@ -474,6 +480,8 @@ export default function Dashboard() {
   const atShareLimit = shareLimit !== null && shareLinkCount >= shareLimit
   const personalSubs = subscriptions.filter((s) => s.is_personal)
   const canManualRefresh = session.quota('manual_refresh') !== 0
+  const externalManualRemaining = data.manualRemaining
+  const externalManualGrant = session.caps?.external_manual_refresh
   const canChangeNotification = session.can('change_notification')
 
   const firstSyncTargetIds =
@@ -519,6 +527,35 @@ export default function Dashboard() {
     const timer = window.setInterval(() => setCooldownClock(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [hasActiveCooldown])
+
+  function isNewExternal(sub: Subscription): boolean {
+    return !sub.is_personal && sub.source_version === 1
+  }
+
+  function canRefreshSub(sub: Subscription): boolean {
+    if (sub.is_personal) return canManualRefresh
+    if (!isNewExternal(sub)) return false
+    return session.can('external') &&
+      externalManualGrant !== undefined &&
+      externalManualGrant !== 0 &&
+      sub.is_active &&
+      sub.external_state === 'active' &&
+      externalManualRemaining !== undefined &&
+      externalManualRemaining !== 0
+  }
+
+  function refreshIdleLabel(sub: Subscription): string {
+    if (refreshCooldownSeconds(sub) > 0) return cooldownLabel(refreshCooldownSeconds(sub))
+    if (sub.is_personal) return '同步'
+    if (!isNewExternal(sub)) return '暂不可用'
+    if (!session.can('external')) return '外部订阅未开通'
+    if (externalManualGrant === undefined) return '外部手动刷新未授予'
+    if (externalManualGrant === 0) return '外部手动刷新已关闭'
+    if (!sub.is_active || sub.external_state !== 'active') return '暂不可用'
+    if (externalManualRemaining === undefined) return '外部手动刷新剩余未知'
+    if (externalManualRemaining === 0) return '今日额度已用完'
+    return '同步'
+  }
 
   function isSubSyncing(sub: Subscription): boolean {
     return (
@@ -649,6 +686,11 @@ export default function Dashboard() {
           ? await api.refreshPersonalSubscription()
           : await api.refreshSubscription(sid)
         toast.success('已加入刷新队列')
+        if (isNewExternal(sub) && result.manual_remaining !== undefined) {
+          const next = { ...dataRef.current, manualRemaining: result.manual_remaining }
+          dataRef.current = next
+          setData(next)
+        }
         const affectedIds = result.affected_subscription_ids?.length
           ? result.affected_subscription_ids
           : [sid]
@@ -660,6 +702,7 @@ export default function Dashboard() {
       }, sid)
     } catch (error) {
       toast.error(parseApiError(error, '刷新失败'))
+      if (isNewExternal(sub)) await loadSubscriptions(true).catch(() => {})
     }
   }
 
@@ -890,7 +933,7 @@ export default function Dashboard() {
         </p>
         <p className="dash-sync-status">
           <span className="dash-status-dot" aria-hidden="true" />
-          {externalManualRefreshLabel(session.caps)}
+          {externalManualRefreshLabel(session.caps, externalManualRemaining)}
         </p>
         {atLimit && <p className="dash-limit-note">已达订阅上限</p>}
       </div>
@@ -1042,14 +1085,12 @@ export default function Dashboard() {
                     <SyncActionButton
                       state={refreshButtonState(sub)}
                       labels={{
-                        idle: refreshCooldownSeconds(sub) > 0
-                          ? cooldownLabel(refreshCooldownSeconds(sub))
-                          : '同步',
+                        idle: refreshIdleLabel(sub),
                         loading: '同步中',
                         success: '已刷新',
                         error: isFirstSyncCard(sub) ? '重试同步' : '失败',
                       }}
-                      disabled={!canManualRefresh || isRefreshCoolingDown(sub)}
+                      disabled={!canRefreshSub(sub) || isRefreshCoolingDown(sub)}
                       onClick={() => void handleRefreshSub(sub.id)}
                     />
                     {link && (

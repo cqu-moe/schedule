@@ -60,6 +60,7 @@ describe("new external subscription first capture", () => {
     expect(app.capture).not.toHaveBeenCalled();
     expect(app.send).toHaveBeenCalledOnce();
     expect(app.send).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: body.id, sourceVersion: 1, targetRevision: 0, trigger: "initial", runId: body.sync_run_id }));
+    expect(await env.DB.prepare("SELECT used_count FROM external_manual_refresh_usage WHERE user_id=?").bind(app.userId).first()).toBeNull();
     expect((await env.DB.prepare("SELECT id FROM subscriptions WHERE id='legacy'").first())?.id).toBe("legacy");
     const publicResponse = await app.request(`/calendar/${body.links[0].token}/calendar.ics`);
     expect(publicResponse.status).toBe(503);
