@@ -136,7 +136,11 @@ export default function ShareLinksDialog({
     shareLimit === null
       ? `共享链接 ${shareLinkCount} / 无限`
       : `共享链接 ${shareLinkCount} / ${shareLimit}`
-  const shareFooterHint = !session.can('share')
+  const subscriptionUnavailable = subscription.source_version === 1 && subscription.external_state !== undefined && subscription.external_state !== 'active'
+  const linkUnavailable = (link: CalendarLink) => subscriptionUnavailable || link.is_active === false
+  const shareFooterHint = subscriptionUnavailable
+    ? '教学班已停用，全部公开链接暂不可用；日历客户端已下载的历史事件无法撤回。'
+    : !session.can('share')
     ? '默认链接仍可复制使用，额外共享链接需开通后创建。'
     : atShareLimit
       ? '已达到账号共享链接上限，删除旧链接后才能新建。'
@@ -145,6 +149,7 @@ export default function ShareLinksDialog({
         : `本课表 ${customLinkCount} 个额外共享链接；额度按账号统计。`
 
   async function handleCopy(link: CalendarLink, fmt: LinkFormat) {
+    if (linkUnavailable(link)) return
     const url = buildLinkUrl(session.publicUrl, link.token, fmt)
     try {
       await copyFeedback.run(async () => {
@@ -306,7 +311,7 @@ export default function ShareLinksDialog({
                             {link.is_default && <span className="dash-badge">默认</span>}
                           </div>
                           <p className="share-link-hint">
-                            {link.is_default ? '不可删除 / 不可改格式' : '额外共享链接'}
+                            {linkUnavailable(link) ? '已停用' : link.is_default ? '不可删除 / 不可改格式' : '额外共享链接'}
                           </p>
                         </TableCell>
 
@@ -321,6 +326,7 @@ export default function ShareLinksDialog({
                                 size="icon-sm"
                                 title={`复制 ${FORMAT_META[fmt].label}`}
                                 aria-label={`复制 ${FORMAT_META[fmt].label}`}
+                                disabled={linkUnavailable(link)}
                                 aria-busy={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'loading'}
                                 aria-disabled={copyFeedback.stateOf(`${link.id}:${fmt}`) === 'loading'}
                                 onClick={() => void handleCopy(link, fmt)}

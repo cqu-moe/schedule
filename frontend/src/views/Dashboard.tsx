@@ -974,7 +974,7 @@ export default function Dashboard() {
                     {sub.import_quality === 'empty' && <span className="dash-sync-meta">当前学期暂无课表安排</span>}
                     {syncErrorMessage(sub) ? (
                       <span className="dash-sync-error">
-                        同步失败{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
+                        {sub.external_state === 'expired' ? '教学班已过期' : '同步失败'}{sub.source_version === 1 || !isFirstSyncCard(sub) ? `：${syncErrorMessage(sub)}` : ''}
                         {sub.sync_error_code === 'NEEDS_REAUTH' && (
                           <a href={repairBindHref}>重新绑定重庆大学统一认证账号</a>
                         )}
@@ -1049,7 +1049,7 @@ export default function Dashboard() {
                         success: '已刷新',
                         error: isFirstSyncCard(sub) ? '重试同步' : '失败',
                       }}
-                      disabled={!canManualRefresh || isRefreshCoolingDown(sub)}
+                      disabled={!canManualRefresh || isRefreshCoolingDown(sub) || (sub.source_version === 1 && sub.external_state !== 'active')}
                       onClick={() => void handleRefreshSub(sub.id)}
                     />
                     {link && (

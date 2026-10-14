@@ -37,7 +37,7 @@ function makeApp(userId = crypto.randomUUID(), caps = CAPS) {
       cquExternalSearch: vi.fn().mockResolvedValue({ contractVersion: 1, sourceType: "admin_class", session: TERM, items: [TARGET], truncated: false }),
       cquExternalCapture: capture,
     },
-    SCHEDULE_SYNC_QUEUE: { send },
+    SCHEDULE_SYNC_QUEUE: { send, sendBatch: async (messages: { body: unknown }[]) => { for (const message of messages) await send(message.body); } },
   } as unknown as Env;
   let selectionToken: string | undefined;
   return { userId, send, capture, testEnv,
@@ -264,4 +264,25 @@ describe("external admission and publication boundaries", () => {
     expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ sync_status: "error", sync_error_code: "EXTERNAL_SYNC_UNAVAILABLE" });
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
   });
+});
+
+it("follows the current term for the same administrative class only after an automatic grant", async () => {
+  const app = makeApp(); await app.select(); const created = await (await app.create()).json<any>();
+  const capture = { contractVersion: 1, sourceType: "admin_class", target: TARGET,
+    session: { ...TERM, beginDate: "2026-09-07" }, timetable: { maxSection: 12, classTimetableVOList: [] } };
+  app.capture.mockResolvedValue(capture);
+  async function consume(body: any) {
+    await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body, attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, app.testEnv);
+  }
+  await consume(app.send.mock.calls[0][0]);
+  await env.DB.prepare("UPDATE subscriptions SET last_synced_at='2020-01-01T00:00:00Z' WHERE id=?").bind(created.id).run();
+  const { enqueueScheduleSync } = await import("../../cron/schedule-sync");
+  await enqueueScheduleSync(app.testEnv); expect(app.send).toHaveBeenCalledOnce();
+  app.testEnv.AUTH.getCaps = vi.fn().mockResolvedValue({ calendar: { ...CAPS, external_sync_interval: 60 } });
+  await env.CACHE.delete(`caps:${app.userId}`);
+  await enqueueScheduleSync(app.testEnv); expect(app.send).toHaveBeenCalledTimes(2);
+  app.capture.mockResolvedValue({ ...capture, session: { id: "new-current", name: "新学期", beginDate: "2027-02-22" } });
+  await consume(app.send.mock.calls[1][0]);
+  expect(app.capture.mock.lastCall?.[0]).not.toHaveProperty("expectedSessionId");
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ source_id: TARGET.id, session_id: "new-current", sync_status: "success" });
 });

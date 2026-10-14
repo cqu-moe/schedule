@@ -8,7 +8,7 @@ import { resetPersonalData } from "../../../tests/fixtures/personal-subscription
 import external from "./external";
 import subscriptions from "./subscriptions";
 import calendar from "./calendar";
-import { processScheduleSyncBatch } from "../../cron/schedule-sync";
+import { processScheduleSyncBatch, enqueueScheduleSync } from "../../cron/schedule-sync";
 
 beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS));
 beforeEach(() => resetPersonalData(env.DB));
@@ -29,7 +29,7 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     const testEnv = { ...env, EXTERNAL_SUBSCRIPTION_TYPES: type,
       AUTH: { verifySession: async () => ({ user: { id: userId, name: "测试", email: "test@example.com", role: "user" }, caps: { calendar: caps }, cquBindStatus: "active" }),
         getCaps: vi.fn().mockResolvedValue({ calendar: caps }), getCquTicket: vi.fn(), cquExternalSearch: search, cquExternalCapture: capture },
-      SCHEDULE_SYNC_QUEUE: { send } } as unknown as Env;
+      SCHEDULE_SYNC_QUEUE: { send, sendBatch: async (messages: { body: unknown }[]) => { for (const message of messages) await send(message.body); } } } as unknown as Env;
     const app = new Hono<SessionEnv>();
     app.use("/search/*", businessIdentity); app.use("/subscriptions/*", businessIdentity);
     app.route("/search", external); app.route("/subscriptions", subscriptions); app.route("/calendar", calendar);
@@ -51,7 +51,7 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     async function consume() {
       await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body: send.mock.calls[0][0], attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, testEnv);
     }
-    return { request, capture, search, create, consume, testEnv };
+    return { request, capture, search, create, consume, testEnv, send, caps, userId };
   }
 
   it("searches distinguishable identities and publishes only the exact selected target", async () => {
@@ -62,6 +62,20 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
     if (type === "laboratory") expect(body).toContain("实验内容：电路实验项目");
     expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ source_type: type, source_id: target, import_quality: "complete", source_version: 1 });
     expect(app.testEnv.AUTH.getCquTicket).not.toHaveBeenCalled();
+  });
+
+  it("follows the current semester on an admitted refresh without changing target identity", async () => {
+    const app = harness(); const created = await app.create(); await app.consume();
+    await env.DB.prepare("UPDATE subscriptions SET last_synced_at='2020-01-01T00:00:00Z' WHERE id=?").bind(created.id).run();
+    await enqueueScheduleSync(app.testEnv); expect(app.send).toHaveBeenCalledOnce();
+    Object.assign(app.caps, { external_sync_interval: 60 });
+    await env.CACHE.delete(`caps:${app.userId}`);
+    await enqueueScheduleSync(app.testEnv); expect(app.send).toHaveBeenCalledTimes(2);
+    app.capture.mockResolvedValue({ contractVersion: 1, sourceType: type, target: { id: target, name },
+      session: { id: "next", name: "新学期", beginDate: "2027-02-22" }, timetable: { maxSection: 12, classTimetableVOList: [] } });
+    await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body: app.send.mock.calls[1][0], attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, app.testEnv);
+    expect(app.capture.mock.lastCall?.[0]).not.toHaveProperty("expectedSessionId");
+    expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ source_id: target, session_id: "next", sync_status: "success", import_quality: "empty" });
   });
 
   it("represents an empty target without substituting another same-name result", async () => {

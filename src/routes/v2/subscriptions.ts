@@ -509,6 +509,11 @@ app.post("/:sid/syncs", async (c) => {
 
   const resolved = await resolveOwnedSubscription(c.env.DB, user.id, sid);
   if (!resolved) return errorResponse("NOT_FOUND", "订阅不存在", 404);
+  if (resolved.subscription.sourceVersion === 1 && resolved.subscription.externalState !== "active") {
+    return errorResponse(resolved.subscription.externalState === "expired" ? "EXTERNAL_TERM_EXPIRED" : "EXTERNAL_RESELECTING",
+      resolved.subscription.externalState === "expired" ? "教学班所属学期已结束，全部公开链接已停用" : "正在重新选择教学班，请等待新课表同步完成", 409);
+  }
+
   if (
     personalSubscriptionMode(c.env) === "migration"
     && PERSONAL_SOURCE_TYPES.has(resolved.subscription.sourceType)
@@ -925,17 +930,13 @@ app.post("/:sid/links", async (c) => {
   const now = new Date().toISOString();
   const formatsJson = JSON.stringify(formats);
 
-  await db.insert(calendarLinks).values({
-    id: linkId,
-    subscriptionId: owner.id,
-    token,
-    label,
-    formats: formatsJson,
-    personalViewType: owner.viewType,
-    isDefault: false,
-    createdAt: now,
-    updatedAt: now,
-  });
+  await c.env.DB.prepare(`INSERT INTO calendar_links
+    (id,subscription_id,token,label,formats,personal_view_type,is_default,is_active,created_at,updated_at)
+    SELECT ?,id,?,?,?,?,0,CASE WHEN source_version=1 AND external_state<>'active' THEN 0 ELSE 1 END,?,?
+    FROM subscriptions WHERE id=? AND user_id=?`)
+    .bind(linkId, token, label, formatsJson, owner.viewType, now, now, owner.id, user.id).run();
+  const [createdLink] = await db.select().from(calendarLinks).where(eq(calendarLinks.id, linkId));
+  if (!createdLink) return errorResponse("NOT_FOUND", "订阅不存在", 404);
 
   console.log(
     JSON.stringify({
@@ -955,7 +956,7 @@ app.post("/:sid/links", async (c) => {
       label,
       formats: formatsJson,
       isDefault: false,
-      isActive: true,
+      isActive: createdLink.isActive,
     }),
     201,
     { Location: `/api/v2/subscriptions/${sid}/links/${linkId}` },

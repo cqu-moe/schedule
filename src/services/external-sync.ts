@@ -1,7 +1,8 @@
+import { expireCourseSubscriptions } from "./external-term";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Env } from "../types";
-import { calendarLinks, subscriptions, type Subscription, type ExternalSourceType } from "../db/schema";
+import { subscriptions, type Subscription, type ExternalSourceType } from "../db/schema";
 import type { CalendarCaps } from "./auth-rpc";
 import type { ScheduleSyncMessage } from "../cron/schedule-sync";
 import { buildExternalCaptureResult, ExternalCaptureError } from "./external-capture";
@@ -52,8 +53,10 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
   }
   async function reconcile(caps: CalendarCaps | null): Promise<boolean> {
     if (!caps) { await fail("CAPS_UNAVAILABLE"); return false; }
-    await db.update(calendarLinks).set({ isActive: caps.share, updatedAt: new Date().toISOString() })
-      .where(and(eq(calendarLinks.subscriptionId, sub.id), eq(calendarLinks.isDefault, false)));
+    await env.DB.prepare(`UPDATE calendar_links SET is_active=?,updated_at=? WHERE subscription_id=? AND is_default=0
+      AND EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND source_version=1 AND target_revision=?
+        AND external_state='active' AND sync_run_id=?)`)
+      .bind(caps.share, new Date().toISOString(), sub.id, sub.id, sub.targetRevision, runId).run();
     if (!caps.external) {
       await db.update(subscriptions).set({ isActive: false, updatedAt: new Date().toISOString() })
         .where(and(eq(subscriptions.id, sub.id), eq(subscriptions.userId, sub.userId)));
@@ -67,7 +70,7 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
     if (!env.AUTH.cquExternalCapture) { await fail("EXTERNAL_SYNC_UNAVAILABLE"); return; }
     payload = await env.AUTH.cquExternalCapture({ clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET,
       userId: sub.userId, sourceType: sub.sourceType as ExternalSourceType, targetId: sub.sourceId, targetName: sub.sourceName,
-      ...(sub.sessionId ? { expectedSessionId: sub.sessionId } : {}),
+      ...(sub.sessionId && (sub.sourceType === "course" || message.body.trigger === "initial") ? { expectedSessionId: sub.sessionId } : {}),
       ...(sub.sourceType === "course" ? { courseId: sub.sourceCourseId ?? undefined, courseName: sub.sourceCourseName ?? undefined } : {}), deadlineAt });
   } catch { payload = { error: "EXTERNAL_NETWORK_ERROR" }; }
   if (payload && typeof payload === "object" && "error" in payload) {
@@ -82,7 +85,12 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
   let parsed: ReturnType<typeof buildExternalCaptureResult>;
   try { parsed = buildExternalCaptureResult(payload, { sourceType: sub.sourceType as ExternalSourceType, sourceId: sub.sourceId }); }
   catch (error) { await fail(error instanceof ExternalCaptureError ? error.code : "INVALID_CAPTURE_PAYLOAD"); return; }
-  if (sub.sourceType === "course" && parsed.session.id !== sub.sessionId) { await fail("CURRENT_SESSION_CHANGED"); return; }
+  if (sub.sourceType === "course" && parsed.session.id !== sub.sessionId) {
+    if (!(await reconcile(await currentCaps(env, sub.userId)))) return;
+    await expireCourseSubscriptions(env.DB, sub.userId, parsed.session.id,
+      { target: { id: sub.id, revision: sub.targetRevision, runId } });
+    message.ack(); return;
+  }
   // Re-check authority after a slow browser capture; a mid-flight revocation cannot publish.
   if (!(await reconcile(await currentCaps(env, sub.userId)))) return;
   const now = new Date().toISOString();

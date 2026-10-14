@@ -1,3 +1,4 @@
+import { checkExternalTerms, processExternalTermCheck } from "../services/external-term";
 import { processExternalSyncMessage } from "../services/external-sync";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
@@ -67,6 +68,7 @@ import {
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
+  purpose?: "external_term_check";
   subscriptionId: string;
   userId: string;
   sourceVersion?: number;
@@ -147,6 +149,10 @@ async function markTerminalSuccess(
  * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
+  await Promise.all([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env)]);
+}
+
+async function enqueueRegularScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
   const mode = personalSubscriptionMode(env);
   await dispatchPendingPersonalSetups(env, lifecycle);
   console.log(
@@ -196,7 +202,8 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       capsCache.set(sub.userId, caps);
     }
 
-    const entitled = isCalendarEntitled(sub.sourceType, caps);
+    const lifecycleActive = sub.sourceVersion !== 1 || sub.externalState === "active";
+    const entitled = lifecycleActive && isCalendarEntitled(sub.sourceType, caps);
 
     // Reconcile is_active (hard revocation): when caps are KNOWN, flip the row to
     // match entitlement — revoked → inactive (public links 403), re-granted →
@@ -209,7 +216,8 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       await db
         .update(subscriptions)
         .set({ isActive: entitled, updatedAt: new Date().toISOString() })
-        .where(eq(subscriptions.id, sub.id));
+        .where(and(eq(subscriptions.id, sub.id),
+          ...(sub.sourceVersion === 1 ? [eq(subscriptions.externalState, sub.externalState), eq(subscriptions.targetRevision, sub.targetRevision)] : [])));
     }
 
     // Reconcile non-default links from caps.share (issue #89): revoked share →
@@ -218,14 +226,10 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
     // Same fail-safe as is_active: null caps (transient outage) skips to avoid
     // flapping; the ne() guard makes already-matching rows a no-op.
     if (caps !== null) {
-      await db
-        .update(calendarLinks)
-        .set({ isActive: caps.share, updatedAt: new Date().toISOString() })
-        .where(and(
-          eq(calendarLinks.subscriptionId, sub.id),
-          eq(calendarLinks.isDefault, false),
-          ne(calendarLinks.isActive, caps.share),
-        ));
+      await env.DB.prepare(`UPDATE calendar_links SET is_active=CASE WHEN EXISTS
+        (SELECT 1 FROM subscriptions WHERE id=? AND (source_version<>1 OR external_state='active'))
+        THEN ? ELSE 0 END,updated_at=? WHERE subscription_id=? AND is_default=0`)
+        .bind(sub.id, caps.share, new Date().toISOString(), sub.id).run();
     }
 
     if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
@@ -499,6 +503,13 @@ export async function processScheduleSyncBatch(
         if (current) captureScheduleSyncTerminal(env, lifecycle, current, "success");
       };
       try {
+        if (message.body.purpose === "external_term_check") {
+          const previous = externalByUser.get(userId) ?? Promise.resolve();
+          const next = previous.catch(() => {}).then(() => processExternalTermCheck(env, message, deadlineAt));
+          externalByUser.set(userId, next);
+          await next;
+          return;
+        }
         let sub = (await db
           .select()
           .from(subscriptions)
