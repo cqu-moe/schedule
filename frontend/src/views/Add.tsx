@@ -283,6 +283,7 @@ export default function Add() {
     setDepartmentsError(false)
     try {
       const data = await api.getDepartments({ signal: controller.signal })
+      if (controller.signal.aborted) return
       setDepartments(data.departments)
       setCurrentTerm(data.session ?? null)
     } catch (err: unknown) {

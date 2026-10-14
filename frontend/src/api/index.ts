@@ -86,9 +86,11 @@ async function externalGet<T>(url: string, { signal }: ExternalLookupOptions = {
 
   for (let attempt = 1; attempt <= EXTERNAL_MAX_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) throw abortError(signal)
+    const remaining = attempt === 1 ? EXTERNAL_LOOKUP_TIMEOUT_MS : startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS - Date.now()
+    if (remaining <= 0) throw new DOMException('External lookup timed out', 'TimeoutError')
 
     try {
-      const response = await client.get<T>(url, { timeout: EXTERNAL_LOOKUP_TIMEOUT_MS, signal })
+      const response = await client.get<T>(url, { timeout: remaining, signal })
       return response.data
     } catch (error) {
       if (requestCancelled(error)) throw error

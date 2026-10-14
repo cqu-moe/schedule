@@ -458,6 +458,26 @@ describe('API module (v2)', () => {
       expect(Date.now() - startedAt).toBeLessThanOrEqual(100_000)
     })
 
+    it('limits an in-flight retry to the remaining total lookup budget', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      const networkError = Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' })
+      const timeoutError = Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })
+      mockClient.get.mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 30_000))
+        throw networkError
+      }).mockImplementationOnce(async (_url, config) => {
+        await new Promise(resolve => setTimeout(resolve, config.timeout))
+        throw timeoutError
+      })
+      const startedAt = Date.now()
+      const promise = api.searchExternal({ source_type: 'room', keyword: 'A5101' })
+      const rejection = expect(promise).rejects.toBe(timeoutError)
+      await vi.runAllTimersAsync()
+      await rejection
+      expect(Date.now() - startedAt).toBe(100_000)
+      expect(mockClient.get).toHaveBeenCalledTimes(2)
+    })
+
     it('propagates AbortSignal and does not recover a cancelled request', async () => {
       const controller = new AbortController()
       const cancelledError = Object.assign(new Error('canceled'), {
