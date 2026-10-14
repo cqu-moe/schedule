@@ -179,6 +179,31 @@ describe('Dashboard view (v2)', () => {
     expect(screen.queryByText(/同步于/)).not.toBeInTheDocument()
   })
 
+  it.each(['personal', 'legacy'])('keeps the add entry available when only %s subscriptions exist at a one-slot external quota', async kind => {
+    const sub = mockSubscription({
+      id: kind, source_type: kind === 'personal' ? 'personal_all' : 'instructor',
+      is_personal: kind === 'personal', source_version: 0,
+    })
+    await mountDashboard([sub], { session: { quota: key => key === 'sub_limit' ? 1 : null } })
+    expect(screen.getByRole('link', { name: '添加订阅' })).toHaveAttribute('href', '/add')
+    expect(screen.queryByText('已达外部订阅上限')).not.toBeInTheDocument()
+    expect(screen.getByText('1 个订阅')).toBeInTheDocument()
+    expect(screen.getByText('外部订阅额度 0 / 1')).toBeInTheDocument()
+  })
+
+  it('disables the add entry when a genuine new external subscription uses the last slot', async () => {
+    await mountDashboard([
+      mockSubscription({ id: 'personal', is_personal: true, source_version: 0 }),
+      mockSubscription({ id: 'legacy', source_type: 'instructor', is_personal: false, source_version: 0 }),
+      mockSubscription({ id: 'new', source_type: 'course', is_personal: false, source_version: 1, external_state: 'expired' }),
+    ], { session: { quota: key => key === 'sub_limit' ? 1 : null } })
+    expect(screen.getByRole('button', { name: '添加订阅' })).toBeDisabled()
+    expect(screen.getByText('3 个订阅')).toBeInTheDocument()
+    expect(screen.getByText('外部订阅额度 1 / 1')).toBeInTheDocument()
+    expect(screen.getByText('已达外部订阅上限')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '添加订阅' })).not.toBeInTheDocument()
+  })
+
   it('renders the subscription list with count, badges and sync date', async () => {
     const quota = vi.fn((key: string) => (key === 'sub_limit' ? 5 : null))
     await mountDashboard(
@@ -202,7 +227,8 @@ describe('Dashboard view (v2)', () => {
     )
 
     expect(screen.getByRole('heading', { name: '我的订阅' })).toBeInTheDocument()
-    expect(screen.getByText('2 / 5 个订阅')).toBeInTheDocument()
+    expect(screen.getByText('2 个订阅')).toBeInTheDocument()
+    expect(screen.getByText('外部订阅额度 0 / 5')).toBeInTheDocument()
     expect(screen.getByText('自动同步已开启')).toBeInTheDocument()
     expect(screen.getByText('张三的课表')).toBeInTheDocument()
     expect(screen.getByText('李四老师')).toBeInTheDocument()
@@ -283,7 +309,7 @@ describe('Dashboard view (v2)', () => {
     renderWithApp(<Dashboard />)
     await screen.findByText('暂时无法加载订阅')
     expect(screen.getByText('订阅状态暂不可用')).toBeInTheDocument()
-    expect(screen.queryByText('0 / 5 个订阅')).not.toBeInTheDocument()
+    expect(screen.queryByText(/外部订阅额度/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新加载' })).toBeInTheDocument()
 
     mockApi.getSubscriptions.mockResolvedValue(mockList([mockSubscription()]))

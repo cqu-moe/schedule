@@ -187,6 +187,12 @@ export async function requestExternalManualSync(
           AND NOT EXISTS (SELECT 1 FROM subscriptions
             WHERE id=? AND user_id=? AND sync_run_id=? AND sync_status='queued')`)
         .bind(now, userId, quotaDate, runId, sub.id, userId, runId),
+      env.DB.prepare(`INSERT INTO external_manual_refresh_reservations (run_id,user_id,quota_date)
+        SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM subscriptions
+          WHERE id=? AND user_id=? AND sync_run_id=? AND sync_status='queued')
+          AND EXISTS (SELECT 1 FROM external_manual_refresh_usage
+            WHERE user_id=? AND quota_date=? AND last_run_id=?)`)
+        .bind(runId, userId, quotaDate, sub.id, userId, runId, userId, quotaDate, runId),
     ]);
     claimed = (results[1].meta.changes ?? 0) === 1;
   }
@@ -234,24 +240,27 @@ export async function requestExternalManualSync(
         requestedAt: Date.parse(now),
       }, "failure", "QUEUE_UNAVAILABLE");
     }
-    if (won) {
-      // Refund and release cooldown atomically. The run/timestamp guard makes
-      // this idempotent and cannot refund a newer request's charge.
-      await env.DB.batch([
-        env.DB.prepare(`UPDATE external_manual_refresh_usage SET
-          used_count=CASE WHEN used_count>0 THEN used_count-1 ELSE 0 END,updated_at=?
-          WHERE user_id=? AND quota_date=? AND EXISTS (
-            SELECT 1 FROM subscriptions WHERE id=? AND sync_run_id=? AND manual_refresh_at=?
-              AND sync_status='error' AND sync_error_code='QUEUE_UNAVAILABLE')`)
-          .bind(new Date().toISOString(), userId, quotaDate, sub.id, runId, now),
-        env.DB.prepare(`UPDATE subscriptions SET manual_refresh_at=NULL
-          WHERE id=? AND sync_run_id=? AND manual_refresh_at=?
-            AND sync_status='error' AND sync_error_code='QUEUE_UNAVAILABLE'`)
-          .bind(sub.id, runId, now),
-      ]);
-    }
+    // Consume the enqueue receipt atomically, independently of subscription/run
+    // survival and of later reservations against the same daily aggregate.
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE external_manual_refresh_usage SET
+        used_count=CASE WHEN used_count>0 THEN used_count-1 ELSE 0 END,updated_at=?
+        WHERE user_id=? AND quota_date=? AND EXISTS (
+          SELECT 1 FROM external_manual_refresh_reservations
+          WHERE run_id=? AND user_id=? AND quota_date=?)`)
+        .bind(new Date().toISOString(), userId, quotaDate, runId, userId, quotaDate),
+      env.DB.prepare("DELETE FROM external_manual_refresh_reservations WHERE run_id=? AND user_id=? AND quota_date=?")
+        .bind(runId, userId, quotaDate),
+      env.DB.prepare(`UPDATE subscriptions SET manual_refresh_at=NULL
+        WHERE id=? AND sync_run_id=? AND manual_refresh_at=?
+          AND sync_status='error' AND sync_error_code='QUEUE_UNAVAILABLE'`)
+        .bind(sub.id, runId, now),
+    ]);
     throw error;
   }
+
+  await env.DB.prepare("DELETE FROM external_manual_refresh_reservations WHERE run_id=? AND user_id=? AND quota_date=?")
+    .bind(runId, userId, quotaDate).run();
 
   return {
     status: "queued",

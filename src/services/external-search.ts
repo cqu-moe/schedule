@@ -82,22 +82,24 @@ async function digest(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** Call only after current user capability and binding checks. The trusted term pointer
- * expires with the response after 60s; a term transition cannot inherit a long-lived directory. */
-export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">): Promise<ExternalSearchResult | Response> {
+/** Call only after current user capability and binding checks. Lifecycle reconciliation
+ * requests a fresh observation; the short directory cache is only for interactive search. */
+export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">, options: { fresh?: boolean } = {}): Promise<ExternalSearchResult | Response> {
   if (!env.AUTH.cquExternalSearch) return searchError("UNAVAILABLE");
   const fingerprint = await digest([userId, input.sourceType, input.departmentId ?? "", input.grade ?? "", input.keyword ?? "", input.courseId ?? "", input.expectedSessionId ?? ""]);
   const prefix = `external-search:v1:${fingerprint}`;
-  try {
-    const term = await env.CACHE.get(`${prefix}:current`);
-    if (term) {
-      const cached = await env.CACHE.get(`${prefix}:${await digest(term)}`, "json");
-      if (record(cached) && typeof cached.expiresAt === "number" && cached.expiresAt > Date.now()) {
-        const result = parseResult(cached.result, input.sourceType);
-        if (result?.session.id === term) return result;
+  if (!options.fresh) {
+    try {
+      const term = await env.CACHE.get(`${prefix}:current`);
+      if (term) {
+        const cached = await env.CACHE.get(`${prefix}:${await digest(term)}`, "json");
+        if (record(cached) && typeof cached.expiresAt === "number" && cached.expiresAt > Date.now()) {
+          const result = parseResult(cached.result, input.sourceType);
+          if (result?.session.id === term) return result;
+        }
       }
-    }
-  } catch { /* A cache outage must not prevent a fresh authorized search. */ }
+    } catch { /* A cache outage must not prevent a fresh authorized search. */ }
+  }
   let raw: unknown;
   try {
     raw = await env.AUTH.cquExternalSearch({ ...input, clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET, userId, deadlineAt: Math.min(input.deadlineAt ?? Infinity, Date.now() + 90_000) });

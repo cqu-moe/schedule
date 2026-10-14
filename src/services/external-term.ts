@@ -79,7 +79,7 @@ export async function processExternalTermCheck(env: Env, message: Message<Schedu
     const args = { clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET, userId };
     const caps = observed.results.length ? await env.AUTH.getCaps?.(args) : null;
     if (caps?.calendar.external === true && env.AUTH.cquExternalSearch && Date.now() < deadlineAt) {
-      const result = await searchExternal(env, userId, { sourceType: "department", deadlineAt });
+      const result = await searchExternal(env, userId, { sourceType: "department", deadlineAt }, { fresh: true });
       if (!(result instanceof Response) && Date.now() < deadlineAt) {
         const currentCaps = await env.AUTH.getCaps?.(args);
         if (currentCaps?.calendar.external === true && Date.now() < deadlineAt) {

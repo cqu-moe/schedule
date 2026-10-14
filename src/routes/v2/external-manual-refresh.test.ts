@@ -324,6 +324,53 @@ describe("new external manual refresh quota", () => {
       WHERE user_id=? AND quota_date='2026-09-06'`).bind(userId).first()).toEqual({ used_count: 1 });
   });
 
+  it.each(["deleted", "expired"])("refunds failed enqueue after the reserved subscription is %s", async lifecycle => {
+    const userId = `lost-reservation-${crypto.randomUUID()}`;
+    const sid = await seedExternalSubscription(userId, "one");
+    const other = await seedExternalSubscription(userId, "two");
+    const app = makeApp(userId);
+    let reject!: (error: Error) => void;
+    app.send.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const pending = app.request(`/subscriptions/${sid}/syncs`);
+    await vi.waitFor(() => expect(app.send).toHaveBeenCalledOnce());
+    if (lifecycle === "deleted") {
+      expect((await app.request(`/subscriptions/${sid}`, { method: "DELETE" })).status).toBe(204);
+    } else {
+      // Independently owned term-expiration transaction clears the run identity.
+      await env.DB.prepare("UPDATE subscriptions SET external_state='expired',is_active=0,sync_run_id=NULL,target_revision=target_revision+1 WHERE id=?")
+        .bind(sid).run();
+    }
+    reject(new Error("queue rejected"));
+    expect((await pending).status).toBe(500);
+    expect(await (await app.request("/subscriptions", { method: "GET" })).json()).toMatchObject({ manual_remaining: 1 });
+    const next = await app.request(`/subscriptions/${other}/syncs`);
+    expect(next.status).toBe(202);
+    expect(await next.json()).toMatchObject({ manual_remaining: 0 });
+  });
+
+  it("refunds only the rejected reservation after another subscription has spent a newer unit", async () => {
+    const userId = `overlapping-reservations-${crypto.randomUUID()}`;
+    const first = await seedExternalSubscription(userId, "one");
+    const second = await seedExternalSubscription(userId, "two");
+    const third = await seedExternalSubscription(userId, "three");
+    const app = makeApp(userId, { ...CAPS, external_manual_refresh: 2 });
+    let reject!: (error: Error) => void;
+    app.send.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const pending = app.request(`/subscriptions/${first}/syncs`);
+    await vi.waitFor(() => expect(app.send).toHaveBeenCalledOnce());
+    const accepted = await app.request(`/subscriptions/${second}/syncs`);
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toMatchObject({ manual_remaining: 0 });
+    expect((await app.request(`/subscriptions/${first}`, { method: "DELETE" })).status).toBe(204);
+    reject(new Error("queue rejected"));
+    expect((await pending).status).toBe(500);
+    expect(await (await app.request("/subscriptions", { method: "GET" })).json()).toMatchObject({ manual_remaining: 1 });
+    expect((await app.request(`/subscriptions/${third}/syncs`)).status).toBe(202);
+    expect((await app.request(`/subscriptions/${second}/syncs`)).status).toBe(202);
+    expect(await (await app.request("/subscriptions", { method: "GET" })).json()).toMatchObject({ manual_remaining: 0 });
+    expect(app.send).toHaveBeenCalledTimes(3);
+  });
+
   it("atomically admits one daily task across concurrent different subscriptions", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z"));

@@ -1,6 +1,7 @@
 import { externalAvailability } from "../config/external-availability";
 import { externalAutomaticInterval } from "./external-automatic-scheduling";
 import { expireCourseSubscriptions } from "./external-term";
+import { searchExternal } from "./external-search";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Env } from "../types";
@@ -82,6 +83,20 @@ export async function processExternalSyncMessage(env: Env, message: Message<Sche
   } catch { payload = { error: "EXTERNAL_NETWORK_ERROR" }; }
   if (payload && typeof payload === "object" && "error" in payload) {
     const rawCode = typeof payload.error === "string" ? payload.error : "EXTERNAL_SYNC_UNAVAILABLE";
+    if (rawCode === "CURRENT_SESSION_CHANGED" && sub.sourceType === "course" && Date.now() < deadlineAt) {
+      if (!(await reconcile(await currentCaps(env, sub.userId)))) return;
+      // The error carries no trusted term. Observe school state afresh, and fence
+      // expiration to the original target/run so a late reply cannot expire a reselection.
+      const term = await searchExternal(env, sub.userId, { sourceType: "department", deadlineAt }, { fresh: true });
+      if (!(term instanceof Response) && term.session.id !== sub.sessionId && Date.now() < deadlineAt) {
+        if (!(await reconcile(await currentCaps(env, sub.userId)))) return;
+        if (Date.now() < deadlineAt) {
+          await expireCourseSubscriptions(env.DB, sub.userId, term.session.id,
+            { target: { id: sub.id, revision: sub.targetRevision, runId } });
+          message.ack(); return;
+        }
+      }
+    }
     if (RETRY_CODES.has(rawCode) && (message.attempts ?? 1) < 3 && Date.now() < deadlineAt) {
       await markSyncRetrying(db, sub.id, runId, { code: "EXTERNAL_RETRYING", message: "学校服务暂时不可用，正在自动重试" });
       message.retry({ delaySeconds: (message.attempts ?? 1) === 1 ? 30 : 120 });

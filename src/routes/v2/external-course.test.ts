@@ -48,8 +48,8 @@ function harness() {
     const response = await request("/subscriptions", { method: "POST", body: JSON.stringify({ sourceType: "course", sourceId: "class-02", sourceName: "客户端伪造名称", sessionId: "current", selectionToken: found.selection_token }) });
     expect(response.status).toBe(201); return response.json<any>();
   }
-  async function consume() {
-    await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body: send.mock.calls[0][0], attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, testEnv);
+  async function consume(index = 0) {
+    await processScheduleSyncBatch({ queue: "schedule-sync", messages: [{ body: send.mock.calls[index][0], attempts: 1, ack: vi.fn(), retry: vi.fn() }] } as unknown as MessageBatch<any>, testEnv);
   }
   return { request, search, capture, send, catalog, classes, create, consume, userId, term, course, row, testEnv, caps };
 }
@@ -260,4 +260,69 @@ it("bounds each producer batch and eventually checks owners beyond its first bat
   await consumeTermChecks(app); expect(search).toHaveBeenCalledTimes(32);
   await runTermCheck(app); expect(search).toHaveBeenCalledTimes(33);
   expect(new Set(search.mock.calls.map(([args]: any) => args.userId)).size).toBe(33);
+});
+
+it("uses a fresh school term after an older directory response was cached", async () => {
+  const app = harness();
+  app.search.mockResolvedValueOnce({ contractVersion: 1, sourceType: "department",
+    session: { id: "previous", name: "上学期" }, departments: [] } as any);
+  expect((await app.request("/external/departments")).status).toBe(200);
+  const created = await app.create(); await app.consume();
+  app.search.mockResolvedValue({ contractVersion: 1, sourceType: "department",
+    session: app.term, departments: [] } as any);
+  await runTermCheck(app);
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({
+    external_state: "active", session_id: "current", sync_status: "success",
+  });
+  expect((await app.request(`/calendar/${created.links[0].token}/calendar.ics`)).status).toBe(200);
+});
+
+it("promptly expires every course URL when Auth refuses capture after a term change", async () => {
+  const app = harness(); Object.assign(app.caps, { external_manual_refresh: 1 });
+  const created = await app.create(); await app.consume();
+  const extra = await (await app.request(`/subscriptions/${created.id}/links`, {
+    method: "POST", body: JSON.stringify({ formats: ["ics"] }),
+  })).json<any>();
+  app.search.mockResolvedValue({ contractVersion: 1, sourceType: "department",
+    session: app.term, departments: [] } as any);
+  await runTermCheck(app);
+  app.search.mockResolvedValue({ contractVersion: 1, sourceType: "department",
+    session: { id: "next", name: "下学期" }, departments: [] } as any);
+  app.capture.mockResolvedValue({ error: "CURRENT_SESSION_CHANGED", session: { id: "untrusted" } });
+  expect((await app.request(`/subscriptions/${created.id}/syncs`, { method: "POST" })).status).toBe(202);
+  await app.consume(app.send.mock.calls.length - 1);
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({
+    external_state: "expired", sync_error_code: "EXTERNAL_TERM_EXPIRED",
+  });
+  for (const token of [created.links[0].token, extra.token])
+    expect((await app.request(`/calendar/${token}/calendar.ics`)).status).toBe(403);
+  expect((await app.request(`/subscriptions/${created.id}/syncs`, { method: "POST" })).status).toBe(409);
+});
+
+
+it.each([
+  { label: "unavailable", result: { error: "BROWSER_BUSY" } },
+  { label: "unchanged", result: { contractVersion: 1, sourceType: "department", session: { id: "current", name: "当前学期" }, departments: [] } },
+])("does not infer expiration from a term-change error when the fresh term is $label", async ({ result }) => {
+  const app = harness(); const created = await app.create();
+  app.capture.mockResolvedValue({ error: "CURRENT_SESSION_CHANGED", session: { id: "untrusted" } });
+  app.search.mockResolvedValue(result as any);
+  await app.consume();
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({
+    external_state: "active", last_synced_at: null, sync_status: "error",
+  });
+});
+
+it("fences a term-change error reconciliation against a newer target selected during the fresh check", async () => {
+  const app = harness(); const created = await app.create();
+  app.capture.mockResolvedValue({ error: "CURRENT_SESSION_CHANGED" });
+  app.search.mockImplementationOnce(async () => {
+    await env.DB.prepare("UPDATE subscriptions SET target_revision=target_revision+1,session_id='new-selected',external_state='reselecting',is_active=0,sync_run_id='new-run',sync_status='queued' WHERE id=?")
+      .bind(created.id).run();
+    return { contractVersion: 1, sourceType: "department", session: { id: "older-check", name: "旧检查学期" }, departments: [] } as any;
+  });
+  await app.consume();
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({
+    external_state: "reselecting", session_id: "new-selected", sync_run_id: "new-run", sync_status: "queued",
+  });
 });

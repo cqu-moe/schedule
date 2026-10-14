@@ -470,8 +470,9 @@ export default function Dashboard() {
 
   const subscriptions = data.subscriptions
   const count = subscriptions.length
+  const creationCount = subscriptions.filter(sub => sub.source_version === 1).length
   const subLimit = session.quota('sub_limit')
-  const atLimit = subLimit !== null && count >= subLimit
+  const atLimit = subLimit !== null && creationCount >= subLimit
   const shareLimit = session.quota('share_limit')
   const shareLinkCount = subscriptions.reduce(
     (sum, sub) => sum + sub.links.filter((l) => !l.is_default).length,
@@ -897,7 +898,7 @@ export default function Dashboard() {
               onClick={() => void handleSyncAll()}
             />
             {atLimit ? (
-              <Button variant="outline" size="default" disabled title="已达订阅上限">
+              <Button variant="outline" size="default" disabled title="已达外部订阅上限">
                 添加订阅
               </Button>
             ) : (
@@ -918,8 +919,11 @@ export default function Dashboard() {
             ? '正在读取订阅'
             : loadError
               ? '订阅状态暂不可用'
-              : `${count}${subLimit !== null ? ` / ${subLimit}` : ''} 个订阅`}
+              : `${count} 个订阅`}
         </p>
+        {!loading && !loadError && <p className="dash-sync-status">
+          外部订阅额度 {creationCount} / {subLimit ?? '无限'}
+        </p>}
         <p className={session.can('sync') ? 'dash-sync-status is-on' : 'dash-sync-status'}>
           <span className="dash-status-dot" aria-hidden="true" />
           {session.can('sync') ? '自动同步已开启' : '自动同步未开通'}
@@ -936,7 +940,7 @@ export default function Dashboard() {
           <span className="dash-status-dot" aria-hidden="true" />
           {externalManualRefreshLabel(session.caps, externalManualRemaining)}
         </p>
-        {atLimit && <p className="dash-limit-note">已达订阅上限</p>}
+        {atLimit && <p className="dash-limit-note">已达外部订阅上限</p>}
       </div>
 
       {loading ? (
