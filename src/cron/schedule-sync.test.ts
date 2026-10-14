@@ -489,14 +489,17 @@ describe("enqueueScheduleSync (producer)", () => {
     expect(sendBatch).not.toHaveBeenCalled();
   });
 
-  it("does NOT enqueue external subs (no external sync path; no endless no-op churn)", async () => {
-    // A due external sub has no harvest path (Option A): the consumer ack-skips it
-    // without touching lastSyncedAt, so without producer-side filtering it would
-    // be re-selected every hourly cron forever. The producer must exclude external
-    // sourceTypes UNCONDITIONALLY so they are never enqueued. A due personal sub for
-    // the same user must still be enqueued.
+  it("does NOT enqueue legacy external subs (frozen; no personal fallback)", async () => {
+    // Legacy source_version=0 rows stay frozen. A due personal sub for the same
+    // user must still use the personal path.
     const personalSid = await insertSub({ sourceType: "personal_all", sourceId: "user-1", lastSyncedAt: null });
-    await insertSub({ sourceType: "instructor", sourceId: "T-42", isPersonal: false, lastSyncedAt: null });
+    await insertSub({
+      sourceType: "instructor",
+      sourceVersion: 0,
+      sourceId: "T-42",
+      isPersonal: false,
+      lastSyncedAt: null,
+    });
 
     const sendBatch = vi.fn().mockResolvedValue(undefined);
     const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
@@ -507,15 +510,15 @@ describe("enqueueScheduleSync (producer)", () => {
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     const ids = batch.map((m) => m.body.subscriptionId);
     expect(ids).toContain(personalSid); // personal still enqueued
-    expect(ids).toHaveLength(1); // external NOT enqueued
+    expect(ids).toHaveLength(1); // legacy external NOT enqueued
   });
 
   it("reconciles a frozen external sub to is_active=false on cap revocation, AND does not enqueue it", async () => {
-    // An owner LOSES the `external` cap (revocation) on an external sub that has no
-    // sync path (Option A). The producer must STILL run the is_active reconciliation
+    // An owner LOSES the `external` cap (revocation) on a frozen external sub.
+    // The producer must STILL run the is_active reconciliation
     // for that sub — so the revoked external sub flips inactive and its public link
-    // stops serving — yet it must NOT be enqueued (external is never enqueued). The
-    // external skip therefore has to run AFTER the caps/is_active reconciliation.
+    // stops serving — yet it must NOT be enqueued. The
+    // legacy skip therefore has to run AFTER the caps/is_active reconciliation.
     const extSid = await insertSub({
       userId: "user-ext-rev",
       sourceType: "instructor",
@@ -679,7 +682,7 @@ describe("processScheduleSyncBatch (consumer)", () => {
     expect(harvest).not.toHaveBeenCalledWith(expect.anything(), "20219999");
   });
 
-  it("freezes external subscriptions: acks without retry, no harvest, lastSyncedAt unchanged", async () => {
+  it("freezes legacy external subscriptions: acks without retry, no harvest, lastSyncedAt unchanged", async () => {
     // Pre-set lastSyncedAt to a known value so we can prove the freeze does NOT
     // overwrite it (data preserved at the last-synced state, not deleted/reset).
     const frozenAt = "2024-01-01T00:00:00.000Z";
