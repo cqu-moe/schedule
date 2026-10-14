@@ -189,12 +189,13 @@ function buildExternalCoursesIcs(
   return calendars[0] ?? generateCoursesIcs([], semesterStart, baseNamespace);
 }
 
-function parseAdminClassRow(
+function parseExternalRow(
   row: unknown,
   sourceId: string,
   maxSection: number,
+  sourceType: ExternalSourceType,
 ): CourseEntry[] {
-  if (!isPlainObject(row) || !ownsAdminClassRow(row, sourceId)) {
+  if (!isPlainObject(row) || !(sourceType === "admin_class" ? ownsAdminClassRow(row, sourceId) : Array.isArray(row.instructorIdList) && row.instructorIdList.includes(sourceId))) {
     throw new ExternalCaptureError(
       "TARGET_MISMATCH",
       "The external capture target does not own every timetable row.",
@@ -247,7 +248,7 @@ export function buildExternalCaptureResult(
   payload: unknown,
   expected: ExpectedSource,
 ): ExternalCaptureResult {
-  if (expected.sourceType !== "admin_class") {
+  if (expected.sourceType !== "admin_class" && expected.sourceType !== "instructor") {
     throw new ExternalCaptureError(
       "UNSUPPORTED_SOURCE_TYPE",
       "This external source type is not supported yet.",
@@ -322,7 +323,7 @@ export function buildExternalCaptureResult(
   let skippedCount = 0;
 
   for (const row of rows) {
-    const parsed = parseAdminClassRow(row, sourceId, maxSection);
+    const parsed = parseExternalRow(row, sourceId, maxSection, expected.sourceType);
     if (parsed.length === 0) {
       skippedCount += 1;
       continue;

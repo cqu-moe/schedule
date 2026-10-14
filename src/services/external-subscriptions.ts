@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq } from "drizzle-orm";
 import type { Env } from "../types";
-import { calendarLinks, subscriptions, LINK_FORMATS } from "../db/schema";
+import { calendarLinks, subscriptions, LINK_FORMATS, type ExternalSourceType } from "../db/schema";
 import type { CalendarCaps, CquBindStatus } from "./auth-rpc";
 import { resolveQuota } from "./auth-rpc";
 import { assertFlag, EntitlementError } from "../middleware/entitlements";
@@ -11,7 +11,7 @@ import { captureScheduleSyncStarted, captureScheduleSyncTerminal } from "../lib/
 import { markSyncError } from "./sync-status";
 
 export async function createExternalSubscription(env: Env, userId: string, caps: CalendarCaps, binding: CquBindStatus | undefined, body: Record<string, unknown>, lifecycle?: ExecutionContext) {
-  if (!externalAvailability(env).create_types.includes(body.sourceType as "admin_class") || !env.AUTH.cquExternalCapture) {
+  if (!externalAvailability(env).create_types.includes(body.sourceType as ExternalSourceType) || !env.AUTH.cquExternalCapture) {
     throw new EntitlementError("EXTERNAL_UNAVAILABLE", 503, "外部订阅功能暂不可用");
   }
   assertFlag(caps, "external", "外部订阅");

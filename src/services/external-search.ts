@@ -5,7 +5,7 @@ export interface ExternalSearchArgs {
   clientId: string;
   clientSecret: string;
   userId: string;
-  sourceType: "department" | "admin_class";
+  sourceType: "department" | "admin_class" | "instructor";
   departmentId?: string;
   departmentName?: string;
   grade?: string;
@@ -17,7 +17,7 @@ export interface ExternalDepartment { id: string; name: string; children?: Exter
 export interface ExternalItem { id: string; name: string; extra: string }
 export type ExternalSearchResult =
   | { contractVersion: 1; sourceType: "department"; session: ExternalSession; departments: ExternalDepartment[] }
-  | { contractVersion: 1; sourceType: "admin_class"; session: ExternalSession; items: ExternalItem[]; truncated: boolean };
+  | { contractVersion: 1; sourceType: "admin_class" | "instructor"; session: ExternalSession; items: ExternalItem[]; truncated: boolean };
 
 type RecordValue = Record<string, unknown>;
 function record(v: unknown): v is RecordValue { return typeof v === "object" && v !== null && !Array.isArray(v); }

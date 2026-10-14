@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import type { ExternalSearchResult } from "./external-search";
 import { EntitlementError } from "../middleware/entitlements";
 
-type Search = Extract<ExternalSearchResult, { sourceType: "admin_class" }>;
+type Search = Exclude<ExternalSearchResult, { sourceType: "department" }>;
 interface Selection { userId: string; expiresAt: number; search: Search }
 
 /** A short-lived, owner-bound receipt for a real result; no browser credentials. */
