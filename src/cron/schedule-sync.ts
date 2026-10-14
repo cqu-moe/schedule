@@ -59,6 +59,11 @@ import { dispatchPendingPersonalSetups } from "../services/personal-setup-dispat
 import { personalSubscriptionMode } from "../config/personal-subscription-mode";
 import { executePersonalSync } from "../services/personal-subscription-sync";
 import { resolveOwnedSubscription } from "../services/personal-subscription-views";
+import {
+  claimExternalAutomaticRun,
+  externalAutomaticInterval,
+  requiresUserActionAfterSyncFailure,
+} from "../services/external-automatic-scheduling";
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
@@ -154,10 +159,15 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       id: subscriptions.id,
       userId: subscriptions.userId,
       sourceType: subscriptions.sourceType,
+      sourceVersion: subscriptions.sourceVersion,
+      externalState: subscriptions.externalState,
+      targetRevision: subscriptions.targetRevision,
       isActive: subscriptions.isActive,
       lastSyncedAt: subscriptions.lastSyncedAt,
+      syncRunId: subscriptions.syncRunId,
       syncStatus: subscriptions.syncStatus,
       syncRequestedAt: subscriptions.syncRequestedAt,
+      syncErrorCode: subscriptions.syncErrorCode,
     })
     .from(subscriptions);
 
@@ -218,13 +228,33 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
         ));
     }
 
-    // 外部订阅 HARD-SKIP 入队(Option A,无条件,与 consumer 一致):本架构没有外部
-    // 课表的 harvest 路径(该能力已在本 PR 移除),外部订阅永不入队同步。若仍入队,
-    // consumer 会 ack-skip 但不更新 lastSyncedAt,每次 cron 又因"due"重新入队
-    // → 永不停止的空转入队 + 日志刷屏。放在 is_active 对账之后,故被吊销 external 权益
-    // 的外部订阅仍会被对账成 inactive(吊销照常生效),只是不入队。EXTERNAL_DISABLED
-    // 不参与此处判断,仅控制面向用户的提示/守卫。
-    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) continue;
+    if (EXTERNAL_SOURCE_TYPES.has(sub.sourceType)) {
+      // Legacy external rows remain frozen. New v1 rows use their independent
+      // automatic interval and the external capture consumer; neither ever falls
+      // back to the personal interval or harvest provider.
+      if (sub.sourceVersion !== 1 || sub.externalState !== "active") continue;
+      if (!entitled) continue;
+      const automaticInterval = externalAutomaticInterval(caps);
+      if (automaticInterval === null) continue;
+      if (requiresUserActionAfterSyncFailure(sub.syncErrorCode)) continue;
+
+      // Failed automatic attempts share the existing hourly retry floor.
+      if (sub.syncStatus === "error" && !isDue(sub.syncRequestedAt, 60, now)) continue;
+      if (isDue(sub.lastSyncedAt, automaticInterval, now)) {
+        const runId = await claimExternalAutomaticRun(env.DB, sub);
+        if (runId) {
+          due.push({
+            subscriptionId: sub.id,
+            userId: sub.userId,
+            sourceVersion: 1,
+            targetRevision: sub.targetRevision,
+            trigger: "cron",
+            runId,
+          });
+        }
+      }
+      continue;
+    }
 
     // Entitlement gate: don't sync subs whose required cap was revoked.
     if (!entitled) continue;
@@ -264,6 +294,11 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
     );
     return;
   }
+
+  due.sort((left, right) =>
+    left.userId.localeCompare(right.userId) ||
+    left.subscriptionId.localeCompare(right.subscriptionId)
+  );
 
   try {
     await spreadEnqueue(

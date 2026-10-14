@@ -127,6 +127,8 @@ export interface SubscriptionList {
 export type ExternalSourceType = Extract<SourceType, 'instructor' | 'room' | 'laboratory' | 'course' | 'admin_class'>
 export interface ExternalSession { id: string; name: string }
 export interface ExternalSearchResponse {
+  stage?: 'courses' | 'classes'
+  course?: { id: string; name: string }
   selection_token: string
   session: ExternalSession
   results: SearchResult[]

@@ -3,7 +3,7 @@ import type { SessionEnv } from "../../middleware/session";
 import { assertFlag, EntitlementError } from "../../middleware/entitlements";
 import { externalAvailability } from "../../config/external-availability";
 import { findDepartment, searchExternal } from "../../services/external-search";
-import { issueExternalSelection } from "../../services/external-target";
+import { issueExternalSelection, resolveExternalCourseSelection } from "../../services/external-target";
 import { errorResponse } from "../../utils/error";
 
 const app = new Hono<SessionEnv>();
@@ -32,7 +32,7 @@ app.get("/search", async (c) => {
   const denied = authorize(c);
   if (denied) return denied;
   const sourceType = c.req.query("source_type");
-  if ((sourceType !== "admin_class" && sourceType !== "instructor" && sourceType !== "room" && sourceType !== "laboratory") || !externalAvailability(c.env).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
+  if ((sourceType !== "admin_class" && sourceType !== "instructor" && sourceType !== "room" && sourceType !== "laboratory" && sourceType !== "course") || !externalAvailability(c.env).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
   if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
   const keyword = (c.req.query("keyword") ?? "").trim();
   const departmentId = c.req.query("department_id") ?? "";
@@ -51,12 +51,35 @@ app.get("/search", async (c) => {
     if (!department) return errorResponse("BAD_REQUEST", "请选择当前院系列表中的学院", 400);
     departmentName = department.name;
   }
-  const result = await searchExternal(c.env, userId, { sourceType, keyword, departmentId, departmentName, grade });
+  const queryType = sourceType === "course" ? "course_catalog" : sourceType;
+  const result = await searchExternal(c.env, userId, { sourceType: queryType, keyword, departmentId, departmentName, grade });
   if (result instanceof Response) return result;
-  if (result.sourceType !== sourceType) return errorResponse("EXTERNAL_INVALID_RESPONSE", "搜索结果暂不可用", 502);
+  if (result.sourceType !== queryType) return errorResponse("EXTERNAL_INVALID_RESPONSE", "搜索结果暂不可用", 502);
   const selectionToken = await issueExternalSelection(c.env, userId, result).catch(() => null);
   if (!selectionToken) return errorResponse("EXTERNAL_UNAVAILABLE", "暂时无法保存搜索结果，请稍后重试", 503);
-  return c.json({ session: result.session, results: result.items, truncated: result.truncated, selection_token: selectionToken });
+  return c.json({ session: result.session, results: result.items, truncated: result.truncated, selection_token: selectionToken, ...(sourceType === "course" ? { stage: "courses" } : {}) });
+});
+
+app.get("/teaching-classes", async (c) => {
+  const denied = authorize(c);
+  if (denied) return denied;
+  if (!externalAvailability(c.env).search_types.includes("course")) return errorResponse("EXTERNAL_UNAVAILABLE", "教学班订阅暂不可用", 503);
+  if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
+  const userId = c.get("user").id;
+  try {
+    const selected = await resolveExternalCourseSelection(c.env, userId, c.req.query("selection_token"), c.req.query("course_id"));
+    const result = await searchExternal(c.env, userId, { sourceType: "course", courseId: selected.course.id,
+      courseName: selected.course.name, expectedSessionId: selected.session.id });
+    if (result instanceof Response) return result;
+    if (result.sourceType !== "course" || result.course.id !== selected.course.id || result.course.name !== selected.course.name || result.session.id !== selected.session.id) {
+      return errorResponse("EXTERNAL_SELECTION_EXPIRED", "课程或当前学期已变化，请重新选择", 409);
+    }
+    const selectionToken = await issueExternalSelection(c.env, userId, result);
+    return c.json({ session: result.session, course: result.course, stage: "classes", results: result.items, truncated: result.truncated, selection_token: selectionToken });
+  } catch (error) {
+    if (error instanceof EntitlementError) return errorResponse(error.code, error.message, error.status);
+    return errorResponse("EXTERNAL_UNAVAILABLE", "暂时无法查询教学班，请稍后重试", 503);
+  }
 });
 
 app.get("/departments", async (c) => {

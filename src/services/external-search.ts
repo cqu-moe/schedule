@@ -5,11 +5,14 @@ export interface ExternalSearchArgs {
   clientId: string;
   clientSecret: string;
   userId: string;
-  sourceType: "department" | "admin_class" | "instructor" | "room" | "laboratory";
+  sourceType: "department" | "admin_class" | "instructor" | "room" | "laboratory" | "course_catalog" | "course";
   departmentId?: string;
   departmentName?: string;
   grade?: string;
   keyword?: string;
+  courseId?: string;
+  courseName?: string;
+  expectedSessionId?: string;
   deadlineAt?: number;
 }
 export interface ExternalSession { id: string; name: string }
@@ -17,7 +20,8 @@ export interface ExternalDepartment { id: string; name: string; children?: Exter
 export interface ExternalItem { id: string; name: string; extra: string }
 export type ExternalSearchResult =
   | { contractVersion: 1; sourceType: "department"; session: ExternalSession; departments: ExternalDepartment[] }
-  | { contractVersion: 1; sourceType: "admin_class" | "instructor" | "room" | "laboratory"; session: ExternalSession; items: ExternalItem[]; truncated: boolean };
+  | { contractVersion: 1; sourceType: "admin_class" | "instructor" | "room" | "laboratory" | "course_catalog"; session: ExternalSession; items: ExternalItem[]; truncated: boolean }
+  | { contractVersion: 1; sourceType: "course"; course: { id: string; name: string }; session: ExternalSession; items: ExternalItem[]; truncated: boolean };
 
 type RecordValue = Record<string, unknown>;
 function record(v: unknown): v is RecordValue { return typeof v === "object" && v !== null && !Array.isArray(v); }
@@ -49,6 +53,10 @@ function parseResult(value: unknown, sourceType: ExternalSearchArgs["sourceType"
     if (!record(row) || !text(row.id, 100) || !text(row.name) || typeof row.extra !== "string" || row.extra.length > 200 || /[\u0000-\u001f\u007f]/.test(row.extra)) return null;
     items.push({ id: row.id, name: row.name, extra: row.extra });
   }
+  if (sourceType === "course") {
+    if (!record(value.course) || !text(value.course.id, 100) || !text(value.course.name)) return null;
+    return { contractVersion: 1, sourceType, session, items, course: { id: value.course.id, name: value.course.name }, truncated: value.truncated || value.items.length > 200 };
+  }
   return { contractVersion: 1, sourceType, session, items, truncated: value.truncated || value.items.length > 200 };
 }
 function searchError(code: unknown): Response {
@@ -61,6 +69,8 @@ function searchError(code: unknown): Response {
       return errorResponse("EXTERNAL_TARGET_FORBIDDEN", "当前账号无权查看该目标", 403);
     case "BUSY": case "BROWSER_BUSY": case "SESSION_BUSY": case "RATE_LIMITED":
       return errorResponse("EXTERNAL_BUSY", "学校会话正在处理其他请求，请稍后重试", 503);
+    case "CURRENT_SESSION_CHANGED":
+      return errorResponse("EXTERNAL_SELECTION_EXPIRED", "学校当前学期已变化，请重新选择课程和教学班", 409);
     case "SCHEMA_INVALID":
       return errorResponse("EXTERNAL_INVALID_RESPONSE", "学校返回的数据暂时无法识别，请稍后重试", 502);
     default:
@@ -76,7 +86,7 @@ async function digest(value: unknown): Promise<string> {
  * expires with the response after 60s; a term transition cannot inherit a long-lived directory. */
 export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">): Promise<ExternalSearchResult | Response> {
   if (!env.AUTH.cquExternalSearch) return searchError("UNAVAILABLE");
-  const fingerprint = await digest([userId, input.sourceType, input.departmentId ?? "", input.grade ?? "", input.keyword ?? ""]);
+  const fingerprint = await digest([userId, input.sourceType, input.departmentId ?? "", input.grade ?? "", input.keyword ?? "", input.courseId ?? "", input.expectedSessionId ?? ""]);
   const prefix = `external-search:v1:${fingerprint}`;
   try {
     const term = await env.CACHE.get(`${prefix}:current`);

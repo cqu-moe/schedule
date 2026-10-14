@@ -100,6 +100,9 @@ export default function Add() {
   const [configStatus, setConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [currentTerm, setCurrentTerm] = useState<ExternalSession | null>(null)
   const [truncated, setTruncated] = useState(false)
+  const [selectedCourse, setSelectedCourse] = useState<SearchResult | null>(null)
+  const catalogToken = useRef<string | null>(null)
+  const courseInput = useRef<HTMLInputElement>(null)
   const [selectionToken, setSelectionToken] = useState<string | null>(null)
   const [sourceType, setSourceType] = useState<ExternalSourceType>('instructor')
   const [keyword, setKeyword] = useState('')
@@ -273,6 +276,8 @@ export default function Add() {
   }
 
   async function runSearch(request: SearchRequest) {
+    setSelectedCourse(null)
+    catalogToken.current = null
     const seq = ++searchSeq.current
     lastSearchRef.current = request
     setSearching(true)
@@ -321,11 +326,14 @@ export default function Add() {
     clearPendingSearch()
     setSearching(false)
     setSelectionToken(null)
+    setSelectedCourse(null)
+    catalogToken.current = null
     setSearchResults([])
     setTruncated(false)
   }
 
   function retrySearch() {
+    if (selectedCourse && catalogToken.current) { void selectCourse(selectedCourse, catalogToken.current); return }
     if (lastSearchRef.current) void runSearch(lastSearchRef.current)
   }
 
@@ -386,6 +394,39 @@ export default function Add() {
     } catch (err: unknown) {
       toast.error(parseApiError(err, '订阅失败'))
     }
+  }
+
+  async function selectCourse(item: SearchResult, token = selectionToken) {
+    if (!token) return
+    const seq = ++searchSeq.current
+    clearPendingSearch()
+    catalogToken.current = token
+    setSelectedCourse(item)
+    setSelectionToken(null)
+    setSearchResults([])
+    setSearching(true)
+    setSearched(false)
+    clearError()
+    try {
+      const data = await api.searchTeachingClasses(item.id, token)
+      if (seq !== searchSeq.current) return
+      setSearchResults(data.results)
+      setSelectionToken(data.selection_token)
+      setCurrentTerm(data.session)
+      setTruncated(data.truncated)
+    } catch (error) {
+      if (seq !== searchSeq.current) return
+      setErrorMessage(parseApiError(error, '教学班查询失败，请重试或重新选择课程'))
+    } finally {
+      if (seq === searchSeq.current) { setSearching(false); setSearched(true) }
+    }
+  }
+
+  function chooseAnotherCourse() {
+    invalidateSearch()
+    setSearched(false)
+    clearError()
+    requestAnimationFrame(() => courseInput.current?.focus())
   }
 
   async function handleExternalSubscribe(item: SearchResult) {
@@ -648,11 +689,12 @@ export default function Add() {
                   </div>
                 )}
 
-                {sourceType !== 'admin_class' && (
+                {sourceType !== 'admin_class' && !selectedCourse && (
                   <div className="add-search-field">
                     <Search aria-hidden />
                     <Input
                       type="search"
+                      ref={courseInput}
                       aria-label={`搜索${SOURCE_LABELS[sourceType]}`}
                       placeholder={SEARCH_PLACEHOLDERS[sourceType]}
                       value={keyword}
@@ -661,11 +703,12 @@ export default function Add() {
                   </div>
                 )}
 
-                <Button type="button" variant="outline"
+                {selectedCourse && <div className="add-field"><p>{selectedCourse.name} · 选择教学班</p><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
+                {!selectedCourse && <Button type="button" variant="outline"
                   disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
                   onClick={() => { clearPendingSearch(); void runSearch({ sourceType, keyword, departmentId: selectedDepartment, grade: selectedGrade }) }}>
                   搜索
-                </Button>
+                </Button>}
                 {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
                 {searching && (
                   <p className="add-searching" role="status">
@@ -681,7 +724,9 @@ export default function Add() {
                           <p className="add-result-name">{item.name}</p>
                           {item.extra && <p className="add-result-extra">{item.extra}</p>}
                         </div>
-                        {isExternalSubscribed(item.id) ? (
+                        {sourceType === 'course' && !selectedCourse ? (
+                          <Button type="button" size="sm" aria-label={`选择课程${item.name}`} disabled={searching || !selectionToken} onClick={() => void selectCourse(item)}>选择教学班</Button>
+                        ) : isExternalSubscribed(item.id) ? (
                           <Button
                             variant="outline"
                             size="sm"

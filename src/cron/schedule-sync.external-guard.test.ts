@@ -4,13 +4,9 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { subscriptions } from "../db/schema";
 
-// Round-4 [P1 DATA CORRUPTION] + Option A: external subscriptions must NEVER reach
-// the personal-harvest path, regardless of the EXTERNAL_DISABLED flag, because there
-// is no external harvest path in this architecture. Force the flag to FALSE here to
-// prove the consumer (and producer) skip external UNCONDITIONALLY — not because the
-// flag happens to be true. If the skip were still gated on the flag, an external sub
-// would fall through to fetchPersonalHarvest + buildPersonalSyncResult and OVERWRITE
-// the external public link with the OWNER's personal data.
+// Legacy external subscriptions must never reach the personal-harvest path. Force
+// EXTERNAL_DISABLED=false so an incorrect legacy fallback reaches personal harvest
+// and can overwrite an external public link with the owner's own data.
 vi.mock("../config/external-availability", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/external-availability")>();
   return { ...actual, EXTERNAL_DISABLED: false };
@@ -34,6 +30,7 @@ beforeAll(async () => {
   await env.DB.prepare("DROP TABLE IF EXISTS subscriptions").run();
   await env.DB.prepare(
     `CREATE TABLE subscriptions (
+      source_course_id text, source_course_name text,
       source_version integer NOT NULL DEFAULT 0,
       external_state text NOT NULL DEFAULT 'active',
       target_revision integer NOT NULL DEFAULT 0,
@@ -96,8 +93,8 @@ function makeBatch(bodies: ScheduleSyncMessage[]) {
   return { batch: { queue: "schedule-sync", messages } as unknown as MessageBatch<ScheduleSyncMessage>, messages };
 }
 
-describe("external hard-skip is UNCONDITIONAL (EXTERNAL_DISABLED=false)", () => {
-  it("consumer: an external sub is STILL ack-skipped and NEVER personal-harvested", async () => {
+describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", () => {
+  it("consumer: a legacy external sub is ack-skipped and never personal-harvested", async () => {
     // Pre-set lastSyncedAt to a known value to prove it is NOT overwritten by a
     // bogus personal harvest of the owner's data onto an external public link.
     const frozenAt = "2024-01-01T00:00:00.000Z";
@@ -124,10 +121,10 @@ describe("external hard-skip is UNCONDITIONAL (EXTERNAL_DISABLED=false)", () => 
     expect(row.lastSyncedAt).toBe(frozenAt);
   });
 
-  it("producer: a due external sub is STILL NOT enqueued, but is_active revocation still reconciles", async () => {
+  it("producer: a due legacy external sub is not enqueued, but is_active revocation still reconciles", async () => {
     // Owner LOST the `external` cap; with EXTERNAL_DISABLED=false the producer must
     // STILL reconcile is_active→false (revocation enforced) yet NOT enqueue the
-    // external sub (no sync path exists). A due personal sub still enqueues.
+    // legacy sub has no new capture path. A due personal sub still enqueues.
     const personalSid = await insertSub({
       userId: "user-ext",
       sourceType: "personal_all",
@@ -159,7 +156,7 @@ describe("external hard-skip is UNCONDITIONAL (EXTERNAL_DISABLED=false)", () => 
     const [extRow] = await db.select().from(subscriptions).where(eq(subscriptions.id, extSid));
     expect(extRow.isActive).toBe(false);
 
-    // Only the personal sub was enqueued; the external sub was NOT.
+    // Only the personal sub was enqueued; the legacy external sub was NOT.
     expect(sendBatch).toHaveBeenCalledOnce();
     const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
     const ids = batch.map((m) => m.body.subscriptionId);
@@ -167,12 +164,10 @@ describe("external hard-skip is UNCONDITIONAL (EXTERNAL_DISABLED=false)", () => 
     expect(ids).not.toContain(extSid);
   });
 
-  it("producer: a due external sub whose owner is STILL entitled is NOT enqueued (unconditional skip)", async () => {
-    // The decisive case for the UNCONDITIONAL skip: the owner still HAS the `external`
-    // cap (entitled), so the entitlement gate would NOT drop it — only the hard
-    // external skip can. With EXTERNAL_DISABLED=false the old flag-gated skip would
-    // let this entitled external sub fall through and ENQUEUE (then the consumer
-    // would personal-harvest it). The producer must skip it regardless of the flag.
+  it("producer: a due legacy external sub whose owner is still entitled is not enqueued", async () => {
+    // The owner still has `external`, so only the frozen source_version=0 guard
+    // can keep this row out of the automatic path. With EXTERNAL_DISABLED=false,
+    // an incorrect fallback would let it reach the personal harvest.
     await insertSub({
       userId: "user-ext2",
       sourceType: "instructor",
@@ -188,7 +183,160 @@ describe("external hard-skip is UNCONDITIONAL (EXTERNAL_DISABLED=false)", () => 
     await enqueueScheduleSync(testEnv);
     await env.CACHE.delete("caps:user-ext2");
 
-    // Entitled external sub is STILL not enqueued — there is no external sync path.
+    // Entitled legacy external sub is not enqueued.
     expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it("producer: new external rows use only their independent automatic interval", async () => {
+    const oldEnough = new Date(Date.now() - 16 * 60_000).toISOString();
+    await insertSub({
+      id: "external-v1-due",
+      userId: "user-external-interval",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-due",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+    });
+    await insertSub({
+      userId: "user-external-interval",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-too-recent",
+      isPersonal: false,
+      lastSyncedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    await insertSub({
+      userId: "user-external-missing",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-missing",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+    });
+    await insertSub({
+      userId: "user-external-zero",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-zero",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+    });
+    await insertSub({
+      userId: "user-external-personal-only",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-personal-only",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+    });
+    await insertSub({
+      userId: "user-external-legacy",
+      sourceType: "admin_class",
+      sourceVersion: 0,
+      sourceId: "admin-legacy",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+    });
+
+    await env.CACHE.put("caps:user-external-interval", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
+    await env.CACHE.put("caps:user-external-missing", JSON.stringify(FULL_CAPS));
+    await env.CACHE.put("caps:user-external-zero", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 0 }));
+    await env.CACHE.put("caps:user-external-personal-only", JSON.stringify({ ...FULL_CAPS, sync_interval: 15 }));
+    await env.CACHE.put("caps:user-external-legacy", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    for (const user of [
+      "user-external-interval",
+      "user-external-missing",
+      "user-external-zero",
+      "user-external-personal-only",
+      "user-external-legacy",
+    ]) await env.CACHE.delete(`caps:${user}`);
+
+    expect(sendBatch).toHaveBeenCalledOnce();
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((message) => message.body.subscriptionId)).toEqual(["external-v1-due"]);
+    expect(batch[0].body).toMatchObject({
+      sourceVersion: 1,
+      targetRevision: 0,
+      trigger: "cron",
+      runId: expect.any(String),
+    });
+  });
+
+  it("producer: terminal user-action failures stop, while transient failures keep bounded retry", async () => {
+    const oldEnough = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    await insertSub({
+      id: "external-v1-transient",
+      userId: "user-external-retry",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-transient",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+      syncStatus: "error",
+      syncErrorCode: "EXTERNAL_SYNC_UNAVAILABLE",
+      syncRequestedAt: oldEnough,
+    });
+    await insertSub({
+      userId: "user-external-retry",
+      sourceType: "admin_class",
+      sourceVersion: 1,
+      sourceId: "admin-reauth",
+      isPersonal: false,
+      lastSyncedAt: oldEnough,
+      syncStatus: "error",
+      syncErrorCode: "NEEDS_REAUTH",
+      syncRequestedAt: oldEnough,
+    });
+    await env.CACHE.put("caps:user-external-retry", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-external-retry");
+
+    const batch = sendBatch.mock.calls[0][0] as { body: ScheduleSyncMessage }[];
+    expect(batch.map((message) => message.body.subscriptionId)).toEqual(["external-v1-transient"]);
+  });
+
+  it("does not queue an obsolete due snapshot after a concurrent cron run already finished", async () => {
+    const sid = await insertSub({ userId: "user-stale-snapshot", sourceType: "admin_class", sourceVersion: 1,
+      sourceId: "class-stale-snapshot", isPersonal: false, lastSyncedAt: "2000-01-01T00:00:00.000Z", syncRunId: "old-run" });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, AUTH: { getCaps: async () => {
+      // Cap resolution occurs after the producer reads its due snapshot. A
+      // second producer and consumer finish before this invocation can claim.
+      await db.update(subscriptions).set({ syncRunId: "concurrent-finished-run", syncStatus: "success", lastSyncedAt: new Date().toISOString() })
+        .where(eq(subscriptions.id, sid));
+      return { calendar: { ...FULL_CAPS, external_sync_interval: 15 } };
+    } }, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    await enqueueScheduleSync(testEnv);
+    expect(sendBatch).not.toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.syncRunId).toBe("concurrent-finished-run");
+  });
+
+  it("producer: external cron messages are staggered by stable user and subscription ids", async () => {
+    const oldEnough = new Date(Date.now() - 16 * 60_000).toISOString();
+    await insertSub({ id: "late-user-sub", userId: "user-z-late", sourceType: "admin_class", sourceVersion: 1, sourceId: "late", isPersonal: false, lastSyncedAt: oldEnough });
+    await insertSub({ id: "stable-z", userId: "user-stable", sourceType: "admin_class", sourceVersion: 1, sourceId: "stable-z", isPersonal: false, lastSyncedAt: oldEnough });
+    await insertSub({ id: "stable-a", userId: "user-stable", sourceType: "admin_class", sourceVersion: 1, sourceId: "stable-a", isPersonal: false, lastSyncedAt: oldEnough });
+    await env.CACHE.put("caps:user-z-late", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
+    await env.CACHE.put("caps:user-stable", JSON.stringify({ ...FULL_CAPS, external_sync_interval: 15 }));
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+
+    await enqueueScheduleSync(testEnv);
+    await env.CACHE.delete("caps:user-z-late");
+    await env.CACHE.delete("caps:user-stable");
+
+    const batch = sendBatch.mock.calls[0][0] as Array<{ body: ScheduleSyncMessage; delaySeconds: number }>;
+    expect(batch.map((message) => message.body.subscriptionId))
+      .toEqual(["stable-a", "stable-z", "late-user-sub"]);
+    expect(batch.map((message) => message.delaySeconds)).toEqual([0, 300, 600]);
   });
 });
