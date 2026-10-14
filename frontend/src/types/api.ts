@@ -26,6 +26,7 @@ export interface NotificationSettings {
 }
 
 export interface MeResponse {
+  external?: ExternalAvailability
   user: SessionUser
   caps: {
     calendar: CalendarCaps

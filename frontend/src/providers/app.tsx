@@ -11,6 +11,7 @@ import {
 import api from '@/api'
 import type {
   CalendarCaps,
+  ExternalAvailability,
   CquBindStatus,
   MeResponse,
   SessionUser,
@@ -18,6 +19,7 @@ import type {
 import { captureScheduleEvent, syncPostHogIdentity } from '@/lib/posthog'
 
 interface SessionState {
+  externalAvailability: ExternalAvailability
   user: SessionUser | null
   caps: CalendarCaps | null
   /** undefined = 旧版 auth 未下发（未知）；只有明确的非 active 值才能触发绑定引导。 */
@@ -42,6 +44,7 @@ export interface AppContextValue extends SessionState {
 export const AppContext = createContext<AppContextValue | null>(null)
 
 const EMPTY_SESSION: SessionState = {
+  externalAvailability: { search_types: [], create_types: [] },
   user: null,
   caps: null,
   cquBindStatus: undefined,
@@ -81,6 +84,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const data = await api.getMe()
         syncPostHogIdentity(data.user.id)
         setSession({
+          externalAvailability: data.external ?? EMPTY_SESSION.externalAvailability,
           user: data.user,
           caps: data.caps.calendar,
           cquBindStatus: data.cquBindStatus,

@@ -25,7 +25,7 @@ async function searchCurrentTerm(env: Env, userId: string, input: Parameters<typ
 }
 
 function authorize(c: Context<SessionEnv>): Response | null {
-  if (externalAvailability(c.env).search_types.length === 0) {
+  if (externalAvailability(c.env, c.get("user").id).search_types.length === 0) {
     return errorResponse("EXTERNAL_UNAVAILABLE", "外部订阅功能暂不可用", 503);
   }
   try { assertFlag(c.get("caps").calendar, "external", "外部订阅"); }
@@ -48,7 +48,7 @@ app.get("/search", async (c) => {
   const denied = authorize(c);
   if (denied) return denied;
   const sourceType = c.req.query("source_type");
-  if ((sourceType !== "admin_class" && sourceType !== "instructor" && sourceType !== "room" && sourceType !== "laboratory" && sourceType !== "course") || !externalAvailability(c.env).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
+  if ((sourceType !== "admin_class" && sourceType !== "instructor" && sourceType !== "room" && sourceType !== "laboratory" && sourceType !== "course") || !externalAvailability(c.env, c.get("user").id).search_types.includes(sourceType)) return errorResponse("BAD_REQUEST", "暂不支持此课表来源", 400);
   if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
   const keyword = (c.req.query("keyword") ?? "").trim();
   const departmentId = c.req.query("department_id") ?? "";
@@ -79,7 +79,7 @@ app.get("/search", async (c) => {
 app.get("/teaching-classes", async (c) => {
   const denied = authorize(c);
   if (denied) return denied;
-  if (!externalAvailability(c.env).search_types.includes("course")) return errorResponse("EXTERNAL_UNAVAILABLE", "教学班订阅暂不可用", 503);
+  if (!externalAvailability(c.env, c.get("user").id).search_types.includes("course")) return errorResponse("EXTERNAL_UNAVAILABLE", "教学班订阅暂不可用", 503);
   if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
   const userId = c.get("user").id;
   try {

@@ -33,8 +33,10 @@
 3. 通过现有 Git Connector 发布 Auth Worker 和匹配容器，记录两者版本及新 RPC 实际读回。只出现 Worker 方法或构建通过不代表容器已更新。
 4. 发布 Schedule 并确认正向 D1 迁移 0017–0022。`npm run deploy` 执行迁移；只构建前端及 `wrangler versions upload` 的版本上传流程不证明生产数据库已迁移。
 5. 管理员逐用户明确配置试用权益，保留个人和其他服务权益。用户权益 PUT 为整组替换，须先读后写、再读回，禁止批量补授或套用默认初值。
-6. 在获批的试用环境逐类配置 `EXTERNAL_SUBSCRIPTION_TYPES`（`admin_class,instructor,room,laboratory,course` 的子集），执行下表并保存脱敏结果。实际证明本类可用后才扩大开放范围。
+6. 先设置 `EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS` 为获批用户 ID 的逗号分隔名单，再在获批的试用环境逐类配置 `EXTERNAL_SUBSCRIPTION_TYPES`（`admin_class,instructor,room,laboratory,course` 的子集），执行下表并保存脱敏结果。实际证明本类可用后才扩大开放范围。
 7. 所有来源完成真实首次、手动、周期与日历比对，且教学班生命周期完成受控验证后，才将 #145 与父规格标记为全部完成。
+
+试点名单未设置时保留全局类型开关的既有行为；设置为空、空白或仅含分隔符时关闭全部用户准入。名单按完整用户 ID 匹配，不能代替 Auth 权益。搜索、创建、重选、手动刷新、周期选取和采集执行/发布都检查名单；权益回收和教学班学期过期检查不受名单限制。试点期间公开 `/api/v2/config` 仍可缓存，但不显示试点来源或名单；登录界面从不可缓存的 `/api/v2/me.external` 获取当前用户的可用来源。只有全部真实首次/手动/周期采集与生命周期验收通过并获批扩大范围后，才移除试点名单设置。本次代码改动不启用任何来源。
 
 当前配置没有独立预览环境：Schedule 的 AUTH binding 指向命名的真实 Auth 服务，两个 Schedule 域名共享 Worker。PR 预览不自动隔离数据库、队列或学校会话；不能把版本预览当成完整五类测试环境。
 

@@ -11,7 +11,7 @@ import { captureScheduleSyncStarted, captureScheduleSyncTerminal } from "../lib/
 import { markSyncError } from "./sync-status";
 
 export async function createExternalSubscription(env: Env, userId: string, caps: CalendarCaps, binding: CquBindStatus | undefined, body: Record<string, unknown>, lifecycle?: ExecutionContext) {
-  if (!externalAvailability(env).create_types.includes(body.sourceType as ExternalSourceType) || !env.AUTH.cquExternalCapture) {
+  if (!externalAvailability(env, userId).create_types.includes(body.sourceType as ExternalSourceType) || !env.AUTH.cquExternalCapture) {
     throw new EntitlementError("EXTERNAL_UNAVAILABLE", 503, "外部订阅功能暂不可用");
   }
   assertFlag(caps, "external", "外部订阅");

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { externalAvailability } from "../../config/external-availability";
 import type { SessionEnv } from "../../middleware/session";
 
 const app = new Hono<SessionEnv>();
@@ -7,12 +8,14 @@ const app = new Hono<SessionEnv>();
 // `caps` is returned as the full { calendar: {...} } object, not flattened.
 // `cquBindStatus` is only present when the auth RPC supplied it (older auth
 // deploys omit it — clients must treat absence as "unknown", never "unbound").
-app.get("/", (c) =>
-  c.json({
+app.get("/", (c) => {
+  c.header("Cache-Control", "private, no-store");
+  return c.json({
+    external: externalAvailability(c.env, c.get("user").id),
     user: c.get("user"),
     caps: c.get("caps"),
     cquBindStatus: c.get("cquBindStatus"),
-  }),
-);
+  });
+});
 
 export default app;

@@ -55,7 +55,8 @@ describe.each(sources)("new $type source", ({ type, target, name, extra, owner }
   }
 
   it("searches distinguishable identities and publishes only the exact selected target", async () => {
-    const app = harness(); const created = await app.create(); await app.consume();
+    const app = harness(); app.testEnv.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS = ` ${app.userId} `;
+    const created = await app.create(); await app.consume();
     expect(app.capture).toHaveBeenCalledWith(expect.objectContaining({ sourceType: type, targetId: target, expectedSessionId: "current" }));
     const response = await app.request(`/calendar/${created.links[0].token}/calendar.ics`);
     expect(response.status).toBe(200); const body = await response.text(); expect(body).toContain("SUMMARY:目标课程");

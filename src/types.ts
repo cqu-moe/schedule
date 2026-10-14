@@ -35,6 +35,8 @@ export interface Env {
   PUBLIC_URL: string;
   /** Comma-separated source allowlist; only implemented sources can be exposed. */
   EXTERNAL_SUBSCRIPTION_TYPES?: string;
+  /** Optional comma-separated pilot IDs. Present but empty closes all admission. */
+  EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS?: string;
   AUTH_ORIGIN?: string;
   GIT_COMMIT: string;
   GIT_DATE: string;

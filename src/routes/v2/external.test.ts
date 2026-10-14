@@ -230,3 +230,21 @@ describe("external search admission and cache", () => {
     expect((await app.request("/search?source_type=admin_class")).status).toBe(503);
   });
 });
+
+it.each(["admin_class", "instructor", "room", "laboratory", "course"])("pilot gate denies %s search before school access and admits the selected user", async sourceType => {
+  const userId = "fixture-search-pilot";
+  const search = vi.fn().mockResolvedValue({ ...schoolResult(), sourceType: sourceType === "course" ? "course_catalog" : sourceType });
+  const enabled = { EXTERNAL_SUBSCRIPTION_TYPES: sourceType, AUTH: { ...fakeAuth(userId, FULL_CAPS), cquExternalSearch: search } };
+  for (const pilots of ["fixture-other", "", "   "]) {
+    const denied = buildApp(userId, FULL_CAPS, { ...enabled, EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: pilots });
+    for (const path of [`/search?source_type=${sourceType}&keyword=测试`, "/departments", "/teaching-classes?course_id=fixture&selection_token=fixture"]) {
+      const response = await denied.request(path);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_UNAVAILABLE" } } });
+    }
+  }
+  expect(search).not.toHaveBeenCalled();
+  const admitted = buildApp(userId, FULL_CAPS, { ...enabled, EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS: ` ${userId},fixture-other ` });
+  expect((await admitted.request(`/search?source_type=${sourceType}&keyword=测试`)).status).toBe(200);
+  expect(search).toHaveBeenCalledOnce();
+});

@@ -21,7 +21,15 @@ export function externalUnavailableResponse(): Response | null {
 export type ExternalSourceType = "instructor" | "room" | "laboratory" | "course" | "admin_class";
 
 /** New-version capabilities are independent from the permanently retired legacy path. */
-export function externalAvailability(env: { EXTERNAL_SUBSCRIPTION_TYPES?: string }) {
+export function externalAvailability(env: {
+  EXTERNAL_SUBSCRIPTION_TYPES?: string;
+  EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS?: string;
+}, userId?: string) {
+  // An explicitly empty pilot setting closes admission, including public config.
+  if (env.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS !== undefined) {
+    const pilots = env.EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS.split(",").map(id => id.trim()).filter(Boolean);
+    if (!userId || !pilots.includes(userId)) return { search_types: [], create_types: [] };
+  }
   const configured = new Set((env.EXTERNAL_SUBSCRIPTION_TYPES ?? "").split(",").map(s => s.trim()));
   const search: ExternalSourceType[] = ["admin_class", "instructor", "room", "laboratory", "course"];
   const create: ExternalSourceType[] = ["admin_class", "instructor", "room", "laboratory", "course"];
