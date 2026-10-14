@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { externalAvailability } from "../config/external-availability";
 import type { Env } from "../types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -15,6 +16,7 @@ app.get("/health", (c) => {
 
 app.get("/config", (c) => {
   const response = c.json({
+    external: externalAvailability(c.env),
     public_url: c.env.PUBLIC_URL?.replace(/\/$/, "") ?? "",
   });
   response.headers.set("Cache-Control", "public, max-age=300");

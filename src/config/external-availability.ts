@@ -34,3 +34,17 @@ export function externalUnavailableResponse(): Response | null {
   if (!EXTERNAL_DISABLED) return null;
   return errorResponse(EXTERNAL_UNAVAILABLE_CODE, EXTERNAL_UNAVAILABLE_MESSAGE, 503);
 }
+
+
+export type ExternalSourceType = "instructor" | "room" | "laboratory" | "course" | "admin_class";
+
+/** New-version capabilities are independent from the permanently retired legacy path. */
+export function externalAvailability(env: { EXTERNAL_SUBSCRIPTION_TYPES?: string }) {
+  const configured = new Set((env.EXTERNAL_SUBSCRIPTION_TYPES ?? "").split(",").map(s => s.trim()));
+  const search: ExternalSourceType[] = ["admin_class"];
+  const create: ExternalSourceType[] = [];
+  return {
+    search_types: search.filter(type => configured.has(type)),
+    create_types: create.filter(type => configured.has(type)),
+  };
+}

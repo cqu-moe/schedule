@@ -109,6 +109,7 @@ export interface GetCapsArgs {
 
 /** auth Worker 暴露的 RPC（WorkerEntrypoint）契约 */
 export interface AuthService {
+  cquExternalSearch?(args: import("./external-search").ExternalSearchArgs): Promise<import("./external-search").ExternalSearchResult | { error: string }>;
   /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
    * authenticate through the application session and native OAuth introspection. */
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;

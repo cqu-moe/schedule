@@ -50,3 +50,10 @@ describe("GET /config", () => {
     expect(body.public_url).toBe("https://schedule.cqu.moe");
   });
 });
+
+
+it("exposes only implemented and explicitly enabled external sources", async () => {
+  const response = await get("/config", { ...mockEnv, EXTERNAL_SUBSCRIPTION_TYPES: "admin_class,instructor,student" });
+  expect(await response.json()).toMatchObject({ external: { search_types: ["admin_class"], create_types: [] } });
+  expect(await (await get("/config")).json()).toMatchObject({ external: { search_types: [], create_types: [] } });
+});

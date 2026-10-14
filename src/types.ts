@@ -33,6 +33,8 @@ export interface Env {
 
   // Environment Variables
   PUBLIC_URL: string;
+  /** Comma-separated source allowlist; only implemented sources can be exposed. */
+  EXTERNAL_SUBSCRIPTION_TYPES?: string;
   AUTH_ORIGIN?: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
