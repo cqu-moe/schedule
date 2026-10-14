@@ -31,6 +31,8 @@ export async function claimExternalAutomaticRun(
     id: string;
     userId: string;
     targetRevision: number;
+    syncRunId: string | null;
+    lastSyncedAt: string | null;
   },
 ): Promise<string | null> {
   const now = new Date().toISOString();
@@ -42,6 +44,7 @@ export async function claimExternalAutomaticRun(
     sync_error_message=NULL,session_recovery_attempts=0,updated_at=?
     WHERE id=? AND user_id=? AND source_version=1 AND target_revision=?
       AND external_state='active' AND is_active=1
+      AND sync_run_id IS ? AND last_synced_at IS ?
       AND (sync_status NOT IN ('queued','running') OR sync_requested_at IS NULL
            OR sync_requested_at<=?)`)
     .bind(
@@ -51,6 +54,8 @@ export async function claimExternalAutomaticRun(
       subscription.id,
       subscription.userId,
       subscription.targetRevision,
+      subscription.syncRunId,
+      subscription.lastSyncedAt,
       activeCutoff,
     )
     .run();

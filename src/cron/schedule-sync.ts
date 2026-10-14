@@ -164,6 +164,7 @@ export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext
       targetRevision: subscriptions.targetRevision,
       isActive: subscriptions.isActive,
       lastSyncedAt: subscriptions.lastSyncedAt,
+      syncRunId: subscriptions.syncRunId,
       syncStatus: subscriptions.syncStatus,
       syncRequestedAt: subscriptions.syncRequestedAt,
       syncErrorCode: subscriptions.syncErrorCode,

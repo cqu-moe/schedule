@@ -302,6 +302,23 @@ describe("external automatic scheduling boundaries (EXTERNAL_DISABLED=false)", (
     expect(batch.map((message) => message.body.subscriptionId)).toEqual(["external-v1-transient"]);
   });
 
+  it("does not queue an obsolete due snapshot after a concurrent cron run already finished", async () => {
+    const sid = await insertSub({ userId: "user-stale-snapshot", sourceType: "admin_class", sourceVersion: 1,
+      sourceId: "class-stale-snapshot", isPersonal: false, lastSyncedAt: "2000-01-01T00:00:00.000Z", syncRunId: "old-run" });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const testEnv = { ...env, AUTH: { getCaps: async () => {
+      // Cap resolution occurs after the producer reads its due snapshot. A
+      // second producer and consumer finish before this invocation can claim.
+      await db.update(subscriptions).set({ syncRunId: "concurrent-finished-run", syncStatus: "success", lastSyncedAt: new Date().toISOString() })
+        .where(eq(subscriptions.id, sid));
+      return { calendar: { ...FULL_CAPS, external_sync_interval: 15 } };
+    } }, SCHEDULE_SYNC_QUEUE: { sendBatch } } as unknown as Env;
+    await enqueueScheduleSync(testEnv);
+    expect(sendBatch).not.toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, sid));
+    expect(row.syncRunId).toBe("concurrent-finished-run");
+  });
+
   it("producer: external cron messages are staggered by stable user and subscription ids", async () => {
     const oldEnough = new Date(Date.now() - 16 * 60_000).toISOString();
     await insertSub({ id: "late-user-sub", userId: "user-z-late", sourceType: "admin_class", sourceVersion: 1, sourceId: "late", isPersonal: false, lastSyncedAt: oldEnough });
