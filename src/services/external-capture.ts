@@ -161,17 +161,26 @@ function buildExternalCoursesIcs(
   semesterStart: string,
   baseNamespace: string,
 ): string {
-  // generateCoursesIcs derives UID from namespace + summary + time only. Two
-  // verifiable rows can therefore share a name and time while differing in room
-  // or experiment content. Give each already-deduplicated course a namespace
-  // fragment from its full whitelisted content, then merge the existing helper's
-  // outputs without changing personal calendar identity semantics.
-  const calendars = courses.map((course) =>
-    generateCoursesIcs(
-      [course],
-      semesterStart,
-      `${baseNamespace}:${courseKey(course)}`,
-    ),
+  // Identity belongs to one occurrence, not the full semester row. Keep the
+  // existing summary/time UID contract when weeks, room or lecturer change.
+  const occurrences = new Map<string, Map<string, CourseEntry>>();
+  for (const course of courses) {
+    for (const week of course.weeks) {
+      const occurrence = { ...course, weeks: [week] };
+      const identity = JSON.stringify([course.name, course.experiment_name ?? null,
+        week, course.day_of_week, course.start_session, course.end_session]);
+      const variants = occurrences.get(identity) ?? new Map<string, CourseEntry>();
+      variants.set(courseKey(occurrence), occurrence);
+      occurrences.set(identity, variants);
+    }
+  }
+  const calendars = [...occurrences.values()].flatMap((variants) =>
+    // The provider has no occurrence ID. A deterministic ordinal preserves
+    // distinct simultaneous rows without making mutable details part of UID.
+    [...variants.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([, course], index) => generateCoursesIcs([course], semesterStart,
+        !course.experiment_name && index === 0 ? baseNamespace
+          : `${baseNamespace}:${JSON.stringify([course.experiment_name ?? null, index])}`)),
   );
 
   while (calendars.length > 1) {

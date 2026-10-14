@@ -4,9 +4,25 @@ import { assertFlag, EntitlementError } from "../../middleware/entitlements";
 import { externalAvailability } from "../../config/external-availability";
 import { findDepartment, searchExternal } from "../../services/external-search";
 import { issueExternalSelection, resolveExternalCourseSelection } from "../../services/external-target";
+import { expireCourseSubscriptions, type CourseTermObservation } from "../../services/external-term";
+import type { Env } from "../../types";
 import { errorResponse } from "../../utils/error";
 
 const app = new Hono<SessionEnv>();
+
+/** A cached directory is not a new term observation. Fence fresh replies to the
+ * targets seen before the school request so late replies cannot expire a reselection. */
+async function searchCurrentTerm(env: Env, userId: string, input: Parameters<typeof searchExternal>[2]) {
+  const observed = await env.DB.prepare(`SELECT id,target_revision,session_id FROM subscriptions
+    WHERE user_id=? AND source_version=1 AND source_type='course' AND external_state IN ('active','reselecting')`)
+    .bind(userId).all<CourseTermObservation>();
+  return searchExternal(env, userId, input, {
+    onFreshSession: async (session) => {
+      const stale = observed.results.filter(target => target.session_id !== null && target.session_id !== session.id);
+      if (stale.length) await expireCourseSubscriptions(env.DB, userId, session.id, { observedTargets: stale });
+    },
+  });
+}
 
 function authorize(c: Context<SessionEnv>): Response | null {
   if (externalAvailability(c.env).search_types.length === 0) {
@@ -44,7 +60,7 @@ app.get("/search", async (c) => {
   const userId = c.get("user").id;
   let departmentName = "";
   if (departmentId) {
-    const directory = await searchExternal(c.env, userId, { sourceType: "department" });
+    const directory = await searchCurrentTerm(c.env, userId, { sourceType: "department" });
     if (directory instanceof Response) return directory;
     if (directory.sourceType !== "department") return errorResponse("EXTERNAL_INVALID_RESPONSE", "院系信息暂不可用", 502);
     const department = findDepartment(directory.departments, departmentId);
@@ -52,7 +68,7 @@ app.get("/search", async (c) => {
     departmentName = department.name;
   }
   const queryType = sourceType === "course" ? "course_catalog" : sourceType;
-  const result = await searchExternal(c.env, userId, { sourceType: queryType, keyword, departmentId, departmentName, grade });
+  const result = await searchCurrentTerm(c.env, userId, { sourceType: queryType, keyword, departmentId, departmentName, grade });
   if (result instanceof Response) return result;
   if (result.sourceType !== queryType) return errorResponse("EXTERNAL_INVALID_RESPONSE", "搜索结果暂不可用", 502);
   const selectionToken = await issueExternalSelection(c.env, userId, result).catch(() => null);
@@ -68,7 +84,7 @@ app.get("/teaching-classes", async (c) => {
   const userId = c.get("user").id;
   try {
     const selected = await resolveExternalCourseSelection(c.env, userId, c.req.query("selection_token"), c.req.query("course_id"));
-    const result = await searchExternal(c.env, userId, { sourceType: "course", courseId: selected.course.id,
+    const result = await searchCurrentTerm(c.env, userId, { sourceType: "course", courseId: selected.course.id,
       courseName: selected.course.name, expectedSessionId: selected.session.id });
     if (result instanceof Response) return result;
     if (result.sourceType !== "course" || result.course.id !== selected.course.id || result.course.name !== selected.course.name || result.session.id !== selected.session.id) {
@@ -86,7 +102,7 @@ app.get("/departments", async (c) => {
   const denied = authorize(c);
   if (denied) return denied;
   if (c.req.query("session_id") !== undefined) return errorResponse("BAD_REQUEST", "仅支持学校当前学期", 400);
-  const result = await searchExternal(c.env, c.get("user").id, { sourceType: "department" });
+  const result = await searchCurrentTerm(c.env, c.get("user").id, { sourceType: "department" });
   if (result instanceof Response) return result;
   if (result.sourceType !== "department") return errorResponse("EXTERNAL_INVALID_RESPONSE", "院系信息暂不可用", 502);
   return c.json({ session: result.session, departments: result.departments });

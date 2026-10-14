@@ -168,7 +168,7 @@ describe('Dashboard view (v2)', () => {
         sync_status: id === 'failed' ? 'error' : id === 'pending' ? 'queued' : 'idle',
         sync_error_message: id === 'failed' ? '采集失败' : null,
         import_quality: id === 'pending' ? 'empty' : undefined,
-        last_synced_at: id === 'pending' ? '2025-09-01T00:00:00Z' : null,
+        last_synced_at: id === 'pending' || id === 'failed' ? '2025-09-01T00:00:00Z' : null,
       })),
     ]))
     renderWithApp(<Dashboard />, { session: { quota: () => 0 } })
@@ -176,7 +176,7 @@ describe('Dashboard view (v2)', () => {
     expect(screen.getByRole('link', { name: '重新选择教学班：failed' })).toHaveAttribute('href', '/add?reselect=failed')
     expect(screen.getAllByRole('link', { name: /重新选择教学班：/ })).toHaveLength(2)
     expect(screen.queryByText('当前学期暂无课表安排')).not.toBeInTheDocument()
-    expect(screen.queryByText(/同步于/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/同步于|上次成功/)).not.toBeInTheDocument()
   })
 
   it.each(['personal', 'legacy'])('keeps the add entry available when only %s subscriptions exist at a one-slot external quota', async kind => {
@@ -348,6 +348,15 @@ describe('Dashboard view (v2)', () => {
     expect(screen.getByRole('button', { name: '查看课表：首次行政班' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '复制链接' })).toBeDisabled()
     expect(screen.getByText('同步失败：学校暂时不可用')).toBeInTheDocument()
+  })
+
+  it('shows retained external snapshot time alongside a refresh failure', async () => {
+    await mountDashboard([mockSubscription({ source_type: 'admin_class', source_version: 1, is_personal: false,
+      source_name: '保留课表行政班', external_state: 'active', last_synced_at: '2026-03-01T10:00:00Z',
+      sync_status: 'error', sync_error_message: '学校暂时不可用', links: [defaultLink()] })])
+    expect(screen.getByText('同步失败：学校暂时不可用')).toBeInTheDocument()
+    expect(screen.getByText('上次成功：2026/03/01 18:00')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '查看课表：保留课表行政班' })).toHaveAttribute('href', expect.stringContaining('/view/'))
   })
 
   it('reports a failed calendar-link copy without exposing its URL', async () => {

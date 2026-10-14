@@ -84,7 +84,10 @@ async function digest(value: unknown): Promise<string> {
 
 /** Call only after current user capability and binding checks. Lifecycle reconciliation
  * requests a fresh observation; the short directory cache is only for interactive search. */
-export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">, options: { fresh?: boolean } = {}): Promise<ExternalSearchResult | Response> {
+export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">, options: {
+  fresh?: boolean;
+  onFreshSession?: (session: ExternalSession) => Promise<void>;
+} = {}): Promise<ExternalSearchResult | Response> {
   if (!env.AUTH.cquExternalSearch) return searchError("UNAVAILABLE");
   const fingerprint = await digest([userId, input.sourceType, input.departmentId ?? "", input.grade ?? "", input.keyword ?? "", input.courseId ?? "", input.expectedSessionId ?? ""]);
   const prefix = `external-search:v1:${fingerprint}`;
@@ -107,6 +110,7 @@ export async function searchExternal(env: Env, userId: string, input: Omit<Exter
   if (record(raw) && "error" in raw) return searchError(raw.error);
   const result = parseResult(raw, input.sourceType);
   if (!result) return searchError("SCHEMA_INVALID");
+  await options.onFreshSession?.(result.session);
   try {
     await env.CACHE.put(`${prefix}:${await digest(result.session.id)}`, JSON.stringify({ expiresAt: Date.now() + 60_000, result }), { expirationTtl: 60 });
     await env.CACHE.put(`${prefix}:current`, result.session.id, { expirationTtl: 60 });

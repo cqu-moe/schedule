@@ -103,6 +103,34 @@ it("never publishes another class or a late old-term capture", async () => {
 });
 
 // Auth fixtures are independent school contracts; cron/public reads own lifecycle proof.
+it.each(["departments", "search", "teaching-classes"])("expires existing course URLs when interactive %s observes a new term", async (endpoint) => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const app = harness(); const created = await app.create(); await app.consume();
+    const catalog = await app.catalog();
+    const extra = await (await app.request(`/subscriptions/${created.id}/links`, {
+      method: "POST", body: JSON.stringify({ formats: ["ics"] }),
+    })).json<any>();
+    vi.setSystemTime(Date.now() + 61_000);
+    const originalSearch = app.search.getMockImplementation()!;
+    app.search.mockImplementation(async (args: any) => ({
+      ...(args.sourceType === "department"
+        ? { contractVersion: 1, sourceType: "department", departments: [] }
+        : await originalSearch(args)),
+      session: { id: "next", name: "下学期" },
+    }) as any);
+    const path = endpoint === "departments" ? "/external/departments"
+      : endpoint === "search" ? "/external/search?source_type=course&keyword=新学期"
+      : `/external/teaching-classes?course_id=catalog-physics&selection_token=${catalog.selection_token}`;
+    expect((await app.request(path)).status).toBe(endpoint === "teaching-classes" ? 409 : 200);
+    expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({
+      external_state: "expired", sync_error_code: "EXTERNAL_TERM_EXPIRED",
+    });
+    for (const token of [created.links[0].token, extra.token])
+      expect((await app.request(`/calendar/${token}/calendar.ics`)).status).toBe(403);
+  } finally { vi.useRealTimers(); }
+});
+
 it.each([undefined, 60])("expires all course links without requiring automatic interval %s", async (interval) => {
   const app = harness();
   Object.assign(app.caps, { external_sync_interval: interval });
@@ -206,12 +234,12 @@ it("expires rather than publishing a validated course capture from a different c
   expect((await app.request(`/calendar/${created.links[0].token}/calendar.ics`)).status).toBe(403);
 });
 
-it("does not expire a newly reselected revision when an older term check replies late", async () => {
+it.each(["background", "interactive"])("does not expire a newly reselected revision when an older %s term check replies late", async (entrypoint) => {
   const app = harness(); const created = await app.create();
   let release!: (value: any) => void;
   const search = vi.fn(() => new Promise(resolve => { release = resolve; }));
   app.testEnv.AUTH.cquExternalSearch = search as any;
-  const checking = runTermCheck(app);
+  const checking = entrypoint === "background" ? runTermCheck(app) : app.request("/external/departments");
   await vi.waitFor(() => expect(search).toHaveBeenCalledOnce());
   // Target-selection fixture models the independently owned T11 transaction.
   await env.DB.prepare(`UPDATE subscriptions SET source_id='reselected-class',session_id='new-selected-term',
@@ -268,6 +296,10 @@ it("uses a fresh school term after an older directory response was cached", asyn
     session: { id: "previous", name: "上学期" }, departments: [] } as any);
   expect((await app.request("/external/departments")).status).toBe(200);
   const created = await app.create(); await app.consume();
+  // The old directory is still cached after creation in the new term. Reading
+  // it again must not be treated as a fresh observation of a term rollover.
+  expect((await app.request("/external/departments")).status).toBe(200);
+  expect(await (await app.request(`/subscriptions/${created.id}`)).json()).toMatchObject({ external_state: "active" });
   app.search.mockResolvedValue({ contractVersion: 1, sourceType: "department",
     session: app.term, departments: [] } as any);
   await runTermCheck(app);

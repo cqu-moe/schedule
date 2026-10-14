@@ -273,6 +273,7 @@ describe("buildExternalCaptureResult", () => {
       roomName: "SYNTH-ROOM-002",
       exprProjectName: "Synthetic Experiment Project",
     });
+    rows.push({ ...structuredClone(rows[0]), roomName: "SYNTH-ROOM-003" });
 
     const captured = buildExternalCaptureResult(concurrentPayload, {
       sourceType: "admin_class",
@@ -281,10 +282,34 @@ describe("buildExternalCaptureResult", () => {
     const uids = [...captured.result.icsContent.matchAll(/^UID:(.+)$/gm)]
       .map((match) => match[1]);
 
-    expect(captured.courses).toHaveLength(2);
-    expect((captured.result.icsContent.match(/BEGIN:VEVENT/g) ?? []).length).toBe(6);
-    expect(uids).toHaveLength(6);
-    expect(new Set(uids).size).toBe(6);
+    expect(captured.courses).toHaveLength(3);
+    expect((captured.result.icsContent.match(/BEGIN:VEVENT/g) ?? []).length).toBe(9);
+    expect(uids).toHaveLength(9);
+    expect(new Set(uids).size).toBe(9);
+    rows.reverse();
+    const reordered = buildExternalCaptureResult(concurrentPayload, {
+      sourceType: "admin_class", sourceId: "SYNTH-ADMIN-001",
+    });
+    expect([...reordered.result.icsContent.matchAll(/^UID:(.+)$/gm)].map(match => match[1]).sort())
+      .toEqual([...uids].sort());
+  });
+
+  it("preserves existing occurrence UIDs when weeks and mutable details change", () => {
+    const expected = { sourceType: "admin_class" as const, sourceId: "SYNTH-ADMIN-001" };
+    const before = buildExternalCaptureResult(payload, expected).result.icsContent;
+    const updated = structuredClone(payload);
+    Object.assign(updated.timetable.classTimetableVOList[0], {
+      teachingWeek: "11011", roomName: "SYNTH-ROOM-UPDATED", instructorName: "Replacement Instructor",
+    });
+    const after = buildExternalCaptureResult(updated, expected).result.icsContent;
+    const events = (ics: string) => new Map([...ics.matchAll(/BEGIN:VEVENT\r\nUID:(.+)\r\nDTSTART:(.+)\r\n/g)]
+      .map((match) => [match[2], match[1]]));
+    const originalEvents = events(before), refreshedEvents = events(after);
+    expect(originalEvents.size).toBe(3);
+    expect(refreshedEvents.size).toBe(4);
+    for (const [start, uid] of originalEvents) expect(refreshedEvents.get(start)).toBe(uid);
+    expect(after).toContain("LOCATION:SYNTH-ROOM-UPDATED");
+    expect(after).toContain("教师：Replacement Instructor");
   });
 
   it("fails closed when the capture carries unsupported nonclass arrays", () => {

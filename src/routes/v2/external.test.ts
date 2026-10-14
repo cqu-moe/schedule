@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { env } from "cloudflare:test";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { applyD1Migrations, env } from "cloudflare:test";
 import { Hono } from "hono";
 import type { SessionEnv } from "../../middleware/session";
 import { businessIdentity as sessionMiddleware } from "../../test-utils/business-identity";
@@ -10,6 +10,8 @@ import type {
 } from "../../services/auth-rpc";
 import { CQUAPIClient } from "../../services/cqu-api";
 import externalV2 from "./external";
+
+beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS));
 
 // ── caps presets ─────────────────────────────────────────────────────────────
 

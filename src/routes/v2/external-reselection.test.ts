@@ -126,7 +126,7 @@ it("enforces owner, new-source lifecycle, trusted selection and current external
   app.caps.external=true;
   await env.DB.prepare("UPDATE subscriptions SET source_version=0 WHERE id=?").bind(sub.id).run();
   expect((await select(app,sub.id)).status).toBe(409);
-  await env.DB.prepare("UPDATE subscriptions SET source_version=1,external_state='active' WHERE id=?").bind(sub.id).run();
+  await env.DB.prepare("UPDATE subscriptions SET source_version=1,external_state='active',session_id=? WHERE id=?").bind(app.term.id,sub.id).run();
   expect((await select(app,sub.id)).status).toBe(409);
   expect(app.send).not.toHaveBeenCalled();
 });
