@@ -130,6 +130,8 @@ export default function Add() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSeq = useRef(0)
   const lastSearchRef = useRef<SearchRequest | null>(null)
+  const searchAbortRef = useRef<AbortController | null>(null)
+  const departmentsAbortRef = useRef<AbortController | null>(null)
   useLayoutEffect(() => {
     if (!selectedCourse) return
     const resultAction = teachingClassResults.current?.querySelector<HTMLButtonElement>(
@@ -204,6 +206,8 @@ export default function Add() {
   useEffect(
     () => () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
+      searchAbortRef.current?.abort()
+      departmentsAbortRef.current?.abort()
     },
     [],
   )
@@ -264,18 +268,32 @@ export default function Add() {
     }
   }
 
+  function startSearchRequest() {
+    searchAbortRef.current?.abort()
+    const controller = new AbortController()
+    searchAbortRef.current = controller
+    return controller
+  }
+
   const loadDepartments = useCallback(async () => {
+    const controller = new AbortController()
+    departmentsAbortRef.current?.abort()
+    departmentsAbortRef.current = controller
     setDepartmentsLoading(true)
     setDepartmentsError(false)
     try {
-      const data = await api.getDepartments()
+      const data = await api.getDepartments({ signal: controller.signal })
+      if (controller.signal.aborted) return
       setDepartments(data.departments)
       setCurrentTerm(data.session ?? null)
     } catch (err: unknown) {
+      if (controller.signal.aborted) return
       setDepartmentsError(true)
       toast.error(parseApiError(err, '加载院系列表失败'))
     } finally {
-      setDepartmentsLoading(false)
+      if (departmentsAbortRef.current === controller && !controller.signal.aborted) {
+        setDepartmentsLoading(false)
+      }
     }
   }, [])
 
@@ -283,6 +301,9 @@ export default function Add() {
   useEffect(() => {
     if (!sessionLoading && canSearchExternal && availability.search_types.includes('admin_class') && sourceType === 'admin_class') {
       void loadDepartments()
+    }
+    return () => {
+      departmentsAbortRef.current?.abort()
     }
   }, [sessionLoading, canSearchExternal, availability, sourceType, loadDepartments])
 
@@ -308,6 +329,7 @@ export default function Add() {
     setSearched(false)
     setTruncated(false)
     clearError()
+    const controller = startSearchRequest()
     try {
       const data = await api.searchExternal({
         source_type: request.sourceType,
@@ -320,14 +342,14 @@ export default function Add() {
           request.sourceType === 'admin_class' && request.grade !== 'all'
             ? request.grade
             : undefined,
-      })
+      }, { signal: controller.signal })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
       setSelectionToken(data.selection_token ?? null)
       setCurrentTerm(data.session ?? null)
       setTruncated(data.truncated === true)
     } catch (err: unknown) {
-      if (seq !== searchSeq.current) return
+      if (seq !== searchSeq.current || controller.signal.aborted) return
       const code = apiErrorCode(err)
       if (code === 'CQU_SESSION_INACTIVE') {
         setErrorMessage('重庆大学统一认证登录状态已失效。')
@@ -348,6 +370,8 @@ export default function Add() {
   function invalidateSearch() {
     searchSeq.current += 1
     clearPendingSearch()
+    searchAbortRef.current?.abort()
+    searchAbortRef.current = null
     setSearching(false)
     setSelectionToken(null)
     setSelectedCourse(null)
@@ -432,15 +456,16 @@ export default function Add() {
     setSearching(true)
     setSearched(false)
     clearError()
+    const controller = startSearchRequest()
     try {
-      const data = await api.searchTeachingClasses(item.id, token)
+      const data = await api.searchTeachingClasses(item.id, token, { signal: controller.signal })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
       setSelectionToken(data.selection_token)
       setCurrentTerm(data.session)
       setTruncated(data.truncated)
     } catch (error) {
-      if (seq !== searchSeq.current) return
+      if (seq !== searchSeq.current || controller.signal.aborted) return
       setErrorMessage(parseApiError(error, '教学班查询失败，请重试或重新选择课程'))
     } finally {
       if (seq === searchSeq.current) { setSearching(false); setSearched(true) }

@@ -34,6 +34,82 @@ const client = axios.create({
   },
 })
 
+const EXTERNAL_LOOKUP_TIMEOUT_MS = 100_000
+const EXTERNAL_RETRY_BACKOFF_MS = 7_500
+const EXTERNAL_MAX_ATTEMPTS = 10
+
+type ExternalLookupOptions = { signal?: AbortSignal }
+
+function externalBusy(error: AxiosError): boolean {
+  const detail = error.response?.data as Record<string, unknown> | undefined
+  return error.response?.status === 503 &&
+    (detail?.detail as Record<string, unknown> | undefined)?.error !== undefined &&
+    ((detail?.detail as Record<string, unknown>).error as Record<string, unknown>)?.code === 'EXTERNAL_BUSY'
+}
+
+function externalNetworkLoss(error: AxiosError): boolean {
+  return error.code === 'ERR_NETWORK' && error.response === undefined
+}
+
+function requestCancelled(error: unknown): boolean {
+  const candidate = error as { code?: string; name?: string }
+  return candidate?.code === 'ERR_CANCELED' || candidate?.name === 'CanceledError'
+}
+
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
+}
+
+function waitForExternalRetry(signal: AbortSignal, duration: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError(signal))
+      return
+    }
+
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, duration)
+
+    function onAbort() {
+      clearTimeout(timer)
+      reject(abortError(signal))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function externalGet<T>(url: string, { signal }: ExternalLookupOptions = {}): Promise<T> {
+  const startedAt = Date.now()
+
+  for (let attempt = 1; attempt <= EXTERNAL_MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) throw abortError(signal)
+    const remaining = attempt === 1 ? EXTERNAL_LOOKUP_TIMEOUT_MS : startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS - Date.now()
+    if (remaining <= 0) throw new DOMException('External lookup timed out', 'TimeoutError')
+
+    try {
+      const response = await client.get<T>(url, { timeout: remaining, signal })
+      return response.data
+    } catch (error) {
+      if (requestCancelled(error)) throw error
+
+      const axiosError = error as AxiosError
+      if (!externalNetworkLoss(axiosError) && !externalBusy(axiosError)) {
+        throw error
+      }
+
+      if (attempt === EXTERNAL_MAX_ATTEMPTS) throw error
+      if (Date.now() + EXTERNAL_RETRY_BACKOFF_MS > startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS) throw error
+      if (signal) await waitForExternalRetry(signal, EXTERNAL_RETRY_BACKOFF_MS)
+      else await new Promise(resolve => setTimeout(resolve, EXTERNAL_RETRY_BACKOFF_MS))
+    }
+  }
+
+  throw new Error('External lookup recovery ended unexpectedly')
+}
+
 /**
  * Mutable redirect seam — extracted so tests can replace `.fn` with a spy and
  * assert the exact URL the 401 interceptor passes, without touching
@@ -203,23 +279,30 @@ export default {
     keyword: string
     department_id?: string
     grade?: string
-  }): Promise<ExternalSearchResponse> {
+  }, options?: ExternalLookupOptions): Promise<ExternalSearchResponse> {
     const query = new URLSearchParams({ source_type: params.source_type, keyword: params.keyword })
     if (params.department_id) query.append('department_id', params.department_id)
     if (params.grade) query.append('grade', params.grade)
-    const response = await client.get<ExternalSearchResponse>(`/external/search?${query}`, { timeout: 100_000 })
-    return response.data
+    return externalGet<ExternalSearchResponse>(`/external/search?${query}`, options)
   },
 
-  async searchTeachingClasses(courseId: string, selectionToken: string): Promise<ExternalSearchResponse> {
+  async searchTeachingClasses(
+    courseId: string,
+    selectionToken: string,
+    options?: ExternalLookupOptions,
+  ): Promise<ExternalSearchResponse> {
     const query = new URLSearchParams({ course_id: courseId, selection_token: selectionToken })
-    const response = await client.get<ExternalSearchResponse>(`/external/teaching-classes?${query}`, { timeout: 100_000 })
-    return response.data
+    return externalGet<ExternalSearchResponse>(`/external/teaching-classes?${query}`, options)
   },
 
-  async getDepartments(): Promise<{ session: ExternalSession; departments: DepartmentNode[] }> {
-    const response = await client.get<{ session: ExternalSession; departments: DepartmentNode[] }>('/external/departments', { timeout: 100_000 })
-    return response.data
+  async getDepartments(options?: ExternalLookupOptions): Promise<{
+    session: ExternalSession
+    departments: DepartmentNode[]
+  }> {
+    return externalGet<{ session: ExternalSession; departments: DepartmentNode[] }>(
+      '/external/departments',
+      options,
+    )
   },
 
   // ── Public calendar view (no auth; uses the public /api/v2/calendar/ path) ─
