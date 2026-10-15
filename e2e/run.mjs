@@ -77,6 +77,9 @@ for (const variant of variants) {
   try {
     const discover = async filters => {
       const result = await cli(['list', '--reporter', 'json', ...filters], { ...env, SCHEDULE_E2E_OUTPUT: variantDirectory }, 30000);
+      if (filters.length && result.code === 2 && /^NO_TESTS: \d+ tests were collected but none is runnable:/.test(result.stderr)) {
+        throw new Error('Zero selected tests');
+      }
       assert.equal(result.code, 0, `Framework discovery failed: ${(result.stderr || result.stdout).slice(0, 1200)}`);
       return JSON.parse(result.stdout).pairs.filter(pair => pair.kind === 'test' && pair.disposition === 'run');
     };
