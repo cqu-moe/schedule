@@ -34,6 +34,16 @@ async function waitForRun(id: string, predicate: (run: DirectoryRun) => boolean)
   throw new Error('Real directory Queue did not reach its expected persisted outcome: '+JSON.stringify(state!.runs));
 }
 async function advance(id: string, phase: number) {
+  // The real scheduler leaves a delay between phases. Before expiring that
+  // input clock, let any real Auth keepalive finish and release its browser.
+  // No operation is retried and no persisted outcome or limiter is changed.
+  const idleDeadline = Date.now() + 120_000;
+  for (;;) {
+    const activity = await school();
+    if (activity.profiles === 0 && activity.chromeProcesses === 0) break;
+    if (Date.now() >= idleDeadline) throw new Error('School browser did not release its process and profile before the next directory tick');
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
   const previous=(await directory()).runs.find(run=>run.id===id)!;
   await directory('deliver-due');
   const outcome = await waitForRun(id,run=>run.phase===phase || run.status!=='running' || run.failure_count>previous.failure_count);
