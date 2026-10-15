@@ -15,7 +15,11 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "e2e:prepare": "node e2e/prepare.mjs",
+    "test:e2e": "npm run typecheck:e2e && node e2e/run.mjs",
+    "test:e2e:harness": "node e2e/self-check.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
@@ -26,8 +30,10 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.17",
     "@cloudflare/workers-types": "^4.20260304.0",
+    "@e2e-dev/web": "0.15.0",
     "@types/node": "^25.3.1",
     "drizzle-kit": "^0.31.9",
+    "e2e": "0.21.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
     "wrangler": "^4.68.1"

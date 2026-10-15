@@ -7,3 +7,4 @@ node_modules/
 frontend/dist/
 frontend/node_modules/
 .worktrees/
+.e2e/

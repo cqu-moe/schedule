@@ -1,0 +1,245 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { createConnection } from 'node:net';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFile, writeFile, mkdtemp, mkdir, rm, readdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
+
+export const password = 'Synthetic-only-123!';
+const clientId = 'schedule-e2e-browser';
+const clientSecret = 'synthetic-schedule-oauth-secret';
+
+async function reservePort() {
+  const server = createServer();
+  await new Promise((done, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', done);
+  });
+  const port = server.address().port;
+  await new Promise((done, reject) => server.close(error => error ? reject(error) : done()));
+  return port;
+}
+
+async function assertClosed(port) {
+  await new Promise((done, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port });
+    socket.setTimeout(2000);
+    socket.once('connect', () => { socket.destroy(); reject(new Error(`Local test listener ${port} remains open`)); });
+    socket.once('timeout', () => { socket.destroy(); reject(new Error('Listener cleanup verification timed out')); });
+    socket.once('error', error => error.code === 'ECONNREFUSED' ? done() : reject(error));
+  });
+}
+
+async function registerClient(db, origin) {
+  // Only caller prerequisites are seeded. Users, school binding, sessions,
+  // subscription state and OAuth grants must come from the production APIs.
+  const values = {
+    id: clientId, clientId, clientSecret: createHash('sha256').update(clientSecret).digest('base64url'),
+    disabled: 0, skipConsent: 1, enableEndSession: 1,
+    scopes: JSON.stringify(['openid', 'profile', 'email', 'offline_access']),
+    redirectUris: JSON.stringify([`${origin}/callback`]),
+    postLogoutRedirectUris: JSON.stringify([`${origin}/signed-out`]),
+    tokenEndpointAuthMethod: 'client_secret_basic',
+    grantTypes: JSON.stringify(['authorization_code', 'refresh_token']),
+    responseTypes: JSON.stringify(['code']), public: 0, type: 'web', requirePKCE: 1,
+    name: 'Schedule E2E', uri: origin, applicationType: 'web',
+    metadata: JSON.stringify({ subsystem: 'calendar', rpcMethods: ['cquHarvest', 'cquExternalSearch'] }),
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+  const columns = Object.keys(values);
+  await db.prepare(`INSERT INTO oauthClient(${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`)
+    .bind(...Object.values(values)).run();
+  const row = await db.prepare(`SELECT ${columns.join(',')} FROM oauthClient WHERE clientId=?`).bind(clientId).first();
+  assert.deepEqual(row, values, 'OAuth caller prerequisites must read back exactly');
+}
+
+export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'] }) {
+  assert.match(authCommit, /^[a-f0-9]{40}$/, 'A fixed Auth commit is required');
+  const root = process.cwd();
+  const auth = resolve(authDirectory);
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: auth, encoding: 'utf8' }).trim(), authCommit);
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: auth, encoding: 'utf8' }).trim(), '');
+  await mkdir(join(root, '.e2e'), { recursive: true });
+  const work = await mkdtemp(join(root, '.e2e', 'runtime-'));
+  const unexpected = [];
+  const authRequests = [];
+  const secrets = new Set([password, clientSecret]);
+  let runtime, control, assetRuntime;
+  try {
+    const fixture = join(work, 'school');
+    await mkdir(fixture);
+    const base = await readFile(join(auth, 'e2e/school/school.py'), 'utf8');
+    const entry = '\nasyncio.run(main())\n';
+    assert.ok(base.endsWith(entry), 'Pinned Auth school fixture entrypoint changed');
+    await writeFile(join(fixture, 'school.py'), base.slice(0, -entry.length) + '\n' +
+      await readFile(join(root, 'e2e/school-extension.py'), 'utf8'));
+    execFileSync(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'deploy', '--dry-run',
+      '--config', 'e2e/wrangler.jsonc', '--outdir', work], {
+      cwd: root, stdio: 'pipe', env: { PATH: process.env.PATH, WRANGLER_SEND_METRICS: 'false', WRANGLER_LOG_PATH: join(work, 'build.log') },
+    });
+    const scriptPath = join(work, 'index.js');
+    const contents = await readFile(scriptPath, 'utf8');
+    // Miniflare 4.20260521.0 uses one fixed Assets:storage service name per
+    // instance. Give this second production build its own native asset store;
+    // the business Worker, Auth RPC, D1 and Queue still share the main runtime.
+    const { Miniflare } = createRequire(join(auth, 'package.json'))('miniflare');
+    assetRuntime = new Miniflare({
+      host: '127.0.0.1', port: 0, name: 'schedule-assets', modules: true,
+      compatibilityDate: '2026-05-01',
+      script: 'export default {fetch(request, env) {return env.ASSETS.fetch(request)}}',
+      assets: { workerName: 'schedule-assets', directory: join(root, 'frontend/dist'), binding: 'ASSETS',
+        routerConfig: { invoke_user_worker_ahead_of_assets: true, has_user_worker: true },
+        assetConfig: { not_found_handling: 'single-page-application' } },
+      outboundService: () => new Response('Asset service has no external network', { status: 502 }),
+    });
+    const assetOrigin = await assetRuntime.ready;
+    const assets = await assetRuntime.getWorker();
+    const expectedHtml = await readFile(join(root, 'frontend/dist/index.html'), 'utf8');
+    assert.equal(await (await assets.fetch('http://assets.test/')).text(), expectedHtml,
+      'The actual Schedule production assets must be served, not another worker build');
+    const port = await reservePort();
+    const origin = `http://localhost:${port}`;
+    const migrations = await readD1Migrations(join(root, 'drizzle/migrations'));
+    const { startSchoolAuth } = await import(pathToFileURL(join(auth, 'e2e/school/runtime.mjs')).href);
+    process.chdir(auth);
+    runtime = await startSchoolAuth({ expectedCommit: authCommit, fixtureDirectory: fixture,
+      workers: ({ authOrigin, authWorkerName }) => [{
+        name: 'schedule-e2e', modulesRoot: work, modules: [{ type: 'ESModule', path: scriptPath, contents }],
+        compatibilityDate: '2026-05-01', compatibilityFlags: ['nodejs_compat'],
+        unsafeDirectSockets: [{ host: '127.0.0.1', port, entrypoint: 'default' }],
+        d1Databases: { DB: 'schedule-e2e' }, kvNamespaces: { CACHE: 'schedule-e2e-cache' },
+        serviceBindings: {
+          AUTH: { name: authWorkerName, entrypoint: 'AuthService' },
+          ASSETS: request => assets.fetch(request.url, { method: request.method, headers: [...request.headers] }),
+        },
+        bindings: { PUBLIC_URL: origin, AUTH_ORIGIN: authOrigin, CALENDAR_CLIENT_ID: clientId,
+          CALENDAR_CLIENT_SECRET: clientSecret, PERSONAL_SUBSCRIPTION_MODE: 'enabled',
+          ENVIRONMENT: 'development', POSTHOG_ENABLED: '0', GIT_COMMIT: 'e2e', GIT_DATE: '2026-10-15' },
+        ratelimits: { UNAUTH_LIMITER: { simple: { limit: 5, period: 60 } },
+          AUTH_LIMITER: { simple: { limit: 40, period: 60 } }, EXTERNAL_LIMITER: { simple: { limit: 10, period: 60 } } },
+        queueProducers: { SCHEDULE_SYNC_QUEUE: 'schedule-sync', SCHEDULE_NOTIFICATION_QUEUE: 'schedule-notifications' },
+        queueConsumers: { 'schedule-sync': { maxBatchSize: 5, maxBatchTimeout: 1, maxRetries: 45 } },
+        outboundService: async request => {
+          const url = new URL(request.url);
+          if (url.origin !== authOrigin) {
+            unexpected.push(url.origin);
+            return new Response('Unexpected Schedule egress denied', { status: 502 });
+          }
+          const body = ['GET', 'HEAD'].includes(request.method) ? undefined : await request.text();
+          if (body) for (const [key, value] of new URLSearchParams(body)) {
+            if (['code', 'refresh_token', 'token', 'code_verifier'].includes(key)) secrets.add(value);
+          }
+          const response = await fetch(url, { method: request.method, headers: [...request.headers],
+            ...(body === undefined ? {} : { body }),
+            redirect: 'manual', signal: AbortSignal.timeout(15000) });
+          const observation = { method: request.method, path: url.pathname, status: response.status };
+          if (url.pathname.endsWith('/token') && response.ok) {
+            const tokens = await response.clone().json();
+            for (const key of ['access_token', 'refresh_token', 'id_token']) if (tokens[key]) secrets.add(tokens[key]);
+          }
+          if (url.pathname.endsWith('/introspect')) {
+            const detail = await response.clone().json();
+            observation.authority = { active: detail.active, clientMatches: detail.client_id === clientId,
+              hasSid: typeof detail.sid === 'string' && !!detail.sid,
+              hasSub: typeof detail.sub === 'string' && !!detail.sub,
+              hasExpiry: typeof detail.exp === 'number', caps: detail.caps, binding: detail.cquBindStatus };
+          }
+          if (!response.ok) {
+            const detail = await response.clone().json().catch(() => null);
+            if (typeof detail?.error === 'string') observation.error = detail.error;
+            if (typeof detail?.error_description === 'string') observation.description = detail.error_description;
+          }
+          authRequests.push(observation);
+          return response;
+        },
+      }],
+    });
+    const db = await runtime.getD1Database('DB', 'schedule-e2e');
+    for (const migration of migrations) for (const query of migration.queries) await db.prepare(query).run();
+    await registerClient(runtime.db, origin);
+    const { prepareSchoolBinding } = await import(pathToFileURL(join(auth, 'e2e/school/prepare-binding.mjs')).href);
+    const accounts = {};
+    assert.ok(accountNames.length && accountNames.every(key => ['owner', 'other', 'unbound', 'no-sync'].includes(key)));
+    for (const key of accountNames) {
+      const email = `${key}@example.test`;
+      accounts[key] = key === 'owner'
+        ? await prepareSchoolBinding(runtime, { email, password })
+        : await runtime.prepare({ email, password });
+      await runtime.db.prepare(`INSERT INTO user_entitlement(user_id,subsystem,capability,value)
+        VALUES (?,'calendar','sync',?) ON CONFLICT(user_id,subsystem,capability) DO UPDATE SET value=excluded.value`)
+        .bind(accounts[key].userId, key === 'no-sync' ? '0' : '1').run();
+    }
+    control = createServer(async (request, response) => {
+      try {
+        const url = new URL(request.url, 'http://127.0.0.1');
+        const account = accounts[url.searchParams.get('account')];
+        if (request.method !== 'GET' || url.pathname !== '/state' || !account) {
+          response.writeHead(404).end(); return;
+        }
+        const rows = await db.prepare(`SELECT id,source_type,sync_status,sync_error_code,last_synced_at
+          FROM subscriptions WHERE user_id=? ORDER BY id`).bind(account.userId).all();
+        const views = await db.prepare(`SELECT v.source_type FROM personal_subscription_views v
+          JOIN subscriptions s ON s.id=v.subscription_id WHERE s.user_id=? ORDER BY v.source_type`)
+          .bind(account.userId).all();
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ subscriptions: rows.results, views: views.results }));
+      } catch { response.writeHead(500).end('Readback failed'); }
+    });
+    await new Promise((done, reject) => { control.once('error', reject); control.listen(0, '127.0.0.1', done); });
+    const controlPort = control.address().port;
+    return { origin, authOrigin: runtime.origin, authCommit, db, accounts,
+      controlOrigin: `http://127.0.0.1:${control.address().port}`, schoolOrigin: runtime.schoolOrigin,
+      async close() {
+        const errors = [];
+        let resources;
+        try {
+          const links = await db.prepare('SELECT token FROM calendar_links').all();
+          for (const row of links.results) secrets.add(row.token);
+        } catch (error) { errors.push(error); }
+        try { await new Promise((done, reject) => control.close(error => error ? reject(error) : done())); }
+        catch (error) { errors.push(error); }
+        try { resources = await runtime.close(); } catch (error) { errors.push(error); }
+        try { await assetRuntime.dispose(); } catch (error) { errors.push(error); }
+        for (const stopped of [port, controlPort, Number(assetOrigin.port)]) {
+          try { await assertClosed(stopped); } catch (error) { errors.push(error); }
+        }
+        process.chdir(root);
+        try { await rm(work, { recursive: true, force: true }); } catch (error) { errors.push(error); }
+        if (unexpected.length) errors.push(new Error(`Unexpected Schedule egress: ${[...new Set(unexpected)].join(', ')}`));
+        if (errors.length) throw new AggregateError(errors, 'Schedule cleanup or egress check failed');
+        return { ...resources, scheduleStorageRemoved: true, assetServiceStopped: true,
+          listenersClosed: [port, controlPort, Number(assetOrigin.port)], authRequests };
+      },
+      async checkArtifacts(path) {
+        await runtime.redact(path);
+        async function visit(directory) {
+          for (const entry of await readdir(directory, { withFileTypes: true })) {
+            const file = join(directory, entry.name);
+            if (entry.isDirectory()) await visit(file);
+            else if (/\.(json|md|log|txt)$/.test(entry.name)) {
+              let contents = await readFile(file, 'utf8');
+              for (const secret of secrets) if (secret) contents = contents.split(secret).join('[synthetic-secret-redacted]');
+              contents = contents.replace(/([?&](?:code|state|nonce|sig|code_challenge)=)[^&\s"<>\\]+/g, '$1[synthetic-secret-redacted]');
+              await writeFile(file, contents);
+            }
+          }
+        }
+        await visit(path);
+        await runtime.checkArtifacts(path);
+      },
+    };
+  } catch (error) {
+    const errors = [error];
+    if (control?.listening) try { await new Promise((done, reject) => control.close(error => error ? reject(error) : done())); }
+    catch (cleanup) { errors.push(cleanup); }
+    if (runtime) try { await runtime.close(); } catch (cleanup) { errors.push(cleanup); }
+    if (assetRuntime) try { await assetRuntime.dispose(); } catch (cleanup) { errors.push(cleanup); }
+    process.chdir(root);
+    try { await rm(work, { recursive: true, force: true }); } catch (cleanup) { errors.push(cleanup); }
+    throw errors.length > 1 ? new AggregateError(errors, 'Schedule startup and cleanup failed') : error;
+  }
+}
