@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import {
   ActionButton,
@@ -17,6 +17,7 @@ import {
   PageHeader,
   PageState,
   Switch,
+  Skeleton,
   toast,
 } from '@cqu-moe/ui'
 import {
@@ -35,8 +36,9 @@ import api from '@/api'
 import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import FirstSyncNotice from '@/components/FirstSyncNotice'
 import SyncActionButton from '@/components/SyncActionButton'
-const QrcodeModal = lazy(() => import('@/components/QrcodeModal'))
-const ShareLinksDialog = lazy(() => import('@/components/ShareLinksDialog'))
+import QrcodeModal from '@/components/QrcodeModal'
+import ShareLinksDialog from '@/components/ShareLinksDialog'
+import { DashboardMetaSkeleton, LoadingRegion, SubscriptionListSkeleton } from '@/components/LoadingSkeletons'
 import { useButtonFeedback, type ButtonState } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
 import { defaultLink } from '@/hooks/useSubscriptions'
@@ -216,8 +218,10 @@ export default function Dashboard() {
 
   // ── UI state ────────────────────────────────────────────────────────────────
 
-  const [notificationEnabled, setNotificationEnabled] = useState(false)
+  const [notificationEnabled, setNotificationEnabled] = useState<boolean | null>(null)
   const [notificationLoading, setNotificationLoading] = useState(false)
+  const [notificationLoadError, setNotificationLoadError] = useState(false)
+  const [notificationRetry, setNotificationRetry] = useState(0)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [qrModal, setQrModal] = useState<{ open: boolean; url: string; token: string }>({
     open: false,
@@ -762,7 +766,7 @@ export default function Dashboard() {
   }
 
   async function toggleNotification() {
-    if (notificationLoading) return
+    if (notificationLoading || notificationEnabled === null) return
     const next = !notificationEnabled
     setNotificationLoading(true)
     try {
@@ -857,6 +861,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!canChangeNotification) return
     let active = true
+    setNotificationEnabled(null)
+    setNotificationLoadError(false)
     setNotificationLoading(true)
     api
       .getNotificationSettings()
@@ -864,7 +870,7 @@ export default function Dashboard() {
         if (active) setNotificationEnabled(settings.enabled)
       })
       .catch(() => {
-        // Keep the switch usable with its default value on load failure.
+        if (active) setNotificationLoadError(true)
       })
       .finally(() => {
         if (active) setNotificationLoading(false)
@@ -872,9 +878,10 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [canChangeNotification, session.user?.id])
+  }, [canChangeNotification, session.user?.id, notificationRetry])
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  const initialLoading = loading || session.sessionPending
 
   return (
     <>
@@ -894,13 +901,13 @@ export default function Dashboard() {
                 error: '同步失败，重试',
               }}
               disabled={
-                personalSubs.length === 0 ||
+                initialLoading || personalSubs.length === 0 ||
                 !canManualRefresh ||
                 syncAllCooldownSeconds > 0
               }
               onClick={() => void handleSyncAll()}
             />
-            {atLimit ? (
+            {initialLoading ? <Button disabled><Plus aria-hidden="true" />添加订阅</Button> : atLimit ? (
               <Button variant="outline" size="default" disabled title="已达外部订阅上限">
                 添加订阅
               </Button>
@@ -916,7 +923,7 @@ export default function Dashboard() {
         }
       />
 
-      <div className="dash-meta">
+      {initialLoading ? <DashboardMetaSkeleton /> : <div className="dash-meta">
         <p className="dash-count">
           {loading
             ? '正在读取订阅'
@@ -944,10 +951,10 @@ export default function Dashboard() {
           {externalManualRefreshLabel(session.caps, externalManualRemaining)}
         </p>
         {atLimit && <p className="dash-limit-note">已达外部订阅上限</p>}
-      </div>
+      </div>}
 
-      {loading ? (
-        <PageState state="loading" title="正在加载订阅" description="正在获取订阅列表，请稍候。" />
+      {initialLoading ? (
+        <SubscriptionListSkeleton />
       ) : loadError ? (
         <PageState
           state="error"
@@ -1223,58 +1230,52 @@ export default function Dashboard() {
           </div>
 
           <div className="dash-notification">
-            <Switch
+            {notificationLoadError ? <div>
+              <p role="alert">通知设置读取失败</p>
+              <Button variant="outline" size="sm" onClick={() => setNotificationRetry(value => value + 1)}>重试读取通知设置</Button>
+            </div> : notificationEnabled === null ? <LoadingRegion label="正在读取通知设置"><Skeleton className="h-6 w-10 rounded-full" /></LoadingRegion> : <Switch
               id="notification-settings"
               aria-label="课表变更通知"
               checked={notificationEnabled}
               disabled={notificationLoading}
               onCheckedChange={() => void toggleNotification()}
-            />
+            />}
             <Label htmlFor="notification-settings" className="sr-only">
               课表变更通知
             </Label>
           </div>
         </section>
       )}
-      <Suspense
-        fallback={
-          <p className="dash-dialog-loading" role="status">
-            正在打开…
-          </p>
-        }
-      >
-        {qrModal.url && (
-          <QrcodeModal
-            open={qrModal.open}
-            url={qrModal.url}
-            token={qrModal.token}
-            onCloseAutoFocus={(event) => {
-              event.preventDefault()
-              qrTriggerRef.current?.focus()
-            }}
-            onOpenChange={(v) =>
-              setQrModal((current) => (v ? current : { ...current, open: false }))
-            }
-          />
-        )}
+      {qrModal.url && (
+        <QrcodeModal
+          open={qrModal.open}
+          url={qrModal.url}
+          token={qrModal.token}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            qrTriggerRef.current?.focus()
+          }}
+          onOpenChange={(v) =>
+            setQrModal((current) => (v ? current : { ...current, open: false }))
+          }
+        />
+      )}
 
-        {activeShareSub && (
-          <ShareLinksDialog
-            open={shareOpen}
-            subscription={activeShareSub}
-            shareLinkCount={shareLinkCount}
-            atShareLimit={atShareLimit}
-            onCloseAutoFocus={restoreDialogFocus}
-            onOpenChange={(v) => {
-              if (!v) setShareOpen(false)
-            }}
-            onChanged={() => {
-              void loadSubscriptions(true).catch(() => {})
-            }}
-          />
-        )}
-      </Suspense>
-
+      {activeShareSub && (
+        <ShareLinksDialog
+          open={shareOpen}
+          subscription={activeShareSub}
+          shareLinkCount={shareLinkCount}
+          atShareLimit={atShareLimit}
+          onCloseAutoFocus={restoreDialogFocus}
+          onOpenChange={(v) => {
+            if (!v) setShareOpen(false)
+          }}
+          onChanged={() => {
+            void loadSubscriptions(true).catch(() => {})
+          }}
+        />
+      )}
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(v) => {

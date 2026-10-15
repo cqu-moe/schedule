@@ -45,7 +45,7 @@ async function enableExternal() {
 
 describe('Add view (React)', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mockApi.getMe.mockResolvedValue({ public_url: '', external: { search_types: [], create_types: [] } })
     mockApi.getSubscriptions.mockResolvedValue({ subscriptions: [], count: 0 })
     mockApi.getDepartments.mockResolvedValue({ departments: [] })
@@ -70,6 +70,178 @@ describe('Add view (React)', () => {
     )
     const selectedTab = screen.getByRole('tab', { name: '教师' })
     expect(screen.getByRole('tabpanel', { name: '教师' })).toHaveAttribute('id', selectedTab.getAttribute('aria-controls'))
+  })
+
+  it('keeps prior results through debounce, failed refresh and retry without accepting an old receipt', async () => {
+    await enableExternal()
+    let rejectRefresh!: (error: unknown) => void
+    let resolveRetry!: (result: unknown) => void
+    mockApi.searchExternal
+      .mockResolvedValueOnce({ session: { id: 'term', name: '当前学期' }, selection_token: 'old-receipt',
+        results: [{ id: 'old', name: '原教师结果' }] })
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRefresh = reject }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveRetry = resolve }))
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const input = await screen.findByRole('searchbox', { name: '搜索教师' })
+    await user.type(input, '教师{Enter}')
+    expect(await screen.findByRole('button', { name: '订阅原教师结果' })).toBeEnabled()
+    await user.type(input, '甲')
+    expect(screen.getByText('原教师结果')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '订阅原教师结果' })).toBeDisabled()
+    expect(screen.queryByText('未找到结果')).not.toBeInTheDocument()
+    await waitFor(() => expect(mockApi.searchExternal).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('list', { name: '搜索结果' })).toHaveAttribute('aria-busy', 'true')
+    await act(async () => rejectRefresh(new Error('刷新失败')))
+    expect(await screen.findByRole('button', { name: '重试搜索' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '订阅原教师结果' })).toBeDisabled()
+    expect(screen.queryByText('未找到结果')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重试搜索' }))
+    expect(screen.getByText('原教师结果')).toBeInTheDocument()
+    await act(async () => resolveRetry({ session: { id: 'new-term', name: '新学期' }, selection_token: 'new-receipt',
+      results: [{ id: 'new', name: '新教师结果' }] }))
+    mockApi.createSubscription.mockResolvedValueOnce({ id: 'new-sub' })
+    await user.click(await screen.findByRole('button', { name: '订阅新教师结果' }))
+    expect(mockApi.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'new', selectionToken: 'new-receipt', sessionId: 'new-term' }))
+  })
+
+  it('does not flash an empty state during debounce or accept late results from a replaced query', async () => {
+    await enableExternal()
+    let resolveOlder!: (result: unknown) => void
+    let resolveNewer!: (result: unknown) => void
+    mockApi.searchExternal.mockResolvedValueOnce({ results: [] })
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOlder = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNewer = resolve }))
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const input = await screen.findByRole('searchbox', { name: '搜索教师' })
+    await user.type(input, '教师{Enter}')
+    expect(await screen.findByText('未找到结果')).toBeInTheDocument()
+    await user.type(input, '甲')
+    expect(screen.queryByText('未找到结果')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索中…')).toBeInTheDocument()
+    await waitFor(() => expect(resolveOlder).toBeDefined())
+    await user.type(input, '乙')
+    await waitFor(() => expect(resolveNewer).toBeDefined())
+    await act(async () => resolveNewer({ session: { id: 'new-term', name: '新学期' }, selection_token: 'new-receipt',
+      results: [{ id: 'new', name: '当前教师结果' }] }))
+    const currentAction = await screen.findByRole('button', { name: '订阅当前教师结果' })
+    await act(async () => resolveOlder({ session: { id: 'old-term', name: '旧学期' }, selection_token: 'old-receipt',
+      results: [{ id: 'old', name: '过期教师结果' }] }))
+    expect(currentAction).toBeEnabled()
+    expect(screen.queryByText('过期教师结果')).not.toBeInTheDocument()
+    expect(screen.queryByText('当前学期：旧学期')).not.toBeInTheDocument()
+  })
+
+  it('locks competing actions during submission and keeps the form through list refresh failure and retry', async () => {
+    await enableExternal()
+    mockApi.searchExternal.mockResolvedValue({ session: { id: 'term', name: '当前学期' }, selection_token: 'receipt',
+      results: [{ id: 'a', name: '教师甲' }, { id: 'b', name: '教师乙' }] })
+    let resolveCreate!: (result: unknown) => void
+    let rejectList!: (error: unknown) => void
+    let resolveList!: (result: unknown) => void
+    mockApi.createSubscription.mockImplementationOnce(() => new Promise(resolve => { resolveCreate = resolve }))
+    mockApi.getSubscriptions
+      .mockResolvedValueOnce({ subscriptions: [], count: 0 })
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectList = reject }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveList = resolve }))
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const input = await screen.findByRole('searchbox', { name: '搜索教师' })
+    await user.type(input, '教师{Enter}')
+    await user.click(await screen.findByRole('button', { name: '订阅教师甲' }))
+    expect(screen.getByRole('button', { name: '订阅教师乙' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '订阅我的课程' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: '课程' })).toBeDisabled()
+    expect(input).toBeDisabled()
+    await act(async () => resolveCreate({ id: 'created' }))
+    expect(screen.getByRole('searchbox', { name: '搜索教师' })).toBe(input)
+    expect(screen.getByText('教师乙')).toBeInTheDocument()
+    await act(async () => rejectList(new Error('list offline')))
+    expect(await screen.findByText('订阅状态加载失败')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '订阅教师乙' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '重试加载订阅状态' }))
+    expect(screen.getByRole('searchbox', { name: '搜索教师' })).toHaveValue('教师')
+    await act(async () => resolveList({ subscriptions: [mockSubscription({ source_type: 'instructor', source_id: 'a', source_version: 1, is_personal: false })], count: 1 }))
+    expect(await screen.findByRole('button', { name: '已订阅教师甲' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '订阅教师乙' })).toBeEnabled()
+    expect(mockApi.createSubscription).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['personal', 'external'] as const)('keeps the current %s submission focusable through loading and failure', async (kind) => {
+    await enableExternal()
+    mockApi.searchExternal.mockResolvedValueOnce({ session: { id: 'term', name: '当前学期' }, selection_token: 'receipt',
+      results: [{ id: 'teacher', name: '教师甲' }] })
+    let rejectCreate!: (error: unknown) => void
+    mockApi.createSubscription.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectCreate = reject }))
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    if (kind === 'external') {
+      await user.type(await screen.findByRole('searchbox', { name: '搜索教师' }), '教师{Enter}')
+    }
+    const current = await screen.findByRole('button', { name: kind === 'personal' ? '订阅我的全部课表' : '订阅教师甲' })
+    current.focus()
+    await user.keyboard('{Enter}')
+    expect(current).toHaveAttribute('aria-busy', 'true')
+    expect(current).not.toBeDisabled()
+    expect(current).toHaveFocus()
+    expect(screen.getByRole('button', { name: '订阅我的课程' })).toBeDisabled()
+    await user.keyboard('{Enter}')
+    expect(mockApi.createSubscription).toHaveBeenCalledTimes(1)
+    await act(async () => rejectCreate(new Error('offline')))
+    await waitFor(() => expect(current).toHaveAttribute('aria-busy', 'false'))
+    expect(current).toHaveFocus()
+    expect(current).toBeEnabled()
+  })
+
+  it.each([
+    ['feature disabled', { response: { data: { detail: { error: { code: 'FEATURE_NOT_ENABLED' } } } } }],
+    ['uncoded 403', { response: { status: 403, data: { detail: 'Forbidden' } } }],
+    ['target forbidden', { response: { data: { detail: { error: { code: 'EXTERNAL_TARGET_FORBIDDEN' } } } } }],
+    ['unauthorized', { response: { status: 401, data: {} } }],
+  ])('hides protected prior results after access is revoked: %s', async (_name, denial) => {
+    await enableExternal()
+    mockApi.searchExternal
+      .mockResolvedValueOnce({ session: { id: 'term', name: '当前学期' }, selection_token: 'old-receipt',
+        results: [{ id: 'teacher', name: '受保护教师结果' }] })
+      .mockRejectedValueOnce(denial)
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    await user.type(await screen.findByRole('searchbox', { name: '搜索教师' }), '教师{Enter}')
+    expect(await screen.findByRole('button', { name: '订阅受保护教师结果' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await waitFor(() => expect(screen.queryByText('受保护教师结果')).not.toBeInTheDocument())
+    expect(screen.getByText(/无权查询.*联系管理员.*重新登录/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试搜索' })).toBeEnabled()
+    expect(mockApi.createSubscription).not.toHaveBeenCalled()
+  })
+
+  it('retries department loading without replacing a newer search receipt session', async () => {
+    await enableExternal()
+    let resolveDepartments!: (result: unknown) => void
+    let schoolLookup: (() => void) | undefined
+    mockApi.getDepartments
+      .mockRejectedValueOnce(new Error('department offline'))
+      .mockImplementationOnce((options) => {
+        schoolLookup = options.onSchoolLookup
+        return new Promise(resolve => { resolveDepartments = resolve })
+      })
+    mockApi.searchExternal.mockResolvedValueOnce({ session: { id: 'search-term', name: '查询学期' }, selection_token: 'receipt',
+      results: [{ id: 'class', name: '电气一班' }] })
+    mockApi.createSubscription.mockResolvedValueOnce({ id: 'new' })
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    await user.click(await screen.findByRole('tab', { name: '行政班' }))
+    expect(await screen.findByText('院系列表加载失败，可先直接搜索班级。')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    await act(async () => schoolLookup?.())
+    expect(screen.getByText('目录中未找到，正在向学校查询，耗时会比平常稍长。')).toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox', { name: '搜索班级' }), '电气{Enter}')
+    expect(await screen.findByRole('button', { name: '订阅电气一班' })).toBeEnabled()
+    await act(async () => resolveDepartments({ departments: [{ id: 'dept', name: '电气学院' }], session: { id: 'directory-term', name: '目录学期' } }))
+    expect(screen.queryByText('目录中未找到，正在向学校查询，耗时会比平常稍长。')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '订阅电气一班' }))
+    expect(mockApi.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ selectionToken: 'receipt', sessionId: 'search-term' }))
   })
 
   it('uses server availability and shows the current term and truncated results', async () => {
@@ -217,7 +389,8 @@ describe('Add view (React)', () => {
 
   it('renders personal subscription options', async () => {
     renderWithApp(<Add />, { routerEntries: ['/add'] })
-    expect(await screen.findByText('我的全部课表')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '订阅我的全部课表' })).toBeEnabled()
+    expect(screen.getByText('我的全部课表')).toBeInTheDocument()
     expect(screen.getByText('我的课程')).toBeInTheDocument()
     expect(screen.getByText('我的考试')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '我的订阅' })).toHaveAttribute('href', '/dashboard')

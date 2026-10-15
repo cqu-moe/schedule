@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router'
-import { Button } from '@cqu-moe/ui'
+import { Button, Skeleton } from '@cqu-moe/ui'
 import { ArrowRight, Calendar, Lock, RefreshCw } from 'lucide-react'
 import { AUTH_BASE_URL, authCquBindUrl, authLoginUrl, scheduleSetupTarget } from '@/config/auth'
 import { useSession } from '@/providers/app'
@@ -24,7 +24,7 @@ const features = [
 ]
 
 export default function Home() {
-  const { isAuthenticated, isCquBound, cquBindStatus } = useSession()
+  const { isAuthenticated, isCquBound, cquBindStatus, sessionPending, sessionError, reloadSession } = useSession()
   const location = useLocation()
 
   return (
@@ -40,12 +40,18 @@ export default function Home() {
           <p className="home-description">
             课程、考试，一处安排。订阅一次，在手机和电脑上随时查看，让下一节课更从容。
           </p>
-          <HomeCta
+          {sessionPending ? <div className="home-cta" aria-busy="true">
+            <span className="sr-only" role="status">正在确认登录状态</span>
+            <Button size="lg" disabled aria-hidden="true"><Skeleton><span className="invisible inline-flex items-center gap-2">开始使用<ArrowRight /></span></Skeleton></Button>
+          </div> : !isAuthenticated && sessionError === 'unavailable' ? <div className="home-cta">
+            <p className="home-cta-hint" role="status">暂时无法确认登录状态，请重试。</p>
+            <Button size="lg" onClick={() => void reloadSession().catch(() => {})}>重试登录状态</Button>
+          </div> : <HomeCta
             isAuthenticated={isAuthenticated}
             isCquBound={isCquBound}
             isDeleting={cquBindStatus === 'deleting'}
             location={location}
-          />
+          />}
           <p className="home-compatibility">Apple 日历 · Google Calendar · Outlook</p>
         </div>
         <aside className="home-guide" aria-labelledby="home-guide-title">
