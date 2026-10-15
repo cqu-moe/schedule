@@ -61,6 +61,8 @@ CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅�
 
 目录故障控制只改变实际run的调度截止、租约和明确的旧版本/过期输入；每次记录action及原phase。正常目录项、成功状态、原子发布指针、缓存结果由生产代码写入。测试消费者通过固定Auth支持接口安装真实注册用户ID作为目录所有者，并在Miniflare重配置后重新取得DB句柄；未添加生产测试开关。
 
+原生 Auth 后台操作可能在空闲观察后竞争浏览器。目录旅程最多接纳一次明确的 `BROWSER_BUSY` 退避：独立核对本次实际 Auth RPC 审计、失败计数、释放租约、未来重试时间及旧发布指针/目录项不变，再推进一次调度时钟并要求实际 Queue 恢复成功。其他错误、第二次冲突或最终状态错误仍失败；框架 retries 仍为0，原始失败与恢复观察进入证据。
+
 所有selected attempt还须无cleanup=failed/cleanup-phase secondaryErrors：固定e2e0.21有时不将它计入passed/exit0的主结论。运行入口独立拒绝该情况。
 
 按视口定位可用 `SCHEDULE_E2E_VIEWPORT=desktop npm run test:e2e`，接受desktop/mobile/all，默认all；非法值非零。此参数只改变视口，不跳过该视口应执行的用例。新Web旅程保留tester-army/e2e；现有新窗口适配范围不变。
