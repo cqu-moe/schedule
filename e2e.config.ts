@@ -12,7 +12,7 @@ export default {
   tests: ['e2e/**/*.e2e.ts'], workers: 1, retries: 0,
   timeout: 180000, assertionTimeout: 15000, trace: 'retain-on-failure',
   output: process.env.SCHEDULE_E2E_OUTPUT || '.e2e/results',
-  credentials: Object.fromEntries(['owner', 'other', 'unbound', 'no-sync'].map(name =>
+  credentials: Object.fromEntries(['owner', 'other', 'unbound', 'no-sync', 'no-external'].map(name =>
     [name, { username: `${name}@example.test`, password: 'Synthetic-only-123!' }])),
   targets: [{ name: process.env.SCHEDULE_E2E_MOBILE ? 'mobile' : 'desktop',
     engine: scheduleEngine, app: { url: process.env.SCHEDULE_E2E_URL || 'http://localhost:18799' } }],

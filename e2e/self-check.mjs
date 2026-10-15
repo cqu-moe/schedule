@@ -9,7 +9,7 @@ async function rejected(name, args, environment, validate) {
   const output = `${root}/${name}`;
   const child = spawnSync(process.execPath, ['e2e/run.mjs', ...args], {
     stdio: 'inherit', timeout: 600000,
-    env: { ...process.env, SCHEDULE_E2E_MOBILE: '1', SCHEDULE_E2E_OUTPUT: output, ...environment },
+    env: { ...process.env, SCHEDULE_E2E_MOBILE: '1', SCHEDULE_E2E_VIEWPORT: 'mobile', SCHEDULE_E2E_OUTPUT: output, ...environment },
   });
   assert.equal(child.signal, null, `${name} must fail through its own gate, not a harness timeout`);
   assert.equal(child.status, 1, `${name} must exit nonzero`);

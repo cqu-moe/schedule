@@ -1,28 +1,9 @@
-import { test, beforeEach, afterEach } from '@e2e-dev/web';
+import { test } from '@e2e-dev/web';
 import { credentials, expect } from 'e2e';
 import { browserContext } from '../e2e.config';
+import { installNetworkGuard } from './browser-fixture';
 
-let unexpected: string[];
-beforeEach(async ({ app, browser }) => {
-  unexpected = [];
-  const allowed = [process.env.SCHEDULE_E2E_URL!, process.env.SCHEDULE_AUTH_URL!];
-  await browser.route('**/*', async route => {
-    if (new URL(route.request.url).href === 'https://static.cloudflareinsights.com/beacon.min.js') {
-      await route.fulfill({ status: 200, contentType: 'application/javascript', body: '/* synthetic analytics vendor */' });
-      return;
-    }
-    const origin = new URL(route.request.url).origin;
-    if (allowed.includes(origin)) await route.continue();
-    else { unexpected.push(origin); await route.abort(); }
-  });
-  // Start the engine on a JSON endpoint before loading any application script.
-  await app.open('/api/v2/config');
-  await browserContext().routeWebSocket('**/*', socket => {
-    unexpected.push(new URL(socket.url()).origin);
-    socket.close({ code: 1008, reason: 'Unplanned WebSocket' });
-  });
-});
-afterEach(async () => { expect(unexpected).toEqual([]); });
+installNetworkGuard();
 
 async function state(account: string) {
   const response = await fetch(`${process.env.SCHEDULE_E2E_CONTROL}/state?account=${account}`);

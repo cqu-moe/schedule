@@ -47,7 +47,7 @@ async function registerClient(db, origin) {
     grantTypes: JSON.stringify(['authorization_code', 'refresh_token']),
     responseTypes: JSON.stringify(['code']), public: 0, type: 'web', requirePKCE: 1,
     name: 'Schedule E2E', uri: origin, applicationType: 'web',
-    metadata: JSON.stringify({ subsystem: 'calendar', rpcMethods: ['cquHarvest', 'cquExternalSearch'] }),
+    metadata: JSON.stringify({ subsystem: 'calendar', rpcMethods: ['getCaps', 'cquHarvest', 'cquExternalSearch', 'cquExternalCapture', 'cquExternalDirectory'] }),
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   const columns = Object.keys(values);
@@ -57,7 +57,7 @@ async function registerClient(db, origin) {
   assert.deepEqual(row, values, 'OAuth caller prerequisites must read back exactly');
 }
 
-export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'] }) {
+export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'], external = false, directory = false, sourceTypes = 'admin_class,instructor,room,laboratory,course' }) {
   assert.match(authCommit, /^[a-f0-9]{40}$/, 'A fixed Auth commit is required');
   const root = process.cwd();
   const auth = resolve(authDirectory);
@@ -75,7 +75,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     const base = await readFile(join(auth, 'e2e/school/school.py'), 'utf8');
     const entry = '\nasyncio.run(main())\n';
     assert.ok(base.endsWith(entry), 'Pinned Auth school fixture entrypoint changed');
-    await writeFile(join(fixture, 'school.py'), base.slice(0, -entry.length) + '\n' +
+    await writeFile(join(fixture, 'school.py'), base.slice(0, -entry.length) + '\nEXTERNAL_PAGE = ' + JSON.stringify(await readFile(join(root, 'e2e/school-external.html'), 'utf8')) + '\n' +
       await readFile(join(root, 'e2e/school-extension.py'), 'utf8'));
     execFileSync(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'deploy', '--dry-run',
       '--config', 'e2e/wrangler.jsonc', '--outdir', work], {
@@ -118,6 +118,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
         },
         bindings: { PUBLIC_URL: origin, AUTH_ORIGIN: authOrigin, CALENDAR_CLIENT_ID: clientId,
           CALENDAR_CLIENT_SECRET: clientSecret, PERSONAL_SUBSCRIPTION_MODE: 'enabled',
+          ...(external ? { EXTERNAL_SUBSCRIPTION_TYPES: sourceTypes } : {}),
           ENVIRONMENT: 'development', POSTHOG_ENABLED: '0', GIT_COMMIT: 'e2e', GIT_DATE: '2026-10-15' },
         ratelimits: { UNAUTH_LIMITER: { simple: { limit: 5, period: 60 } },
           AUTH_LIMITER: { simple: { limit: 40, period: 60 } }, EXTERNAL_LIMITER: { simple: { limit: 10, period: 60 } } },
@@ -158,25 +159,101 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
         },
       }],
     });
-    const db = await runtime.getD1Database('DB', 'schedule-e2e');
+    let db = await runtime.getD1Database('DB', 'schedule-e2e');
     for (const migration of migrations) for (const query of migration.queries) await db.prepare(query).run();
     await registerClient(runtime.db, origin);
     const { prepareSchoolBinding } = await import(pathToFileURL(join(auth, 'e2e/school/prepare-binding.mjs')).href);
     const accounts = {};
-    assert.ok(accountNames.length && accountNames.every(key => ['owner', 'other', 'unbound', 'no-sync'].includes(key)));
+    assert.ok(accountNames.length && accountNames.every(key => ['owner', 'other', 'unbound', 'no-sync', 'no-external'].includes(key)));
     for (const key of accountNames) {
       const email = `${key}@example.test`;
-      accounts[key] = key === 'owner'
+      accounts[key] = key === 'owner' || (external && ['other', 'no-external'].includes(key))
         ? await prepareSchoolBinding(runtime, { email, password })
         : await runtime.prepare({ email, password });
       await runtime.db.prepare(`INSERT INTO user_entitlement(user_id,subsystem,capability,value)
         VALUES (?,'calendar','sync',?) ON CONFLICT(user_id,subsystem,capability) DO UPDATE SET value=excluded.value`)
-        .bind(accounts[key].userId, key === 'no-sync' ? '0' : '1').run();
+        .bind(accounts[key].userId, key === 'no-sync' || external ? '0' : '1').run();
+    }
+    if (accounts['no-external']) await runtime.db.prepare("UPDATE user_entitlement SET value='0' WHERE user_id=? AND subsystem='calendar' AND capability='external'").bind(accounts['no-external'].userId).run();
+    if (external) for (const account of Object.values(accounts)) {
+      for (const [capability, value] of Object.entries({sub_limit: '10', external_manual_refresh: '10', external_sync_interval: '60'})) {
+        await runtime.db.prepare("INSERT INTO user_entitlement(user_id,subsystem,capability,value) VALUES (?,'calendar',?,?) ON CONFLICT(user_id,subsystem,capability) DO UPDATE SET value=excluded.value")
+          .bind(account.userId, capability, value).run();
+      }
+    }
+    if (directory) {
+      assert.ok(accounts.owner, 'Directory source requires a real bound owner');
+      await runtime.updateConsumerBindings('schedule-e2e', { EXTERNAL_DIRECTORY_USER_ID: accounts.owner.userId });
+      db = await runtime.getD1Database('DB', 'schedule-e2e');
+    }
+    const directoryInputs = [];
+    async function directoryState() {
+      return {
+        state: await db.prepare('SELECT * FROM external_directory_state WHERE id=1').first(),
+        runs: (await db.prepare('SELECT id,status,phase,session_id,next_attempt_at,lease_until,last_error,failure_count FROM external_directory_runs ORDER BY started_at,id').all()).results,
+        items: (await db.prepare('SELECT run_id,kind,id,name FROM external_directory_items ORDER BY run_id,kind,id').all()).results,
+        courseCache: (await db.prepare('SELECT user_id,session_id,course_id FROM external_directory_course_cache ORDER BY user_id,session_id,course_id').all()).results,
+      };
     }
     control = createServer(async (request, response) => {
       try {
         const url = new URL(request.url, 'http://127.0.0.1');
         const account = accounts[url.searchParams.get('account')];
+        if (directory && url.pathname === '/directory' && ['GET', 'POST'].includes(request.method)) {
+          if (request.method === 'POST') {
+            let raw = ''; for await (const chunk of request) raw += chunk;
+            const { action } = JSON.parse(raw);
+            const before = await directoryState();
+            const active = before.runs.find(run => run.id === before.state.active_run_id);
+            const worker = await runtime.getWorker('schedule-e2e');
+            directoryInputs.push({ action, phaseBefore: active?.phase ?? null });
+            // Only clocks and interrupted/legacy inputs are injected. The real
+            // cron, Queue, Auth RPC and container must produce every catalog row,
+            // phase transition and publication pointer.
+            if (action === 'start-week') {
+              assert.equal(before.state.active_run_id, null);
+              await db.prepare('UPDATE external_directory_state SET next_due_at=0 WHERE id=1').run();
+              assert.equal((await worker.scheduled({ cron: '*/15 * * * *' })).outcome, 'ok');
+            } else if (action === 'expire-foreground') {
+              await db.prepare('UPDATE external_directory_state SET foreground_until=0 WHERE id=1').run();
+            } else if (action === 'duplicate') {
+              assert.ok(active);
+              const body = { purpose:'external_directory',subscriptionId:'directory',userId:accounts.owner.userId,runId:active.id,trigger:'cron' };
+              const result = await worker.queue('schedule-sync', [1, 2].map(index => ({id:`duplicate-${index}`,timestamp:new Date(),attempts:2,body})));
+              assert.equal(result.outcome, 'ok');
+              assert.equal(result.retryMessages.length, 0);
+            } else {
+              assert.ok(active && active.status === 'running', 'Clock/fault input requires a real in-progress generation');
+              if (action === 'hold-lease') {
+                await db.prepare("UPDATE external_directory_runs SET lease_token='interrupted-e2e-lease',lease_until=? WHERE id=?")
+                  .bind(Date.now()+120_000,active.id).run();
+              } else {
+                assert.ok(['deliver-due','expired-lease','legacy-teacher','expired-run'].includes(action));
+                if (action === 'expired-lease') await db.prepare('UPDATE external_directory_runs SET lease_until=? WHERE id=?').bind(Date.now()-1,active.id).run();
+                if (action === 'legacy-teacher') await db.prepare('UPDATE external_directory_runs SET phase=5 WHERE id=?').bind(active.id).run();
+                if (action === 'expired-run') await db.prepare('UPDATE external_directory_runs SET started_at=? WHERE id=?').bind(Date.now()-6*24*60*60_000,active.id).run();
+                await db.prepare('UPDATE external_directory_runs SET next_attempt_at=0,dispatch_until=0 WHERE id=?').bind(active.id).run();
+                assert.equal((await worker.scheduled({cron:'*/15 * * * *'})).outcome, 'ok');
+              }
+            }
+          }
+          response.setHeader('content-type','application/json');
+          response.end(JSON.stringify(await directoryState())); return;
+        }
+        if (request.method === 'POST' && url.pathname === '/secrets') {
+          let raw = ''; for await (const chunk of request) raw += chunk;
+          const values = JSON.parse(raw);
+          assert.ok(Array.isArray(values) && values.every(value => typeof value === 'string' && value.length < 4096));
+          for (const value of values) if (value) secrets.add(value);
+          response.writeHead(204).end(); return;
+        }
+        if (url.pathname === '/school' && account && ['GET', 'POST'].includes(request.method)) {
+          let raw = ''; for await (const chunk of request) raw += chunk;
+          const upstream = await fetch(runtime.schoolOrigin + '/fixture?email=' + encodeURIComponent(account.email),
+            request.method === 'POST' ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:account.email,changes:JSON.parse(raw)})} : {});
+          assert.equal(upstream.status, 200);
+          response.setHeader('content-type', 'application/json'); response.end(await upstream.text()); return;
+        }
         if (request.method !== 'GET' || url.pathname !== '/state' || !account) {
           response.writeHead(404).end(); return;
         }
@@ -193,6 +270,11 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     const controlPort = control.address().port;
     return { origin, authOrigin: runtime.origin, authCommit, db, accounts,
       controlOrigin: `http://127.0.0.1:${control.address().port}`, schoolOrigin: runtime.schoolOrigin,
+      async diagnostics() {
+        const rows = await db.prepare('SELECT source_type,source_name,sync_status,sync_error_code,sync_error_message,import_quality,skipped_count FROM subscriptions ORDER BY source_type').all();
+        const school = accounts.owner ? await (await fetch(runtime.schoolOrigin + '/fixture?email=owner%40example.test')).json() : null;
+        return { subscriptions: rows.results, school, ...(directory ? { directory: await directoryState(), directoryInputs } : {}) };
+      },
       async close() {
         const errors = [];
         let resources;

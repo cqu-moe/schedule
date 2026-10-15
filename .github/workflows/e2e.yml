@@ -17,9 +17,15 @@ jobs:
     name: Real Auth, queue and calendar journeys
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        round: [1, 2]
+        viewport: [desktop, mobile]
     env:
       WRANGLER_SEND_METRICS: 'false'
       DO_NOT_TRACK: '1'
+      SCHEDULE_E2E_VIEWPORT: ${{ matrix.viewport }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -33,14 +39,13 @@ jobs:
       - run: npm run e2e:prepare
       - run: npm run typecheck && npm test
       - run: npm run test:e2e
-      - name: Repeat with new application and browser state
-        run: npm run test:e2e
       - run: npm run test:e2e:harness
+        if: matrix.round == 1 && matrix.viewport == 'desktop'
       - name: Upload sanitized reports and readback images
         if: always() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: schedule-e2e-${{ github.sha }}
+          name: schedule-e2e-${{ github.sha }}-round-${{ matrix.round }}-${{ matrix.viewport }}
           path: |
             .e2e/run-*/**/*.json
             .e2e/run-*/**/*.md

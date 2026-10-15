@@ -8,7 +8,9 @@ import { createHash } from 'node:crypto';
 const root = process.cwd();
 const output = resolve(process.env.SCHEDULE_E2E_OUTPUT || `.e2e/run-${Date.now()}`);
 assert.ok(output.startsWith(resolve('.e2e') + '/'), 'Evidence must stay under .e2e');
-const variants = process.env.SCHEDULE_E2E_MOBILE ? ['mobile'] : ['desktop', 'mobile'];
+const viewport = process.env.SCHEDULE_E2E_VIEWPORT || (process.env.SCHEDULE_E2E_MOBILE ? 'mobile' : 'all');
+assert.ok(['all', 'desktop', 'mobile'].includes(viewport), 'Unknown E2E viewport');
+const variants = viewport === 'all' ? ['desktop', 'mobile'] : [viewport];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 2) {
   assert.ok(['--grep', '--grep-invert'].includes(args[index]) && args[index + 1],
@@ -91,6 +93,9 @@ for (const variant of variants) {
       try {
         runtime = await startSchedule({ authDirectory: process.env.SCHEDULE_AUTH_DIRECTORY || resolve(root, '.e2e/deps/auth'),
           authCommit: process.env.SCHEDULE_AUTH_COMMIT || dependency.commit,
+          external: pair.tags.includes('external'),
+          directory: pair.tags.includes('directory'),
+          ...(pair.tags.includes('external-disabled') ? { sourceTypes: '' } : {}),
           accountNames: pair.tags.filter(tag => tag.startsWith('account:')).map(tag => tag.slice(8)) });
         assert.equal(cancelled, false, 'Run interrupted during startup');
         evidence.authCommit = runtime.authCommit;
@@ -114,10 +119,14 @@ for (const variant of variants) {
         evidence.runnerExitCode = result.code;
         assert.equal(result.code, 0, 'E2E child failed');
         assert.equal(report.run.status, 'passed');
+        assert.equal(executed.some(test => test.attempts?.some(attempt => attempt.cleanup === 'failed' ||
+          attempt.secondaryErrors?.some(error => error.phase === 'cleanup'))), false, 'Browser cleanup failed in framework attempt evidence');
         for (const key of ['failed', 'interrupted', 'skipped', 'flaky']) assert.equal(report.run.summary[key], 0, key);
       } catch (error) { evidence.errors.push(describe(error)); }
       finally {
         if (runtime) {
+          try { evidence.diagnostics = await runtime.diagnostics(); }
+          catch (error) { evidence.errors.push(describe(error)); }
           try {
             evidence.resources = await runtime.close();
             if (process.env.SCHEDULE_E2E_FAIL_CLEANUP === '1') throw new Error('Injected cleanup failure after real resources stopped');

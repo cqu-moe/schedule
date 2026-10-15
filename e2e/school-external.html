@@ -1,0 +1,65 @@
+<!doctype html><html lang="zh"><body>
+  <main aria-label="排课管理">
+    <div class="ant-select ant-select-disabled" aria-label="学期"><span class="ant-select-selection-item">2026年秋</span></div>
+    <div class="ant-form-item"><label>查询范围</label><div class="ant-select" data-filter="range"><span class="ant-select-selection-item">行政班</span></div></div>
+    <div class="ant-form-item"><label>学院</label><div class="ant-select" data-filter="department"><span class="ant-select-selection-item">全部</span><button class="ant-select-clear">清除</button></div></div>
+    <div class="ant-form-item"><label>年级</label><div class="ant-select" data-filter="grade"><span class="ant-select-selection-item">全部</span><button class="ant-select-clear">清除</button></div></div>
+    <div class="ant-form-item"><label id="keyword-label">班级名称</label><div class="ant-select target-control"><span class="ant-select-selection__placeholder">行政班名字快速查询</span><input placeholder="行政班名字快速查询"></div></div>
+    <div id="directory"></div>
+  </main>
+  <script>
+    const sessionId = '__PAGE_SESSION__';
+    const filters = {range:'行政班',department:'',grade:''};
+    const api = async (path, body) => {
+      const response = await fetch(path, body === undefined ? {} : {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+      return response.json();
+    };
+    document.querySelector('#directory').__vue__ = {sessionId,getSearchList(){},
+      async getRequest(path,base){const r=await fetch(base+path);return {status:r.status,data:await r.json()};},
+      async postJsonRequest(path,body,base){const r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};}};
+    localStorage.setItem('cqu_edu_ACCESS_TOKEN',JSON.stringify('synthetic-school-token'));
+    function options(items, select) {
+      document.querySelectorAll('.ant-select-dropdown').forEach(e=>e.remove());
+      const list=document.createElement('div');list.className='ant-select-dropdown';list.setAttribute('role','listbox');
+      for (const item of items) {
+        const option=document.createElement('div'); option.className='ant-select-item-option';option.setAttribute('role','option');
+        option.dataset.value=item.id; option.textContent=item.name||item.className||item.roomName;option.title=option.textContent;
+        option.onclick=()=>{list.remove();select(item);};list.append(option);
+      }
+      document.body.append(list);
+    }
+    for (const control of document.querySelectorAll('[data-filter]')) control.onclick=event=>{
+      const key=control.dataset.filter;
+      if(event.target.closest('.ant-select-clear')) {filters[key]='';control.querySelector('span').textContent='全部';return;}
+      const labels=key==='range'?['行政班','教师','教室','实验室','课程']:key==='department'?['合成学院']:['2026','2025'];
+      options(labels.map(name=>({id:name,name})),item=>{
+        filters[key]=item.name;control.querySelector('span').textContent=item.name;
+        if(key==='range') {
+          const hints={'行政班':'行政班名字快速查询','教师':'教师姓名或工号','教室':'教室名称','实验室':'实验室名称','课程':'课程名称/课程代码'};
+          document.querySelector('.target-control input').placeholder=hints[item.name];
+          document.querySelector('.ant-select-selection__placeholder').textContent=hints[item.name];
+        }
+      });
+    };
+    const table=(kind,ids)=>api('/api/timetable/class/timetable/'+kind+'/table-detail?sessionId='+sessionId,ids);
+    document.querySelector('.target-control input').oninput=async event=>{
+      const keyword=event.target.value; const kind=filters.range; let rows;
+      if(kind==='行政班') rows=await api('/api/timetable/admin-class/dept-admin-classes?'+new URLSearchParams({className:keyword,grade:filters.grade}),filters.department?[filters.department]:[]);
+      else if(kind==='教师') rows=await api('/api/timetable/instructor/filter?'+new URLSearchParams({nameOrCode:keyword,limitNum:'50',deptId:''}));
+      else if(kind==='教室') rows=await api('/api/resourceapi/room/roomName-filter?'+new URLSearchParams({roomName:keyword}));
+      else if(kind==='实验室') rows=await api('/api/timetable/course/LaboratoryId-filter?'+new URLSearchParams({roomName:keyword}));
+      else rows=(await api('/api/timetable/course/info-by-name-or-code?'+new URLSearchParams({nameOrCode:keyword,pageSize:'50',sessionId}))).data;
+      if(!Array.isArray(rows)) return;
+      options(rows,async item=>{
+        if(kind==='课程') {
+          const [projects,classes]=await Promise.all([
+            api('/api/timetable/optionFinder/expr-prj?courseId='+item.id),
+            api('/api/timetable/course/search-class-by-courseId?'+new URLSearchParams({courseId:item.id,sessionId}))]);
+          options(classes,selected=>{table('expr-prj',selected.experimentProjectIds||[]);table('course',[selected.id]);});
+          await table('expr-prj',projects.filter(p=>p.id).map(p=>p.id));
+          await table('course',classes.map(c=>c.id));
+        } else await table(kind==='行政班'?'adminClass':kind==='教师'?'instructor':'room',[item.id]);
+      });
+    };
+  </script>
+</body></html>
