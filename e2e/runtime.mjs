@@ -199,6 +199,22 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       try {
         const url = new URL(request.url, 'http://127.0.0.1');
         const account = accounts[url.searchParams.get('account')];
+        if (directory && url.pathname === '/directory-contention' && request.method === 'GET') {
+          const since = Number(url.searchParams.get('since'));
+          assert.ok(Number.isFinite(since) && since > 0);
+          const diagnostics = await runtime.diagnostics();
+          const outcomes = diagnostics.runtimeLog.flatMap(line => {
+            try {
+              const event = JSON.parse(line);
+              return event.evt === 'st_mint' && event.clientId === clientId &&
+                event.userId === accounts.owner.userId && event.source === 'rpc' && event.ts >= since
+                ? [{ at: event.ts, outcome: event.outcome }] : [];
+            } catch { return []; }
+          });
+          directoryInputs.push({ action: 'observe-contention', since, outcomes });
+          response.setHeader('content-type', 'application/json');
+          response.end(JSON.stringify(outcomes)); return;
+        }
         if (directory && url.pathname === '/directory' && ['GET', 'POST'].includes(request.method)) {
           if (request.method === 'POST') {
             let raw = ''; for await (const chunk of request) raw += chunk;

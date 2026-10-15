@@ -33,7 +33,7 @@ async function waitForRun(id: string, predicate: (run: DirectoryRun) => boolean)
   } while (Date.now()<deadline);
   throw new Error('Real directory Queue did not reach its expected persisted outcome: '+JSON.stringify(state!.runs));
 }
-async function advance(id: string, phase: number) {
+async function waitForIdleSchool() {
   // The real scheduler leaves a delay between phases. Before expiring that
   // input clock, let any real Auth keepalive finish and release its browser.
   // No operation is retried and no persisted outcome or limiter is changed.
@@ -44,9 +44,37 @@ async function advance(id: string, phase: number) {
     if (Date.now() >= idleDeadline) throw new Error('School browser did not release its process and profile before the next directory tick');
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  const previous=(await directory()).runs.find(run=>run.id===id)!;
+}
+let observedCapacityRecoveries = 0;
+async function advance(id: string, phase: number) {
+  await waitForIdleSchool();
+  const before = await directory();
+  const previous=before.runs.find(run=>run.id===id)!;
+  const started = Date.now();
   await directory('deliver-due');
-  const outcome = await waitForRun(id,run=>run.phase===phase || run.status!=='running' || run.failure_count>previous.failure_count);
+  let outcome = await waitForRun(id,run=>run.phase===phase || run.status!=='running' || run.failure_count>previous.failure_count);
+  if (outcome.run.phase === previous.phase && outcome.run.status === 'running' && outcome.run.failure_count > previous.failure_count) {
+    // A real background Auth operation can acquire the browser after our idle
+    // observation. Accept one persisted capacity deferral, then exercise the
+    // product's next Queue delivery; never rerun the test or hide other faults.
+    expect(observedCapacityRecoveries).toBe(0);
+    expect(outcome.run.last_error).toBe('SCHOOL_UNAVAILABLE');
+    expect(outcome.run.failure_count).toBe(previous.failure_count + 1);
+    expect(outcome.run.lease_until).toBe(0);
+    expect(outcome.run.next_attempt_at).toBeGreaterThan(Date.now());
+    expect(outcome.state.state.catalog_run_id).toBe(before.state.catalog_run_id);
+    expect(outcome.state.items).toEqual(before.items);
+    const response = await fetch(`${process.env.SCHEDULE_E2E_CONTROL}/directory-contention?since=${started}`);
+    expect(response.status).toBe(200);
+    const outcomes = await response.json() as Array<{at: number; outcome: string}>;
+    expect(outcomes.length).toBe(1);
+    expect(outcomes[0].outcome).toBe('BROWSER_BUSY');
+    observedCapacityRecoveries++;
+    await waitForIdleSchool();
+    await directory('deliver-due');
+    const failedCount = outcome.run.failure_count;
+    outcome = await waitForRun(id,run=>run.phase===phase || run.status!=='running' || run.failure_count>failedCount);
+  }
   expect(outcome.run.phase).toBe(phase);
   expect(outcome.run.failure_count).toBe(0);
   return outcome.state;
