@@ -41,7 +41,7 @@ Linux 还需 `node node_modules/playwright-core/cli.js install-deps chromium`。
 
 每次默认写 `.e2e/run-<时间>/`：每个视口的 `discovery.json` 和 `run.json`，以及每个真实发现 ID 对应的 `report.json`、trace、日志、日历截图与 `runtime.json`。记录来源提交、dirty 状态及源文件指纹。完整发现、选中和执行集合逐项核对，零用例、跳过、中断或清理错误均非零退出；禁止把过去的通过计入本次。
 
-每条运行在 finally 中关闭 Auth/容器/Workflow、Schedule 资产服务和只读观察端口，实际 TCP 检查三个本地监听器已关闭；清理错误与业务失败同时保留。校验产物前移除合成登录秘密、OAuth 令牌/授权码/nonce 和公共日历 token，不上传 profile 或数据库。
+每条运行在 finally 中关闭 Auth/容器/Workflow、Schedule 资产服务和只读观察端口，实际 TCP 检查三个本地监听器已关闭；固定Auth同时按本轮native DO ID检查业务容器及独立egress proxy已删除（proxyObjectsRemoved），不只按业务镜像查询；清理错误与业务失败同时保留。校验产物前移除合成登录秘密、OAuth 令牌/授权码/nonce 和公共日历 token，不上传 profile 或数据库。
 
 `test:e2e:harness` 实跑四个控制：零选择、错误 Auth pin、故意错误的最终 ICS 内容、真实资源关闭后注入清理失败。分别检查指定失败原因；清理失败即使业务通过也必须失败。
 

@@ -40,4 +40,3 @@ export async function login({ app, browser, screen }: {app: App; browser: Browse
   await screen.getByRole('button', '登录', { exact: true }).click();
   await expect(browser).toHaveURL(/\/add/);
 }
-

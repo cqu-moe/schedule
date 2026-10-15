@@ -21,7 +21,9 @@ async function school(changes: Record<string, unknown> = {}, account = 'owner') 
   return response.json();
 }
 async function waitForRun(id: string, predicate: (run: DirectoryRun) => boolean) {
-  const deadline = Date.now()+60_000;
+  // The production RPC may spend 90 seconds in its browser invocation;
+  // observation must also allow native Queue dispatch and cleanup to finish.
+  const deadline = Date.now()+120_000;
   let state: DirectoryState;
   do {
     state = await directory();
