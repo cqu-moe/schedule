@@ -639,6 +639,20 @@ describe('Dashboard view (v2)', () => {
     })
   })
 
+  it('does not present an unknown notification preference as off, and retries a failed read', async () => {
+    let rejectRead!: (error: Error) => void
+    mockApi.getNotificationSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject }))
+    await mountDashboard()
+    expect(screen.queryByRole('switch', { name: '课表变更通知' })).not.toBeInTheDocument()
+    expect(screen.getByText('正在读取通知设置')).toHaveAttribute('role', 'status')
+    await act(async () => rejectRead(new Error('offline')))
+    expect(screen.queryByRole('switch', { name: '课表变更通知' })).not.toBeInTheDocument()
+    mockApi.getNotificationSettings.mockResolvedValueOnce({ eligible: true, enabled: true })
+    await userEvent.click(screen.getByRole('button', { name: '重试读取通知设置' }))
+    expect(await screen.findByRole('switch', { name: '课表变更通知' })).toBeChecked()
+    expect(mockApi.updateNotificationSettings).not.toHaveBeenCalled()
+  })
+
   it('shows and toggles the change notification switch for eligible users', async () => {
     await mountDashboard()
     const toggle = screen.getByRole('switch', { name: '课表变更通知' })

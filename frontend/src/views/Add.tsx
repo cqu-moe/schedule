@@ -23,6 +23,7 @@ import {
 import { Check, Search } from 'lucide-react'
 import api from '@/api'
 import DepartmentTreeSelect from '@/components/DepartmentTreeSelect'
+import { AddContentSkeleton, ExternalFormSkeleton, LoadingRegion, SearchResultsSkeleton } from '@/components/LoadingSkeletons'
 import { AUTH_BASE_URL, authCquBindUrl } from '@/config/auth'
 import { useButtonFeedback } from '@/hooks/useButtonFeedback'
 import { usePersonalSetup } from '@/hooks/usePersonalSetup'
@@ -103,6 +104,7 @@ export default function Add() {
   const [availability, setAvailability] = useState<ExternalAvailability>({ search_types: [], create_types: [] })
   const [configStatus, setConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [currentTerm, setCurrentTerm] = useState<ExternalSession | null>(null)
+  const [departmentTerm, setDepartmentTerm] = useState<ExternalSession | null>(null)
   const [truncated, setTruncated] = useState(false)
   const [selectedCourse, setSelectedCourse] = useState<SearchResult | null>(null)
   const catalogToken = useRef<string | null>(null)
@@ -123,6 +125,11 @@ export default function Add() {
   const [needsRepair, setNeedsRepair] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [sessionError, setSessionError] = useState(false)
+  const [subscriptionsLoaded, setSubscriptionsLoaded] = useState(false)
+  const [activeSubmission, setActiveSubmission] = useState<{ kind: 'personal' | 'external'; id: string } | null>(null)
+  const submitting = activeSubmission !== null
+  const submittingRef = useRef(false)
+  const [searchScheduled, setSearchScheduled] = useState(false)
   const [subsStatus, setSubsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [departmentsLoading, setDepartmentsLoading] = useState(false)
   const [departmentsError, setDepartmentsError] = useState(false)
@@ -158,6 +165,7 @@ export default function Add() {
       setSubsStatus('loading')
       try {
         await loadSubscriptions(noCache)
+        setSubscriptionsLoaded(true)
         setSubsStatus('ready')
       } catch {
         setSubsStatus('error')
@@ -268,6 +276,7 @@ export default function Add() {
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    setSearchScheduled(false)
   }
 
   function startSearchRequest() {
@@ -295,7 +304,7 @@ export default function Add() {
       })
       if (controller.signal.aborted) return
       setDepartments(data.departments)
-      setCurrentTerm(data.session ?? null)
+      setDepartmentTerm(data.session ?? null)
     } catch (err: unknown) {
       if (controller.signal.aborted) return
       setDepartmentsError(true)
@@ -320,6 +329,7 @@ export default function Add() {
   }, [sessionLoading, canSearchExternal, availability, sourceType, loadDepartments])
 
   function handleTypeChange(next: string) {
+    if (submittingRef.current) return
     const type = next as ExternalSourceType
     invalidateSearch()
     setSourceType(type)
@@ -332,7 +342,26 @@ export default function Add() {
     clearError()
   }
 
+  function handleSearchAccessDenial(error: unknown): boolean {
+    const status = (error as { response?: { status?: number } } | null)?.response?.status
+    const code = apiErrorCode(error)
+    const denied = status === 401 || status === 403 || (code !== undefined && [
+      'FEATURE_NOT_ENABLED', 'FORBIDDEN', 'UNAUTHORIZED', 'PERMISSION_DENIED',
+      'EXTERNAL_TARGET_FORBIDDEN', 'PAGE_PERMISSION_DENIED', 'SOURCE_FORBIDDEN', 'SEARCH_FORBIDDEN',
+    ].includes(code))
+    if (!denied) return false
+    setSearchResults([])
+    setSelectionToken(null)
+    setSelectedCourse(null)
+    catalogToken.current = null
+    setErrorMessage('当前账号无权查询外部课表，请联系管理员确认访问权限，或重新登录后重试。')
+    return true
+  }
+
   async function runSearch(request: SearchRequest) {
+    if (submittingRef.current) return
+    clearPendingSearch()
+    setSelectionToken(null)
     setSelectedCourse(null)
     catalogToken.current = null
     const seq = ++searchSeq.current
@@ -368,16 +397,14 @@ export default function Add() {
       setTruncated(data.truncated === true)
     } catch (err: unknown) {
       if (seq !== searchSeq.current || controller.signal.aborted) return
+      if (handleSearchAccessDenial(err)) return
       const code = apiErrorCode(err)
       if (code === 'CQU_SESSION_INACTIVE') {
         setErrorMessage('重庆大学统一认证登录状态已失效。')
         setNeedsRepair(true)
-      } else if (code === 'FEATURE_NOT_ENABLED') {
-        setErrorMessage('外部订阅功能未开通')
       } else {
         setErrorMessage(parseApiError(err, '搜索失败'))
       }
-      setSearchResults([])
     } finally {
       if (seq !== searchSeq.current) return
       setSearching(false)
@@ -386,7 +413,7 @@ export default function Add() {
     }
   }
 
-  function invalidateSearch() {
+  function invalidateSearch(preserveResults = false) {
     searchSeq.current += 1
     clearPendingSearch()
     searchAbortRef.current?.abort()
@@ -395,7 +422,8 @@ export default function Add() {
     setSelectionToken(null)
     setSelectedCourse(null)
     catalogToken.current = null
-    setSearchResults([])
+    if (!preserveResults) setSearchResults([])
+    setSearched(false)
     setTruncated(false)
     setSchoolLookupActive(false)
   }
@@ -406,6 +434,7 @@ export default function Add() {
   }
 
   function onKeywordChange(value: string) {
+    if (submittingRef.current) return
     const request: SearchRequest = {
       sourceType,
       keyword: value,
@@ -414,19 +443,22 @@ export default function Add() {
     }
 
     setKeyword(value)
-    invalidateSearch()
+    const validQuery = sourceType === 'admin_class' || value.trim().length >= 2
+    invalidateSearch(validQuery && !selectedCourse)
     clearError()
     if (sourceType !== 'admin_class' && value.trim().length < 2) {
       setSearchResults([])
       setSearched(false)
       return
     }
+    setSearchScheduled(true)
     debounceRef.current = setTimeout(() => {
       void runSearch(request)
     }, 300)
   }
 
   function handleDepartmentChange(deptId: string) {
+    if (submittingRef.current) return
     setSelectedDepartment(deptId)
     clearPendingSearch()
     void runSearch({
@@ -438,6 +470,7 @@ export default function Add() {
   }
 
   function handleGradeChange(grade: string) {
+    if (submittingRef.current) return
     setSelectedGrade(grade)
     clearPendingSearch()
     void runSearch({
@@ -449,6 +482,10 @@ export default function Add() {
   }
 
   async function handlePersonalSubscribe(opt: PersonalOption) {
+    if (submittingRef.current || subscriptionsUnavailable || subs.atLimit) return
+    submittingRef.current = true
+    setActiveSubmission({ kind: 'personal', id: opt.sourceType })
+    clearPendingSearch()
     try {
       await personalFeedback.run(async () => {
         await api.createSubscription({
@@ -462,17 +499,20 @@ export default function Add() {
       }, opt.sourceType)
     } catch (err: unknown) {
       toast.error(parseApiError(err, '订阅失败'))
+    } finally {
+      submittingRef.current = false
+      setActiveSubmission(null)
     }
   }
 
   async function selectCourse(item: SearchResult, token = selectionToken) {
-    if (!token) return
+    if (!token || submittingRef.current) return
     const seq = ++searchSeq.current
     clearPendingSearch()
     catalogToken.current = token
     setSelectedCourse(item)
     setSelectionToken(null)
-    setSearchResults([])
+    if (selectedCourse?.id !== item.id) setSearchResults([])
     setSearching(true)
     setSearched(false)
     setSchoolLookupActive(false)
@@ -492,6 +532,7 @@ export default function Add() {
       setTruncated(data.truncated)
     } catch (error) {
       if (seq !== searchSeq.current || controller.signal.aborted) return
+      if (handleSearchAccessDenial(error)) return
       setErrorMessage(parseApiError(error, '教学班查询失败，请重试或重新选择课程'))
     } finally {
       if (seq === searchSeq.current) {
@@ -503,6 +544,7 @@ export default function Add() {
   }
 
   function chooseAnotherCourse() {
+    if (submittingRef.current) return
     invalidateSearch()
     setSearched(false)
     clearError()
@@ -510,7 +552,9 @@ export default function Add() {
   }
 
   async function handleExternalSubscribe(item: SearchResult) {
-    if (!selectionToken || !currentTerm) return
+    if (!selectionToken || !currentTerm || searchPending || submittingRef.current || subscriptionsUnavailable || !creationAvailable || (!reselectMode && subs.atLimit)) return
+    submittingRef.current = true
+    setActiveSubmission({ kind: 'external', id: item.id })
     clearError()
     try {
       await subscribeFeedback.run(async () => {
@@ -533,6 +577,9 @@ export default function Add() {
       const message = parseApiError(err, reselectMode ? '重选提交失败，请重试' : '订阅失败')
       setSubmitError(message)
       toast.error(message)
+    } finally {
+      submittingRef.current = false
+      setActiveSubmission(null)
     }
   }
 
@@ -547,6 +594,8 @@ export default function Add() {
   const externalUnavailable = reselectMode ? !availability.search_types.includes('course') : availability.search_types.length === 0
   const externalLocked = !externalUnavailable && !canSearchExternal
   const creationAvailable = reselectMode || availability.create_types.includes(sourceType)
+  const displayedTerm = currentTerm ?? departmentTerm
+  const searchPending = searching || searchScheduled
   const subscriptionsUnavailable = subsStatus !== 'ready' || (!reselectMode && setup.error !== null)
 
   return (
@@ -561,11 +610,7 @@ export default function Add() {
         }
       />
       {busy ? (
-        <PageState
-          state="loading"
-          title="正在准备订阅"
-          description="正在确认登录状态与默认订阅，请稍候。"
-        />
+        <AddContentSkeleton reselect={reselectMode} />
       ) : sessionError ? (
         <PageState
           state="error"
@@ -577,13 +622,9 @@ export default function Add() {
             </Button>
           }
         />
-      ) : subsStatus === 'loading' || (subsStatus === 'idle' && !setup.error) ? (
-        <PageState
-          state="loading"
-          title="正在加载订阅状态"
-          description="正在确认已订阅内容与剩余额度，请稍候。"
-        />
-      ) : subsStatus === 'error' ? (
+      ) : !subscriptionsLoaded && (subsStatus === 'loading' || (subsStatus === 'idle' && !setup.error)) ? (
+        <AddContentSkeleton reselect={reselectMode} />
+      ) : !subscriptionsLoaded && subsStatus === 'error' ? (
         <PageState
           state="error"
           title="订阅状态加载失败"
@@ -602,7 +643,14 @@ export default function Add() {
         <PageState state="error" title={reselectPending ? '教学班正在重新同步' : '无法重选此订阅'}
           description={reselectPending ? '请等待本次同步完成后再操作；公共链接保持停用。' : '仅支持本人已过期或重选失败的教学班订阅，请返回我的订阅确认状态。'} />
       ) : (
-        <>
+        <div aria-busy={subsStatus === 'loading'}>
+          {subscriptionsLoaded && subsStatus === 'loading' && <span className="sr-only" role="status">正在刷新订阅状态</span>}
+          {subscriptionsLoaded && subsStatus === 'error' && <Alert variant="destructive">
+            <AlertDescription className="add-error-row">
+              <span>订阅状态加载失败</span>
+              <Button type="button" variant="outline" aria-label="重试加载订阅状态" onClick={() => void loadSubscriptionList(true)}>重试</Button>
+            </AlertDescription>
+          </Alert>}
           {!reselectMode && setup.error && (
             <Alert variant="destructive">
               <AlertDescription className="add-error-row">
@@ -664,7 +712,8 @@ export default function Add() {
                           success: '已订阅',
                           error: '失败，重试',
                         }}
-                        disabled={subscriptionsUnavailable || subs.atLimit}
+                        disabled={activeSubmission?.kind === 'personal' && activeSubmission.id === opt.sourceType
+                          ? false : submitting || subscriptionsUnavailable || subs.atLimit}
                         aria-label={`订阅${opt.label}`}
                         onClick={() => void handlePersonalSubscribe(opt)}
                       />
@@ -690,12 +739,12 @@ export default function Add() {
           <section className="add-section" aria-labelledby="external-heading">
             <h2 id="external-heading" className="add-section-title">
               外部订阅
-              {(externalUnavailable || externalLocked) && <span className="add-flag">
+              {configStatus === 'ready' && (externalUnavailable || externalLocked) && <span className="add-flag">
                 {externalUnavailable ? '暂不可用' : '未开通'}
               </span>}
             </h2>
             {configStatus === 'loading' ? (
-              <p role="status">正在确认外部订阅可用性…</p>
+              <ExternalFormSkeleton reselect={reselectMode} />
             ) : configStatus === 'error' ? (
               <Alert variant="destructive"><AlertDescription>
                 无法确认外部订阅可用性。
@@ -719,21 +768,21 @@ export default function Add() {
                 <Tabs value={sourceType} onValueChange={handleTypeChange} className="add-external-tabs">
                   {!reselectMode && <TabsList className="add-source-tabs" aria-label="来源类型">
                     {availability.search_types.map((type) => (
-                      <TabsTrigger className="add-touch-control" key={type} value={type}>
+                      <TabsTrigger className="add-touch-control" key={type} value={type} disabled={submitting}>
                         {SOURCE_LABELS[type]}
                       </TabsTrigger>
                     ))}
                   </TabsList>}
                   <TabsContent value={sourceType} asChild
                     {...(reselectMode ? { role: 'group', 'aria-label': '选择教学班', 'aria-labelledby': undefined } : {})}>
-                    <form className="add-external-panel" onSubmit={(event) => {
+                    <form className="add-external-panel" aria-busy={searchPending || submitting} onSubmit={(event) => {
                       event.preventDefault()
-                      if (selectedCourse || searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)) return
+                      if (submitting || selectedCourse || searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)) return
                       clearPendingSearch()
                       void runSearch({ sourceType, keyword, departmentId: selectedDepartment, grade: selectedGrade })
                     }}>
 
-                      {currentTerm && <p className="add-result-extra">当前学期：{currentTerm.name}</p>}
+                      {displayedTerm && <p className="add-result-extra">当前学期：{displayedTerm.name}</p>}
                       <p className="add-result-extra">仅查询学校当前学期。</p>
                       {!creationAvailable && <p className="add-result-extra">当前支持搜索，订阅创建暂未开放。</p>}
                       {sourceType === 'admin_class' && (
@@ -743,25 +792,21 @@ export default function Add() {
                             <DepartmentTreeSelect
                               id="department-select"
                               departments={departments}
+                              loading={departmentsLoading}
+                              disabled={submitting}
                               value={selectedDepartment}
                               onChange={handleDepartmentChange}
                             />
                             {selectedDepartment && (
-                              <Button type="button" variant="ghost" size="default" onClick={() => handleDepartmentChange('')}>
+                              <Button type="button" variant="ghost" size="default" disabled={submitting} onClick={() => handleDepartmentChange('')}>
                                 清除学院筛选
                               </Button>
                             )}
-                            {departmentsLoading && (
-                              <p role="status" className="add-result-extra">
-                                {departmentsSchoolLookup
-                                  ? '目录中未找到，正在向学校查询，耗时会比平常稍长。'
-                                  : '正在加载学院…'}
-                              </p>
-                            )}
+                            {departmentsLoading && departmentsSchoolLookup && <p role="status" className="add-result-extra">目录中未找到，正在向学校查询，耗时会比平常稍长。</p>}
                           </div>
                           <div className="add-field">
                             <Label htmlFor="grade-select">年级</Label>
-                            <Select value={selectedGrade} onValueChange={handleGradeChange}>
+                            <Select disabled={submitting} value={selectedGrade} onValueChange={handleGradeChange}>
                               <SelectTrigger className="add-touch-control" id="grade-select" aria-label="年级">
                                 <SelectValue placeholder="全部年级" />
                               </SelectTrigger>
@@ -785,6 +830,7 @@ export default function Add() {
                               aria-label="搜索班级"
                               placeholder="输入班级名称关键词（可选）"
                               value={keyword}
+                              disabled={submitting}
                               onChange={(event) => onKeywordChange(event.target.value)}
                             />
                           </div>
@@ -796,7 +842,7 @@ export default function Add() {
                                   type="button"
                                   variant="outline"
                                   size="default"
-                                  disabled={departmentsLoading}
+                                  disabled={departmentsLoading || submitting}
                                   onClick={() => void loadDepartments()}
                                 >
                                   重试
@@ -820,6 +866,7 @@ export default function Add() {
                             aria-label={`搜索${SOURCE_LABELS[sourceType]}`}
                             placeholder={SEARCH_PLACEHOLDERS[sourceType]}
                             value={keyword}
+                            disabled={submitting}
                             onChange={(event) => onKeywordChange(event.target.value)}
                           />
                         </div>
@@ -827,24 +874,23 @@ export default function Add() {
                       )}
 
                       {!selectedCourse && <p id="external-search-help" className="add-hint">{sourceType === 'admin_class' ? '可按学院、年级筛选，也可直接搜索班级。' : '请输入至少两个字符，可按 Enter 搜索。'}</p>}
-                      {selectedCourse && <div className="add-field"><h3 ref={teachingClassHeading} tabIndex={-1} className="add-result-name" aria-describedby={searching ? 'external-lookup-status' : errorMessage ? 'external-search-error' : undefined}>{selectedCourse.name} · 选择教学班</h3><Button type="button" variant="outline" onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
+                      {selectedCourse && <div className="add-field"><h3 ref={teachingClassHeading} tabIndex={-1} className="add-result-name" aria-describedby={searching ? 'external-lookup-status' : errorMessage ? 'external-search-error' : undefined}>{selectedCourse.name} · 选择教学班</h3><Button type="button" variant="outline" disabled={submitting} onClick={chooseAnotherCourse}>重新选择课程</Button></div>}
                       {!selectedCourse && <Button className="add-touch-control" type="submit" variant="outline"
-                        disabled={searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
+                        disabled={submitting || searching || (sourceType !== 'admin_class' && keyword.trim().length < 2)}
                         aria-describedby="external-search-help">
                         搜索
                       </Button>}
                       {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
-                      {searching && (
-                        <p id="external-lookup-status" className="add-searching" role="status">
-                          {schoolLookupActive
-                            ? '目录中未找到，正在向学校查询，耗时会比平常稍长。'
-                            : '搜索中…'}
-                        </p>
-                      )}
+                      {searchPending && <>
+                        {schoolLookupActive && <p className="add-searching" role="status">目录中未找到，正在向学校查询，耗时会比平常稍长。</p>}
+                        {searchResults.length === 0
+                          ? <LoadingRegion id="external-lookup-status" label="搜索中…"><SearchResultsSkeleton /></LoadingRegion>
+                          : <span id="external-lookup-status" className="sr-only" role="status">搜索中…</span>}
+                      </>}
 
                       {searched && !searching && !errorMessage && searchResults.length > 0 && (!selectionToken || !currentTerm) && <p id="external-selection-help" className="add-warning">本次结果暂不能选择，请重新搜索。</p>}
                       {searchResults.length > 0 && (
-                        <ul ref={teachingClassResults} className="add-results" aria-label="搜索结果" role="list">
+                        <ul ref={teachingClassResults} className="add-results" aria-label="搜索结果" role="list" aria-busy={searchPending}>
                           {searchResults.map((item) => (
                             <li key={item.id} className="add-result">
                               <div className="add-result-info">
@@ -852,7 +898,7 @@ export default function Add() {
                                 {item.extra && <p className="add-result-extra">{item.extra}</p>}
                               </div>
                               {sourceType === 'course' && !selectedCourse ? (
-                                <Button className="add-touch-control" type="button" size="default" aria-label={`选择课程${item.name}`} disabled={searching || !selectionToken} aria-describedby={(!selectionToken || !currentTerm) ? "external-selection-help" : undefined} onClick={() => void selectCourse(item)}>选择教学班</Button>
+                                <Button className="add-touch-control" type="button" size="default" aria-label={`选择课程${item.name}`} disabled={submitting || searchPending || !selectionToken || !currentTerm} aria-describedby={(!selectionToken || !currentTerm) ? "external-selection-help" : undefined} onClick={() => void selectCourse(item)}>选择教学班</Button>
                               ) : !reselectMode && isExternalSubscribed(item.id) ? (
                                 <Button
                                   variant="outline"
@@ -875,7 +921,8 @@ export default function Add() {
                                     success: reselectMode ? '已提交' : '已订阅',
                                     error: '失败，重试',
                                   }}
-                                  disabled={!creationAvailable || !selectionToken || !currentTerm || searching || subscriptionsUnavailable || (!reselectMode && subs.atLimit)}
+                                  disabled={activeSubmission?.kind === 'external' && activeSubmission.id === item.id
+                                    ? false : submitting || !creationAvailable || !selectionToken || !currentTerm || searchPending || subscriptionsUnavailable || (!reselectMode && subs.atLimit)}
                                   aria-describedby={(!selectionToken || !currentTerm) ? "external-selection-help" : undefined}
                                   aria-label={`${reselectMode ? '重选' : '订阅'}${item.name}`}
                                   onClick={() => void handleExternalSubscribe(item)}
@@ -919,6 +966,7 @@ export default function Add() {
                     variant="outline"
                     size="default"
                     ref={searchRetryButton}
+                    disabled={submitting || searchPending}
                     onClick={retrySearch}
                   >
                     重试搜索
@@ -927,7 +975,7 @@ export default function Add() {
               </AlertDescription>
             </Alert>
           )}
-        </>
+        </div>
       )}
     </>
   )

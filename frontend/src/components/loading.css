@@ -1,0 +1,56 @@
+.loading-line {
+  height: 1em;
+  max-width: 100%;
+}
+.loading-input { min-height: 2.75rem; }
+.loading-card-meta { min-height: calc(var(--text-xs) * 1.7); }
+.loading-subscribe-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+}
+.loading-source-tabs {
+  gap: var(--space-1);
+  padding: var(--space-1);
+}
+.loading-tab { height: 2.75rem; }
+.loading-result-info { display: grid; gap: var(--space-2); }
+.cal-loading-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.cal-loading-actions { display: flex; gap: var(--space-2); }
+.cal-loading-grid { border: 1px solid var(--border); }
+.cal-loading-week, .cal-loading-slots {
+  display: grid;
+  grid-template-columns: 3rem repeat(7, minmax(0, 1fr));
+}
+.cal-loading-week > div {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-2);
+  min-height: 2.75rem;
+  border-left: 1px solid var(--border);
+}
+.cal-loading-slots { height: var(--space-10); border-top: 1px solid var(--border); }
+.cal-loading-slots:nth-child(odd) { border-top-style: dotted; }
+.cal-loading-slots > div { border-left: 1px solid var(--border); }
+.cal-loading-slots > div:first-child {
+  border-left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.loading-time { width: var(--space-6); height: var(--space-3); }
+@media (max-width: 767px) {
+  .cal-loading-week, .cal-loading-slots { grid-template-columns: 3rem minmax(0, 1fr); }
+  .cal-loading-week > :nth-child(n+3), .cal-loading-slots > :nth-child(n+3) { display: none; }
+}

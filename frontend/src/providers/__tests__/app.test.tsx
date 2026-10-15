@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useContext } from 'react'
 import api from '@/api'
 import { AppContext, AppProvider } from '@/providers/app'
@@ -110,9 +110,27 @@ describe('AppProvider session and config', () => {
     mockApi.getMe.mockResolvedValue({ ...mockMeResponse(), external: { search_types: ['course'], create_types: ['course'] } })
     renderProvider()
     await waitFor(() => expect(screen.getByTestId('external-types')).toHaveTextContent('course'))
-    mockApi.getMe.mockRejectedValueOnce(new Error('401'))
+    mockApi.getMe.mockRejectedValueOnce({ response: { status: 401 } })
     screen.getByText('reload').click()
     await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
     expect(screen.getByTestId('external-types')).toBeEmptyDOMElement()
   });
+
+  it.each([
+    new Error('network unavailable'),
+    { response: { status: 503 } },
+    { response: { status: 401, data: { detail: { error: { code: 'TOKEN_EXPIRED' } } } } },
+  ])('retains confirmed session and rights when a background refresh fails temporarily: %j', async error => {
+    mockApi.getConfig.mockResolvedValue({ public_url: window.location.origin })
+    mockApi.getMe.mockResolvedValue(mockMeResponse())
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('true'))
+
+    mockApi.getMe.mockRejectedValueOnce(error)
+    fireEvent.click(screen.getByText('reload'))
+    await waitFor(() => expect(mockApi.getMe).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('authenticated')).toHaveTextContent('true')
+    expect(screen.getByTestId('can-sync')).toHaveTextContent('true')
+    expect(syncPostHogIdentity).not.toHaveBeenCalledWith(null)
+  })
 })

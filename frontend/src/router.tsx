@@ -8,6 +8,10 @@ import {
 } from 'react-router'
 import { Button, ContentContainer, PageHeader, PageState } from '@cqu-moe/ui'
 import Layout from '@/layout'
+import RouteSkeleton from '@/components/RouteSkeleton'
+import Home from '@/views/Home'
+import Docs from '@/views/Docs'
+import SignedOut from '@/views/SignedOut'
 
 const SITE_NAME = 'CQU Schedule'
 
@@ -52,21 +56,17 @@ const NotFound = (
 export const appRoutes: RouteObject[] = [
   {
     element: <Layout />,
-    hydrateFallbackElement: (
-      <ContentContainer>
-        <PageState state="loading" title="正在打开页面" description="请稍候。" />
-      </ContentContainer>
-    ),
+    hydrateFallbackElement: <Layout><RouteSkeleton /></Layout>,
     errorElement: <RouteError />,
     children: [
       {
         path: 'signed-out',
-        lazy: async () => ({ Component: (await import('@/views/SignedOut')).default }),
+        Component: SignedOut,
         handle: { title: `已退出课表 | ${SITE_NAME}` },
       },
       {
         index: true,
-        lazy: async () => ({ Component: (await import('@/views/Home')).default }),
+        Component: Home,
         handle: { title: `重庆大学课表订阅 | ${SITE_NAME}` },
       },
       {
@@ -81,7 +81,7 @@ export const appRoutes: RouteObject[] = [
       },
       {
         path: 'api-docs',
-        lazy: async () => ({ Component: (await import('@/views/Docs')).default }),
+        Component: Docs,
         handle: { title: `使用指南与 API | ${SITE_NAME}` },
       },
       {

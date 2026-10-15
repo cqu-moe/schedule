@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
   PageState,
+  Skeleton,
 } from '@cqu-moe/ui'
 import { Clock, FlaskConical, MapPin, User } from 'lucide-react'
 import api from '@/api'
@@ -28,6 +29,7 @@ import { getSemesterWeek } from '@/utils/calendarWeek'
 import { captureScheduleEvent } from '@/lib/posthog'
 import '@/assets/fullcalendar-theme.css'
 import './calendar.css'
+import { CalendarSkeleton } from '@/components/LoadingSkeletons'
 
 // 课程配色只用设计 token（check:design 禁止硬编码颜色），按首次出现顺序循环分配。
 const COURSE_COLORS = [
@@ -308,10 +310,10 @@ export default function Calendar() {
     <>
       <header className="cal-heading">
         <h1>课表日历</h1>
-        <p>{pageDescription}</p>
+        {loading ? <Skeleton className="loading-line w-48" aria-hidden="true" /> : <p>{pageDescription}</p>}
       </header>
       {loading ? (
-        <PageState state="loading" title="正在加载课表" description="正在获取分享的课表数据，请稍候。" />
+        <CalendarSkeleton />
       ) : error ? (
         <PageState
           state={error.state}

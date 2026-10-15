@@ -17,6 +17,7 @@ import type {
   SessionUser,
 } from '@/types/api'
 import { captureScheduleEvent, syncPostHogIdentity } from '@/lib/posthog'
+import { apiErrorCode } from '@/utils/error'
 
 interface SessionState {
   externalAvailability: ExternalAvailability
@@ -27,6 +28,9 @@ interface SessionState {
 }
 
 export interface AppContextValue extends SessionState {
+  sessionPending: boolean
+  /** Absent after a successful read; transient failures do not invalidate a confirmed session. */
+  sessionError?: 'unauthenticated' | 'unavailable'
   publicUrl: string
   isAuthenticated: boolean
   /** True 仅在明确知道用户已绑定时；未知（undefined）按未绑定处理会误伤旧 auth。 */
@@ -59,6 +63,9 @@ const EMPTY_SESSION: SessionState = {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [publicUrl, setPublicUrl] = useState(window.location.origin)
   const [session, setSession] = useState<SessionState>(EMPTY_SESSION)
+  const [sessionPending, setSessionPending] = useState(true)
+  const [sessionError, setSessionError] = useState<AppContextValue['sessionError']>()
+  const hasSession = useRef(false)
   const loadPromise = useRef<Promise<MeResponse> | null>(null)
   const sessionReadyReported = useRef(false)
 
@@ -79,9 +86,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const reloadSession = useCallback((): Promise<MeResponse> => {
     if (loadPromise.current) return loadPromise.current
+    if (!hasSession.current) setSessionPending(true)
+    setSessionError(undefined)
     const request = (async (): Promise<MeResponse> => {
       try {
         const data = await api.getMe()
+        hasSession.current = true
         syncPostHogIdentity(data.user.id)
         setSession({
           externalAvailability: data.external ?? EMPTY_SESSION.externalAvailability,
@@ -100,12 +110,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         return data
       } catch (error) {
-        // A failed /me probe cannot authenticate the browser. Clear a persisted
-        // identity so telemetry never keeps serving the previous account.
-        syncPostHogIdentity(null)
-        setSession(EMPTY_SESSION)
+        const unauthorized = (error as { response?: { status?: number } })?.response?.status === 401
+          && apiErrorCode(error) !== 'TOKEN_EXPIRED'
+        setSessionError(unauthorized ? 'unauthenticated' : 'unavailable')
+        if (unauthorized || !hasSession.current) {
+          hasSession.current = false
+          syncPostHogIdentity(null)
+          setSession(EMPTY_SESSION)
+        }
         throw error
       } finally {
+        setSessionPending(false)
         loadPromise.current = null
       }
     })()
@@ -122,6 +137,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(
     () => ({
       ...session,
+      sessionPending,
+      sessionError,
       publicUrl,
       isAuthenticated: session.user !== null,
       isCquBound: session.cquBindStatus === 'active',
@@ -131,7 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       quota: (key) => session.caps?.[key] ?? null,
       reloadSession,
     }),
-    [session, publicUrl, reloadSession],
+    [session, sessionPending, sessionError, publicUrl, reloadSession],
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

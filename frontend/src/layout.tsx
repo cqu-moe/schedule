@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, Outlet, useLocation, useMatches, useNavigation } from 'react-router'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, Navigate, NavLink, Outlet, useLocation, useMatches, useNavigation } from 'react-router'
 import {
   AppShell,
   Button,
@@ -13,6 +13,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   useTheme,
+  Skeleton,
+  PageHeader,
+  PageState,
 } from '@cqu-moe/ui'
 import { normalizePreference } from '@cqu-moe/theme'
 import {
@@ -27,14 +30,19 @@ import {
   UserRound,
 } from 'lucide-react'
 import { useSession } from '@/providers/app'
-import { AUTH_BASE_URL, authLoginUrl } from '@/config/auth'
+import { AUTH_BASE_URL, authLoginUrl, signedOutUrl } from '@/config/auth'
 import { captureSchedulePageview, syncPostHogReplay } from '@/lib/posthog'
 import './layout.css'
+import RouteSkeleton from '@/components/RouteSkeleton'
 
 function AccountMenu() {
-  const { isAuthenticated, user } = useSession()
+  const { isAuthenticated, user, sessionPending, sessionError, reloadSession } = useSession()
   const location = useLocation()
   const logoutForm = useRef<HTMLFormElement>(null)
+  if (sessionPending) return <Skeleton className="size-10 rounded-full" role="status" aria-label="正在确认登录状态" />
+  if (!isAuthenticated && sessionError === 'unavailable') {
+    return <Button variant="outline" size="sm" onClick={() => void reloadSession().catch(() => {})}>重试登录状态</Button>
+  }
   if (!isAuthenticated) {
     return (
       <Button asChild variant="outline" size="sm">
@@ -104,17 +112,28 @@ function AppearanceMenu() {
   )
 }
 
-export default function Layout() {
-  const { isAuthenticated } = useSession()
+export default function Layout({ children }: { children?: ReactNode }) {
+  const { isAuthenticated, sessionPending, sessionError, reloadSession } = useSession()
   const location = useLocation()
   const navigation = useNavigation()
   const matches = useMatches()
   const previousPath = useRef(location.pathname)
+  const retainedShell = useRef<HTMLDivElement>(null)
   const title = [...matches].reverse().find((m) => (m.handle as { title?: string })?.title)
     ?.handle as { title?: string } | undefined
-  const landing = location.pathname === '/'
-  const calendar = location.pathname.startsWith('/view/')
-  const reading = ['/api-docs', '/signed-out'].includes(location.pathname)
+  const displayPath = location.pathname.replace(/\/+$/, '') || '/'
+  const matchingPath = displayPath.toLowerCase()
+  const pendingPath = navigation.location?.pathname.replace(/\/+$/, '') || undefined
+  const changingPage = pendingPath !== undefined && pendingPath !== displayPath
+
+  useLayoutEffect(() => {
+    if (!changingPage) return
+    // AppShell owns a fixed main id; keep skip links targeting the visible shell.
+    const main = retainedShell.current?.querySelector<HTMLElement>('#main-content')
+    if (!main) return
+    main.removeAttribute('id')
+    return () => { main.id = 'main-content' }
+  }, [changingPage])
 
   useEffect(() => {
     document.title = title?.title ?? '重庆大学课表订阅 | CQU Schedule'
@@ -178,63 +197,81 @@ export default function Layout() {
       </NavLink>
     </>
   )
-  const content = (
-    <>
-      {navigation.state !== 'idle' && (
-        <div className="route-progress" role="status">
-          正在打开页面…
-        </div>
-      )}
-      <Outlet />
-    </>
-  )
+  const protectedPage = matchingPath === '/dashboard' || matchingPath === '/add'
+  let page = <Outlet />
+  if (protectedPage && !isAuthenticated) {
+    if (sessionPending) page = <RouteSkeleton />
+    else if (sessionError === 'unauthenticated') {
+      page = <Navigate replace to={signedOutUrl(window.location.origin + location.pathname + location.search + location.hash)} />
+    } else if (sessionError === 'unavailable') {
+      page = <>
+        <PageHeader title={matchingPath === '/add' ? '添加新订阅' : '我的订阅'} />
+        <PageState state="error" title="暂时无法确认登录状态" description="请重试本次请求。"
+          action={<Button variant="outline" onClick={() => void reloadSession().catch(() => {})}>重试</Button>} />
+      </>
+    }
+  }
+  const renderShell = (path: string, content: ReactNode) => {
+    const shellPath = path.toLowerCase()
+    const landing = shellPath === '/'
+    const calendar = shellPath.startsWith('/view/') || shellPath.startsWith('/calendar/')
+    const reading = ['/api-docs', '/signed-out'].includes(shellPath)
 
-  if (calendar)
-    return (
-      <div className="calendar-preview">
-        <a href="#main-content" className="site-skip">
-          跳至正文
-        </a>
-        <header className="calendar-preview-header">
-          {brand}
-          <div className="calendar-preview-utilities">{utilities}</div>
-        </header>
-        <main id="main-content" className="calendar-preview-main" tabIndex={-1}>
-          {content}
-        </main>
-      </div>
-    )
-
-  if (landing)
-    return (
-      <div className="landing-root">
-        <a href="#main-content" className="site-skip">
-          跳至正文
-        </a>
-        <header className="landing-header">
-          {brand}
-          <nav className="landing-utilities" aria-label="主导航">
-            <Button asChild variant="ghost" size="sm">
-              <Link to={isAuthenticated ? '/dashboard' : '/api-docs'}>
-                {isAuthenticated ? '我的订阅' : '使用指南'}
-              </Link>
-            </Button>
-            {utilities}
-          </nav>
-        </header>
-        <ContentContainer>
-          <main id="main-content" tabIndex={-1}>
+    if (calendar)
+      return (
+        <div className="calendar-preview">
+          <a href="#main-content" className="site-skip">
+            跳至正文
+          </a>
+          <header className="calendar-preview-header">
+            {brand}
+            <div className="calendar-preview-utilities">{utilities}</div>
+          </header>
+          <main id="main-content" className="calendar-preview-main" tabIndex={-1}>
             {content}
           </main>
-        </ContentContainer>
-      </div>
-    )
+        </div>
+      )
 
-  return (
-    <AppShell brand={brand} navigation={navigationItems} utilities={utilities}>
-      <ContentContainer width={reading ? 'reading' : 'compact'}>
-        <div className="page-body">{content}</div>
-      </ContentContainer>
-    </AppShell>
-  )
+    if (landing)
+      return (
+        <div className="landing-root">
+          <a href="#main-content" className="site-skip">
+            跳至正文
+          </a>
+          <header className="landing-header">
+            {brand}
+            <nav className="landing-utilities" aria-label="主导航">
+              <Button asChild variant="ghost" size="sm">
+                <Link to={isAuthenticated ? '/dashboard' : '/api-docs'}>
+                  {isAuthenticated ? '我的订阅' : '使用指南'}
+                </Link>
+              </Button>
+              {utilities}
+            </nav>
+          </header>
+          <ContentContainer>
+            <main id="main-content" tabIndex={-1}>
+              {content}
+            </main>
+          </ContentContainer>
+        </div>
+      )
+
+    return (
+      <AppShell brand={brand} navigation={navigationItems} utilities={utilities}>
+        <ContentContainer width={reading ? 'reading' : 'compact'}>
+          <div className="page-body">{content}</div>
+        </ContentContainer>
+      </AppShell>
+    )
+  }
+
+  return <>
+    <div ref={retainedShell} hidden={changingPage} inert={changingPage}>
+      {renderShell(displayPath, children ?? page)}
+    </div>
+    {changingPage && renderShell(pendingPath, <RouteSkeleton pathname={pendingPath} search={navigation.location?.search} />)}
+    {navigation.location && <span className="sr-only" role="status">正在打开页面…</span>}
+  </>
 }
