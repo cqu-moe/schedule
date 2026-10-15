@@ -6,8 +6,10 @@ export const externalRequests: Array<{path: string; sourceType: string | null; d
 
 export function installNetworkGuard() {
 let unexpected: string[];
+let responses: Array<{ at: string; path: string; status: number }>;
 beforeEach(async ({ app, browser }) => {
   unexpected = [];
+  responses = [];
   externalRequests.length = 0;
   const allowed = [process.env.SCHEDULE_E2E_URL!, process.env.SCHEDULE_AUTH_URL!];
   await browser.route('**/*', async route => {
@@ -23,12 +25,21 @@ beforeEach(async ({ app, browser }) => {
   });
   // Start the engine on a JSON endpoint before loading any application script.
   await app.open('/api/v2/config');
+  browserContext().on('response', response => {
+    const url = new URL(response.url());
+    if (url.origin === process.env.SCHEDULE_E2E_URL && ['/api/v2/me', '/api/v2/subscriptions', '/api/v2/notification-settings'].includes(url.pathname)) {
+      responses.push({ at: new Date().toISOString(), path: url.pathname, status: response.status() });
+    }
+  });
   await browserContext().routeWebSocket('**/*', socket => {
     unexpected.push(new URL(socket.url()).origin);
     socket.close({ code: 1008, reason: 'Unplanned WebSocket' });
   });
 });
-afterEach(async () => { expect(unexpected).toEqual([]); });
+afterEach(async () => {
+  console.info('Schedule owner response statuses:', JSON.stringify(responses));
+  expect(unexpected).toEqual([]);
+});
 
 }
 

@@ -99,6 +99,9 @@ for (const kind of ['personal', 'external'] as const) {
       const initial = kind === 'personal' ? await personal(fixture) : await external(fixture);
       let previous = initial.stored;
       let previousPublic = (await publicRead(initial.token)).text;
+      // These are background lifecycle transitions. Leave the polling dashboard
+      // while waiting; each failed state and final recovery still reopen it.
+      await app.open('/api/v2/config');
       const failureModes = ['schedule_failure', 'schedule_timeout', 'schedule_schema_error', ...(kind === 'external' ? ['schedule_stall'] : [])];
       for (const [index, mode] of failureModes.entries()) {
         const recoveryMode = index % 2 === 1 ? 'success' : 'schedule_v2';
@@ -120,6 +123,7 @@ for (const kind of ['personal', 'external'] as const) {
             expect((await school()).events.some(event => event.kind === expectedEvent)).toBe(true);
             await app.open('/dashboard');
             await expect(screen.getByRole('listitem').filter({ hasText: initial.view.source_name })).toContainText(failed.sync_status === 'queued' ? '重试' : '失败');
+            await app.open('/api/v2/config');
             return failed;
           });
         if (failed.sync_status === 'error') {
@@ -150,7 +154,7 @@ for (const kind of ['personal', 'external'] as const) {
       await age(empty.id, 'last_synced_at', 61);
       await cron();
       await waitForSubscription(sub => sub.sync_status === 'success' && sub.sync_run_id !== empty.sync_run_id, type);
-      await browser.reload();
+      await app.open('/dashboard');
       await expect(screen.getByRole('link', `查看课表：${initial.view.source_name}`, { exact: true })).toBeVisible();
       expect((await publicRead(initial.token)).text).toContain(kind === 'personal' ? '合成电路新版' : '外部电路新版');
       const snapshot = await control();
