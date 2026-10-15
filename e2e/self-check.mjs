@@ -18,8 +18,10 @@ async function rejected(name, args, environment, validate) {
   await validate(report, output);
 }
 await rejected('empty', ['--grep', '^intentionally-no-such-journey$'], {}, report => {
-  assert.equal(report.groups.length, 0);
-  assert.match(JSON.stringify(report.errors), /Zero selected tests|Framework discovery failed/);
+  assert.deepEqual(report.expectedIds, []);
+  assert.deepEqual(report.executedIds, []);
+  assert.deepEqual(report.groups, []);
+  assert.deepEqual(report.errors.map(error => error.message), ['Zero selected tests']);
 });
 await rejected('wrong-pin', ['--grep', '^unbound:'], { SCHEDULE_AUTH_COMMIT: '0'.repeat(40) }, report => {
   assert.equal(report.groups[0].cleanup, 'not-started');
