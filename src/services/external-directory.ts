@@ -6,7 +6,10 @@ import { DIRECTORY_CATALOGS, parseDirectoryResult, type DirectoryItem, type Dire
 const WEEK = 7 * 24 * 60 * 60_000;
 const LEASE = 2 * 60_000;
 const MAX_RUN_AGE = 5 * 24 * 60 * 60_000;
-const BATCH_SIZE = 10;
+// Teaching-class harvesting is deferred to #152; the weekly run publishes only
+// the department plus the four interactive core catalogs.
+const CORE_DIRECTORY_CATALOGS = DIRECTORY_CATALOGS.filter(sourceType => sourceType !== "teaching_class");
+const CATALOG_PHASE = CORE_DIRECTORY_CATALOGS.length;
 const sourceOwner = (env: Env) => env.EXTERNAL_DIRECTORY_USER_ID?.trim() ?? "";
 interface Run {
   id: string; owner_id: string; status: string; phase: number;
@@ -52,7 +55,8 @@ export async function scheduleExternalDirectory(env: Env): Promise<void> {
     env.DB.prepare(`UPDATE external_directory_state SET active_run_id=? WHERE id=1 AND active_run_id IS NULL
       AND EXISTS (SELECT 1 FROM external_directory_runs WHERE id=?)`).bind(id, id),
     env.DB.prepare(`DELETE FROM external_directory_runs WHERE started_at<?
-      AND id NOT IN (SELECT COALESCE(active_run_id,'') FROM external_directory_state UNION SELECT COALESCE(published_run_id,'') FROM external_directory_state)`)
+      AND id NOT IN (SELECT COALESCE(active_run_id,'') FROM external_directory_state
+        UNION SELECT COALESCE(catalog_run_id,'') FROM external_directory_state)`)
       .bind(now - 2 * WEEK),
     env.DB.prepare("DELETE FROM external_directory_course_cache WHERE expires_at<?").bind(now),
   ]);
@@ -109,21 +113,15 @@ export async function processExternalDirectory(env: Env, message: Message<Schedu
     if (run.session_id && observed?.observed_session_id && run.session_id !== observed.observed_session_id) {
       await failRun(env, run, lease, "CURRENT_SESSION_CHANGED"); message.ack(); return;
     }
+    if (run.phase >= CATALOG_PHASE) {
+      await failRun(env, run, lease, "TEACHER_CRAWL_CANCELLED"); message.ack(); return;
+    }
     const busy = await env.DB.prepare(`SELECT 1 AS busy FROM external_directory_state WHERE foreground_until>?
       UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? AND
         (sync_status='running' OR (sync_status='queued' AND datetime(updated_at)>datetime(?))) LIMIT 1`)
       .bind(now, userId, new Date(now - 2 * 60 * 60_000).toISOString()).first();
     if (foregroundInBatch || busy) { await deferRun(env, run, lease, 120 + jitter()); message.ack(); return; }
-    let recipe: DirectoryRecipe;
-    if (run.phase < DIRECTORY_CATALOGS.length) {
-      recipe = { kind: "catalog", sourceType: DIRECTORY_CATALOGS[run.phase], ...(run.session_id ? { expectedSessionId: run.session_id } : {}) };
-    } else {
-      const rows = await env.DB.prepare(`SELECT id FROM external_directory_items WHERE run_id=? AND kind='teaching_class' AND collected=0 ORDER BY id LIMIT ?`)
-        .bind(runId, BATCH_SIZE).all<{ id: string }>();
-      if (!rows.results.length) { await failRun(env, run, lease, "EMPTY_TEACHER_DIRECTORY"); message.ack(); return; }
-      if (!run.session_id) throw new Error("SCHEMA_INVALID");
-      recipe = { kind: "instructors", classIds: rows.results.map(row => row.id), expectedSessionId: run.session_id };
-    }
+    const recipe: DirectoryRecipe = { kind: "catalog", sourceType: CORE_DIRECTORY_CATALOGS[run.phase], ...(run.session_id ? { expectedSessionId: run.session_id } : {}) };
     const raw = await env.AUTH.cquExternalDirectory({ ...recipe, userId, clientId: env.CALENDAR_CLIENT_ID,
       clientSecret: env.CALENDAR_CLIENT_SECRET, deadlineAt: now + 90_000 });
     if ("error" in raw) {
@@ -140,30 +138,26 @@ export async function processExternalDirectory(env: Env, message: Message<Schedu
       statements.push(env.DB.prepare(`UPDATE external_directory_runs SET phase=phase+1,session_id=?,session_name=?,
         departments_json=COALESCE(?,departments_json) WHERE id=? AND lease_token=? AND lease_until>?`)
         .bind(result.session.id, result.session.name, result.departments ? JSON.stringify(result.departments) : null, runId, lease, finished));
-    } else {
-      // The same teacher may teach several classes. Keep one directory row per ID.
-      const teachers = [...new Map(result.classes.flatMap(row => row.items).map(row => [row.id, row])).values()];
-      statements.push(...stageItems(env, runId, lease, "instructor", teachers));
-      statements.push(env.DB.prepare(`UPDATE external_directory_items SET collected=1 WHERE run_id=? AND kind='teaching_class'
-        AND id IN (SELECT value FROM json_each(?)) AND ${fence}`)
-        .bind(runId, JSON.stringify(result.classes.map(row => row.classId)), runId, lease, finished));
     }
     statements.push(
       env.DB.prepare(`UPDATE external_directory_state SET observed_session_id=?,observed_at=? WHERE id=1 AND observed_at<=? AND ${fence}`)
         .bind(result.session.id, now, now, runId, lease, finished),
-      env.DB.prepare(`UPDATE external_directory_runs SET status='complete',finished_at=? WHERE id=? AND lease_token=? AND lease_until>?
-        AND phase=? AND departments_json IS NOT NULL
-        AND EXISTS (SELECT 1 FROM external_directory_state WHERE active_run_id=? AND observed_session_id=external_directory_runs.session_id)
-        AND EXISTS (SELECT 1 FROM external_directory_items WHERE run_id=? AND kind='instructor')
-        AND EXISTS (SELECT 1 FROM external_directory_items WHERE run_id=? AND kind='teaching_class')
-        AND NOT EXISTS (SELECT 1 FROM external_directory_items WHERE run_id=? AND kind='teaching_class' AND collected=0)`)
-        .bind(finished, runId, lease, finished, DIRECTORY_CATALOGS.length, runId, runId, runId, runId),
-      env.DB.prepare(`UPDATE external_directory_state SET published_run_id=?,active_run_id=NULL,next_due_at=?
-        WHERE active_run_id=? AND observed_session_id=? AND EXISTS (SELECT 1 FROM external_directory_runs WHERE id=? AND status='complete' AND lease_token=?)`)
-        .bind(runId, Math.max(finished, run.started_at + WEEK), runId, result.session.id, runId, lease),
-      env.DB.prepare(`UPDATE external_directory_runs SET lease_token=NULL,lease_until=0,dispatch_until=0,next_attempt_at=?,failure_count=0,last_error=NULL
-        WHERE id=? AND lease_token=?`).bind(finished + jitter() * 1000, runId, lease),
     );
+    if (run.phase + 1 === CATALOG_PHASE) {
+      statements.push(
+        env.DB.prepare(`UPDATE external_directory_runs SET status='complete',finished_at=? WHERE id=? AND lease_token=? AND lease_until>?
+          AND phase=? AND departments_json IS NOT NULL
+          AND EXISTS (SELECT 1 FROM external_directory_state WHERE active_run_id=? AND observed_session_id=external_directory_runs.session_id)
+          AND EXISTS (SELECT 1 FROM external_directory_items WHERE run_id=? AND kind IN ('room','laboratory','admin_class','course_catalog')
+            GROUP BY run_id HAVING COUNT(DISTINCT kind)=4)`)
+          .bind(finished, runId, lease, finished, CATALOG_PHASE, runId, runId),
+        env.DB.prepare(`UPDATE external_directory_state SET catalog_run_id=?,active_run_id=NULL,next_due_at=?
+          WHERE active_run_id=? AND observed_session_id=? AND EXISTS (SELECT 1 FROM external_directory_runs WHERE id=? AND status='complete' AND lease_token=?)`)
+          .bind(runId, Math.max(finished, run.started_at + WEEK), runId, result.session.id, runId, lease),
+      );
+    }
+    statements.push(env.DB.prepare(`UPDATE external_directory_runs SET lease_token=NULL,lease_until=0,dispatch_until=0,next_attempt_at=?,failure_count=0,last_error=NULL
+      WHERE id=? AND lease_token=?`).bind(finished + jitter() * 1000, runId, lease));
     await env.DB.batch(statements);
     await enqueueRun(env, runId);
     message.ack();
@@ -206,8 +200,9 @@ export async function lookupDirectory(env: Env, userId: string, input: Omit<Exte
     const result = JSON.parse(row.result_json) as ExternalSearchResult;
     return result.sourceType === "course" && result.course.id === input.courseId && result.course.name === input.courseName && result.session.id === input.expectedSessionId ? result : null;
   }
-  const run = await env.DB.prepare(`SELECT r.* FROM external_directory_runs r JOIN external_directory_state s ON s.published_run_id=r.id
-    WHERE r.status='complete' AND r.session_id=s.observed_session_id`).first<Run>();
+  if (input.sourceType === "instructor") return null;
+  const run = await env.DB.prepare(`SELECT r.* FROM external_directory_runs r JOIN external_directory_state s ON s.catalog_run_id=r.id
+    WHERE r.status='complete' AND r.phase>=${CATALOG_PHASE} AND r.session_id=s.observed_session_id`).first<Run>();
   if (!run?.session_id || !run.session_name) return null;
   const session = { id: run.session_id, name: run.session_name };
   if (input.sourceType === "department") {

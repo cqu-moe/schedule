@@ -152,7 +152,7 @@ async function seedSharedDirectory() {
     (id,owner_id,status,phase,started_at,finished_at,session_id,session_name,departments_json,next_attempt_at)
     VALUES ('route-shared','shared-owner','complete',6,0,0,'route-term','当前学期','[]',0)`).run();
   await env.DB.prepare(`UPDATE external_directory_state
-    SET published_run_id='route-shared',observed_session_id='route-term',observed_at=1`).run();
+    SET catalog_run_id='route-shared',observed_session_id='route-term',observed_at=1`).run();
   await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name,extra) VALUES
     ('route-shared','admin_class','percent','%班','百分号字面量'),
     ('route-shared','admin_class','ordinary','普通班','普通')`).run();
