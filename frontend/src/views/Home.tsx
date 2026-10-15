@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router'
-import { Button, Skeleton } from '@cqu-moe/ui'
+import { Button } from '@cqu-moe/ui'
 import { ArrowRight, Calendar, Lock, RefreshCw } from 'lucide-react'
 import { AUTH_BASE_URL, authCquBindUrl, authLoginUrl, scheduleSetupTarget } from '@/config/auth'
 import { useSession } from '@/providers/app'
@@ -42,7 +42,7 @@ export default function Home() {
           </p>
           {sessionPending ? <div className="home-cta" aria-busy="true">
             <span className="sr-only" role="status">正在确认登录状态</span>
-            <Button size="lg" disabled aria-hidden="true"><Skeleton><span className="invisible inline-flex items-center gap-2">开始使用<ArrowRight /></span></Skeleton></Button>
+            <Button size="lg" disabled aria-hidden="true"><span className="invisible inline-flex items-center gap-2">开始使用<ArrowRight /></span></Button>
           </div> : !isAuthenticated && sessionError === 'unavailable' ? <div className="home-cta">
             <p className="home-cta-hint" role="status">暂时无法确认登录状态，请重试。</p>
             <Button size="lg" onClick={() => void reloadSession().catch(() => {})}>重试登录状态</Button>

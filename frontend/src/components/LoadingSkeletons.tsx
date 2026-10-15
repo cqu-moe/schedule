@@ -51,13 +51,13 @@ export function SubscriptionListSkeleton() {
         </div>
         <div className="dash-card-actions">
           <div className="dash-main-actions">
-            <Button disabled><ArrowRight className="invisible" /><Skeleton><span className="invisible">查看课表</span></Skeleton></Button>
-            <Button variant="outline" disabled><Skeleton><span className="invisible inline-flex items-center gap-2"><ArrowRight />复制链接</span></Skeleton></Button>
+            <Button disabled><ArrowRight className="invisible" /><span className="invisible">查看课表</span></Button>
+            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><ArrowRight />复制链接</span></Button>
           </div>
           <div className="dash-secondary-actions">
-            <Button variant="outline" disabled><Skeleton><span className="invisible inline-flex items-center gap-2"><ArrowRight />同步</span></Skeleton></Button>
-            <Button variant="outline" size="icon" disabled><Skeleton className="size-4" /></Button>
-            <Button variant="outline" size="icon" disabled><Skeleton className="size-4" /></Button>
+            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><ArrowRight />同步</span></Button>
+            <Button variant="outline" size="icon" disabled><span className="invisible size-4" /></Button>
+            <Button variant="outline" size="icon" disabled><span className="invisible size-4" /></Button>
           </div>
         </div>
       </li>)}
@@ -111,7 +111,7 @@ export function AddContentSkeleton({ reselect = false }: { reselect?: boolean })
             ['我的考试', '仅包含考试安排'],
           ].map(([name, description]) => <div className="add-option" key={name}>
             <div className="min-w-0"><p className="add-option-name">{name}</p><p className="add-option-desc">{description}</p></div>
-            <Button variant="outline" size="sm" disabled><Skeleton><span className="invisible inline-flex items-center gap-2"><ArrowRight />已订阅</span></Skeleton></Button>
+            <Button variant="outline" size="sm" disabled><span className="invisible inline-flex items-center gap-2"><ArrowRight />已订阅</span></Button>
           </div>)}
         </div>
       </LoadingRegion>
@@ -139,7 +139,7 @@ export function SearchResultsSkeleton() {
         <Skeleton className="loading-line" style={{ width: '8rem' }} />
         <Skeleton className="loading-line" style={{ width: '12rem' }} />
       </div>
-      <Button disabled className="add-touch-control"><Skeleton><span className="invisible">失败，重试</span></Skeleton></Button>
+      <Button disabled className="add-touch-control"><span className="invisible">失败，重试</span></Button>
     </li>)}
   </ul>
 }

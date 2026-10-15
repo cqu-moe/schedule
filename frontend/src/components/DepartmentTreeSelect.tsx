@@ -213,7 +213,7 @@ export default function DepartmentTreeSelect({
           className="w-full justify-between font-normal"
         >
           {loading && departments.length === 0
-            ? <><Skeleton className="loading-line w-24" aria-hidden="true" /><span className="sr-only">正在加载学院</span></>
+            ? <><span className="invisible w-24" aria-hidden="true">选择学院</span><span className="sr-only">正在加载学院</span></>
             : <span className="truncate">{selectedLabel || '请选择学院'}</span>}
           <ChevronsUpDown style={mutedIconStyle} aria-hidden />
         </Button>
