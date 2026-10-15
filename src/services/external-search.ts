@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { errorResponse } from "../utils/error";
+import { lookupDirectory, markDirectoryForeground, observeDirectorySession, cacheDirectoryCourse, directorySessionMatches } from "./external-directory";
 
 export interface ExternalSearchArgs {
   clientId: string;
@@ -86,9 +87,16 @@ async function digest(value: unknown): Promise<string> {
  * requests a fresh observation; the short directory cache is only for interactive search. */
 export async function searchExternal(env: Env, userId: string, input: Omit<ExternalSearchArgs, "clientId" | "clientSecret" | "userId">, options: {
   fresh?: boolean;
+  cacheOnly?: boolean;
   onFreshSession?: (session: ExternalSession) => Promise<void>;
 } = {}): Promise<ExternalSearchResult | Response> {
-  if (!env.AUTH.cquExternalSearch) return searchError("UNAVAILABLE");
+  if (!options.fresh) {
+    try {
+      const cached = await lookupDirectory(env, userId, input);
+      const parsed = cached && parseResult(cached, input.sourceType);
+      if (parsed) return parsed;
+    } catch { /* Directory outages fall back to the existing authorized lookup. */ }
+  }
   const fingerprint = await digest([userId, input.sourceType, input.departmentId ?? "", input.grade ?? "", input.keyword ?? "", input.courseId ?? "", input.expectedSessionId ?? ""]);
   const prefix = `external-search:v1:${fingerprint}`;
   if (!options.fresh) {
@@ -98,19 +106,26 @@ export async function searchExternal(env: Env, userId: string, input: Omit<Exter
         const cached = await env.CACHE.get(`${prefix}:${await digest(term)}`, "json");
         if (record(cached) && typeof cached.expiresAt === "number" && cached.expiresAt > Date.now()) {
           const result = parseResult(cached.result, input.sourceType);
-          if (result?.session.id === term) return result;
+          if (result?.session.id === term && await directorySessionMatches(env, term)) return result;
         }
       }
     } catch { /* A cache outage must not prevent a fresh authorized search. */ }
   }
+  if (options.cacheOnly) return errorResponse("EXTERNAL_DIRECTORY_MISS", "目录中未找到，正在向学校查询，耗时会比平常稍长。", 409);
+  if (!env.AUTH.cquExternalSearch) return searchError("UNAVAILABLE");
   let raw: unknown;
+  const requestedAt = Date.now();
   try {
+    await markDirectoryForeground(env, userId);
     raw = await env.AUTH.cquExternalSearch({ ...input, clientId: env.CALENDAR_CLIENT_ID, clientSecret: env.CALENDAR_CLIENT_SECRET, userId, deadlineAt: Math.min(input.deadlineAt ?? Infinity, Date.now() + 90_000) });
   } catch { return searchError("UNAVAILABLE"); }
   if (record(raw) && "error" in raw) return searchError(raw.error);
   const result = parseResult(raw, input.sourceType);
   if (!result) return searchError("SCHEMA_INVALID");
+  try { await observeDirectorySession(env, result.session.id, requestedAt); }
+  catch { return searchError("UNAVAILABLE"); }
   await options.onFreshSession?.(result.session);
+  await cacheDirectoryCourse(env, userId, result).catch(() => {});
   try {
     await env.CACHE.put(`${prefix}:${await digest(result.session.id)}`, JSON.stringify({ expiresAt: Date.now() + 60_000, result }), { expirationTtl: 60 });
     await env.CACHE.put(`${prefix}:current`, result.session.id, { expirationTtl: 60 });

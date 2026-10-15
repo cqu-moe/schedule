@@ -384,6 +384,47 @@ describe('Add view (React)', () => {
     expect(await screen.findByText('张三')).toBeInTheDocument()
   })
 
+  it('shows the school fallback status until a replacement or current search finishes', async () => {
+    await enableExternal()
+    const fallbackMessage = '目录中未找到，正在向学校查询，耗时会比平常稍长。'
+    const requests: Array<{
+      onSchoolLookup?: () => void
+      reject: (error: unknown) => void
+      resolve: (result: unknown) => void
+    }> = []
+    mockApi.searchExternal.mockImplementation(
+      (_params, options?: { onSchoolLookup?: () => void }) =>
+        new Promise((resolve, reject) => {
+          requests.push({ onSchoolLookup: options?.onSchoolLookup, reject, resolve })
+        }),
+    )
+    const user = userEvent.setup()
+    renderWithApp(<Add />, { routerEntries: ['/add'] })
+    const input = await screen.findByPlaceholderText('输入教师姓名或工号')
+    await user.type(input, '张三')
+    await waitFor(() => expect(requests).toHaveLength(1))
+
+    await act(async () => requests[0].onSchoolLookup?.())
+    expect(screen.getByText(fallbackMessage)).toBeInTheDocument()
+
+    await user.type(input, '四')
+    expect(screen.queryByText(fallbackMessage)).not.toBeInTheDocument()
+    await act(async () => requests[0].reject(new Error('ignored stale request')))
+    expect(screen.queryByText(fallbackMessage)).not.toBeInTheDocument()
+
+    await waitFor(() => expect(requests).toHaveLength(2))
+    await act(async () => requests[1].onSchoolLookup?.())
+    expect(screen.getByText(fallbackMessage)).toBeInTheDocument()
+    await act(async () => requests[1].resolve({
+      session: { id: 'term-26', name: '2026秋' },
+      selection_token: 'selection-1',
+      truncated: false,
+      results: [{ id: 'teacher-1', name: '张三四', extra: '' }],
+    }))
+    expect(await screen.findByText('张三四')).toBeInTheDocument()
+    expect(screen.queryByText(fallbackMessage)).not.toBeInTheDocument()
+  })
+
   it('discards an in-flight search when the source type changes', async () => {
     await enableExternal()
     let resolveInstructor!: (result: unknown) => void

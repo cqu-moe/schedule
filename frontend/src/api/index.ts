@@ -38,7 +38,15 @@ const EXTERNAL_LOOKUP_TIMEOUT_MS = 100_000
 const EXTERNAL_RETRY_BACKOFF_MS = 7_500
 const EXTERNAL_MAX_ATTEMPTS = 10
 
-type ExternalLookupOptions = { signal?: AbortSignal }
+type ExternalLookupOptions = {
+  signal?: AbortSignal
+  onSchoolLookup?: () => void
+}
+
+interface ExternalRequestState {
+  startedAt: number
+  attempts: number
+}
 
 function externalBusy(error: AxiosError): boolean {
   const detail = error.response?.data as Record<string, unknown> | undefined
@@ -49,6 +57,15 @@ function externalBusy(error: AxiosError): boolean {
 
 function externalNetworkLoss(error: AxiosError): boolean {
   return error.code === 'ERR_NETWORK' && error.response === undefined
+}
+
+function externalDirectoryMiss(error: unknown): boolean {
+  const axiosError = error as AxiosError
+  const detail = axiosError.response?.data as Record<string, unknown> | undefined
+  return axiosError.response?.status === 409 &&
+    (detail?.detail as Record<string, unknown> | undefined)?.error !== undefined &&
+    ((detail?.detail as Record<string, unknown>).error as Record<string, unknown>)?.code ===
+      'EXTERNAL_DIRECTORY_MISS'
 }
 
 function requestCancelled(error: unknown): boolean {
@@ -81,12 +98,22 @@ function waitForExternalRetry(signal: AbortSignal, duration: number): Promise<vo
   })
 }
 
-async function externalGet<T>(url: string, { signal }: ExternalLookupOptions = {}): Promise<T> {
-  const startedAt = Date.now()
+function externalDeadlineExpired(state: ExternalRequestState): boolean {
+  return Date.now() >= state.startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS
+}
 
-  for (let attempt = 1; attempt <= EXTERNAL_MAX_ATTEMPTS; attempt += 1) {
+async function externalGet<T>(
+  url: string,
+  { signal }: ExternalLookupOptions = {},
+  state: ExternalRequestState = { startedAt: Date.now(), attempts: 0 },
+): Promise<T> {
+  while (state.attempts < EXTERNAL_MAX_ATTEMPTS) {
+    state.attempts += 1
+    const attempt = state.attempts
     if (signal?.aborted) throw abortError(signal)
-    const remaining = attempt === 1 ? EXTERNAL_LOOKUP_TIMEOUT_MS : startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS - Date.now()
+    const remaining =
+      attempt === 1 ? EXTERNAL_LOOKUP_TIMEOUT_MS :
+        state.startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS - Date.now()
     if (remaining <= 0) throw new DOMException('External lookup timed out', 'TimeoutError')
 
     try {
@@ -101,13 +128,32 @@ async function externalGet<T>(url: string, { signal }: ExternalLookupOptions = {
       }
 
       if (attempt === EXTERNAL_MAX_ATTEMPTS) throw error
-      if (Date.now() + EXTERNAL_RETRY_BACKOFF_MS > startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS) throw error
+      if (Date.now() + EXTERNAL_RETRY_BACKOFF_MS > state.startedAt + EXTERNAL_LOOKUP_TIMEOUT_MS) throw error
       if (signal) await waitForExternalRetry(signal, EXTERNAL_RETRY_BACKOFF_MS)
       else await new Promise(resolve => setTimeout(resolve, EXTERNAL_RETRY_BACKOFF_MS))
     }
   }
 
   throw new Error('External lookup recovery ended unexpectedly')
+}
+
+async function externalGetWithDirectoryCache<T>(
+  url: string,
+  options: ExternalLookupOptions = {},
+): Promise<T> {
+  const state = { startedAt: Date.now(), attempts: 0 }
+  const directoryUrl = `${url}${url.includes('?') ? '&' : '?'}lookup=directory`
+
+  try {
+    return await externalGet<T>(directoryUrl, options, state)
+  } catch (error) {
+    if (!externalDirectoryMiss(error)) throw error
+    if (options.signal?.aborted) throw abortError(options.signal)
+    if (externalDeadlineExpired(state)) throw new DOMException('External lookup timed out', 'TimeoutError')
+
+    options.onSchoolLookup?.()
+    return externalGet<T>(url, options, state)
+  }
 }
 
 /**
@@ -283,7 +329,7 @@ export default {
     const query = new URLSearchParams({ source_type: params.source_type, keyword: params.keyword })
     if (params.department_id) query.append('department_id', params.department_id)
     if (params.grade) query.append('grade', params.grade)
-    return externalGet<ExternalSearchResponse>(`/external/search?${query}`, options)
+    return externalGetWithDirectoryCache<ExternalSearchResponse>(`/external/search?${query}`, options)
   },
 
   async searchTeachingClasses(
@@ -292,14 +338,17 @@ export default {
     options?: ExternalLookupOptions,
   ): Promise<ExternalSearchResponse> {
     const query = new URLSearchParams({ course_id: courseId, selection_token: selectionToken })
-    return externalGet<ExternalSearchResponse>(`/external/teaching-classes?${query}`, options)
+    return externalGetWithDirectoryCache<ExternalSearchResponse>(
+      `/external/teaching-classes?${query}`,
+      options,
+    )
   },
 
   async getDepartments(options?: ExternalLookupOptions): Promise<{
     session: ExternalSession
     departments: DepartmentNode[]
   }> {
-    return externalGet<{ session: ExternalSession; departments: DepartmentNode[] }>(
+    return externalGetWithDirectoryCache<{ session: ExternalSession; departments: DepartmentNode[] }>(
       '/external/departments',
       options,
     )

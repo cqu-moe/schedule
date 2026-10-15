@@ -339,7 +339,7 @@ describe('API module (v2)', () => {
       const result = await api.searchExternal({ source_type: 'instructor', keyword: '张三' })
 
       expect(mockClient.get).toHaveBeenCalledWith(
-        '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89',
+        '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89&lookup=directory',
         { timeout: 100_000, signal: undefined },
       )
       expect(result).toEqual({ results: [] })
@@ -507,7 +507,7 @@ describe('API module (v2)', () => {
         api.searchTeachingClasses('course-1', 'token-1', { signal: controller.signal }),
       ).resolves.toEqual(result)
       expect(mockClient.get).toHaveBeenCalledWith(
-        '/external/teaching-classes?course_id=course-1&selection_token=token-1',
+        '/external/teaching-classes?course_id=course-1&selection_token=token-1&lookup=directory',
         { timeout: 100_000, signal: controller.signal },
       )
     })
@@ -521,8 +521,143 @@ describe('API module (v2)', () => {
 
       const result = await api.getDepartments()
 
-      expect(mockClient.get).toHaveBeenCalledWith('/external/departments', { timeout: 100_000, signal: undefined })
+      expect(mockClient.get).toHaveBeenCalledWith('/external/departments?lookup=directory', {
+        timeout: 100_000,
+        signal: undefined,
+      })
       expect(result).toEqual({ departments: [] })
+    })
+  })
+
+  describe('external directory cache', () => {
+    const directoryMiss = () => ({
+      response: {
+        status: 409,
+        data: { detail: { error: { code: 'EXTERNAL_DIRECTORY_MISS', message: 'cache miss' } } },
+      },
+    })
+
+    it('falls back to the school request only after each directory miss', async () => {
+      const result = { results: [] }
+      const departmentResult = { session: { id: 'term' }, departments: [] }
+      const searchLookup = vi.fn()
+      const teachingLookup = vi.fn()
+      const departmentLookup = vi.fn()
+      mockClient.get
+        .mockRejectedValueOnce(directoryMiss()).mockResolvedValueOnce({ data: result })
+        .mockRejectedValueOnce(directoryMiss()).mockResolvedValueOnce({ data: result })
+        .mockRejectedValueOnce(directoryMiss()).mockResolvedValueOnce({ data: departmentResult })
+
+      await expect(api.searchExternal(
+        { source_type: 'instructor', keyword: '张三' },
+        { onSchoolLookup: searchLookup },
+      )).resolves.toEqual(result)
+      await expect(api.searchTeachingClasses('course-1', 'token-1', {
+        onSchoolLookup: teachingLookup,
+      })).resolves.toEqual(result)
+      await expect(api.getDepartments({ onSchoolLookup: departmentLookup }))
+        .resolves.toEqual(departmentResult)
+
+      expect(mockClient.get.mock.calls.map(([url]) => url)).toEqual([
+        '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89&lookup=directory',
+        '/external/search?source_type=instructor&keyword=%E5%BC%A0%E4%B8%89',
+        '/external/teaching-classes?course_id=course-1&selection_token=token-1&lookup=directory',
+        '/external/teaching-classes?course_id=course-1&selection_token=token-1',
+        '/external/departments?lookup=directory',
+        '/external/departments',
+      ])
+      expect(searchLookup).toHaveBeenCalledOnce()
+      expect(teachingLookup).toHaveBeenCalledOnce()
+      expect(departmentLookup).toHaveBeenCalledOnce()
+    })
+
+    it('uses each cached success without querying the school', async () => {
+      const searchLookup = vi.fn()
+      const teachingLookup = vi.fn()
+      const departmentLookup = vi.fn()
+      mockClient.get
+        .mockResolvedValueOnce({ data: { results: [] } })
+        .mockResolvedValueOnce({ data: { results: [] } })
+        .mockResolvedValueOnce({ data: { departments: [] } })
+
+      await api.searchExternal({ source_type: 'room', keyword: 'A101' }, { onSchoolLookup: searchLookup })
+      await api.searchTeachingClasses('course-1', 'token-1', { onSchoolLookup: teachingLookup })
+      await api.getDepartments({ onSchoolLookup: departmentLookup })
+
+      expect(mockClient.get).toHaveBeenCalledTimes(3)
+      mockClient.get.mock.calls.forEach(([url]) => expect(url).toContain('lookup=directory'))
+      expect(searchLookup).not.toHaveBeenCalled()
+      expect(teachingLookup).not.toHaveBeenCalled()
+      expect(departmentLookup).not.toHaveBeenCalled()
+    })
+
+    it('does not fall back for unrelated external errors', async () => {
+      const unrelated = {
+        response: {
+          status: 502,
+          data: { detail: { error: { code: 'UPSTREAM_ERROR', message: 'upstream failed' } } },
+        },
+      }
+      mockClient.get
+        .mockRejectedValueOnce(unrelated)
+        .mockRejectedValueOnce(unrelated)
+        .mockRejectedValueOnce(unrelated)
+      const onSchoolLookup = vi.fn()
+
+      await Promise.all([
+        expect(api.searchExternal(
+          { source_type: 'room', keyword: 'A101' },
+          { onSchoolLookup },
+        )).rejects.toBe(unrelated),
+        expect(api.searchTeachingClasses('course-1', 'token-1', { onSchoolLookup }))
+          .rejects.toBe(unrelated),
+        expect(api.getDepartments({ onSchoolLookup })).rejects.toBe(unrelated),
+      ])
+
+      expect(mockClient.get).toHaveBeenCalledTimes(3)
+      expect(onSchoolLookup).not.toHaveBeenCalled()
+    })
+
+    it('does not start the school request if cancellation arrives after a miss', async () => {
+      const controller = new AbortController()
+      const onSchoolLookup = vi.fn()
+      mockClient.get.mockImplementationOnce(() => {
+        controller.abort()
+        return Promise.reject(directoryMiss())
+      })
+
+      await expect(api.searchExternal(
+        { source_type: 'room', keyword: 'A101' },
+        { signal: controller.signal, onSchoolLookup },
+      )).rejects.toMatchObject({ name: 'AbortError' })
+      expect(mockClient.get).toHaveBeenCalledTimes(1)
+      expect(onSchoolLookup).not.toHaveBeenCalled()
+    })
+
+    it('shares one deadline across directory and school requests', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      const timeoutError = Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })
+      mockClient.get
+        .mockImplementationOnce(async () => {
+          await new Promise(resolve => setTimeout(resolve, 60_000))
+          throw directoryMiss()
+        })
+        .mockImplementationOnce(async (_url, config) => {
+          await new Promise(resolve => setTimeout(resolve, config.timeout))
+          throw timeoutError
+        })
+      const onSchoolLookup = vi.fn()
+      const startedAt = Date.now()
+      const rejection = expect(api.searchExternal(
+        { source_type: 'room', keyword: 'A101' },
+        { onSchoolLookup },
+      )).rejects.toBe(timeoutError)
+
+      await vi.runAllTimersAsync()
+      await rejection
+      expect(Date.now() - startedAt).toBe(100_000)
+      expect(mockClient.get.mock.calls[1][1]).toMatchObject({ timeout: 40_000 })
+      expect(onSchoolLookup).toHaveBeenCalledOnce()
     })
   })
 
