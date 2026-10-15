@@ -29,9 +29,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run typecheck && npm test
       - run: node node_modules/playwright-core/cli.js install-deps chromium
       - run: npm run e2e:prepare
+      - run: npm run typecheck && npm test
       - run: npm run test:e2e
       - name: Repeat with new application and browser state
         run: npm run test:e2e
@@ -44,11 +44,14 @@ jobs:
           path: |
             .e2e/run-*/**/*.json
             .e2e/run-*/**/*.md
+            .e2e/run-*/**/results/**/*.txt
             .e2e/run-*/**/*.png
             .e2e/run-*/**/runner.log
             .e2e/negative-*/**/*.json
             .e2e/negative-*/**/*.md
+            .e2e/negative-*/**/results/**/*.txt
             .e2e/negative-*/**/*.png
             .e2e/negative-*/**/runner.log
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
