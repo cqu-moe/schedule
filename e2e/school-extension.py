@@ -26,27 +26,57 @@ async def schedule_api(request):
         return web.json_response({"error": "SCHOOL_SESSION_EXPIRED"}, status=401)
     if request.path.endswith('/session/info-detail'):
         return web.json_response({"curSessionId": state["session"], "sessionFinder": [
-            {"id": state["session"], "name": "2026-2027秋"}]})
+            {"id": state["session"], "name": "2026-2027春" if state["session"] == "202611" else "2026-2027秋"}]})
     if request.path.endswith('/session/list'):
         return web.json_response({"sessionVOList": [{"id": state["session"], "year": "2026-2027",
-            "term": "秋", "beginDate": "2026-09-07", "endDate": "2027-01-17"}]})
+            "term": "春" if state["session"] == "202611" else "秋",
+            "beginDate": "2027-02-22" if state["session"] == "202611" else "2026-09-07",
+            "endDate": "2027-07-04" if state["session"] == "202611" else "2027-01-17"}]})
     if request.path.endswith('/my-table-detail'):
         if request.method != 'POST' or request.query.get('sessionId') != '202610':
             raise web.HTTPBadRequest(text='Unexpected school timetable recipe')
         record('personal_timetable_requested')
-        if state['mode'] == 'schedule_failure':
-            return web.json_response({"error": "UPSTREAM_UNAVAILABLE"}, status=503)
+        await timetable_stall()
+        fault = timetable_fault()
+        if fault is not None:
+            return fault
+        if state['mode'] == 'schedule_empty':
+            return web.json_response({"classTimetableVOList": []})
         return web.json_response({"classTimetableVOList": [{
-            "courseName": "合成电路基础", "instructorName": "合成教师-1", "roomName": "D1144",
+            "courseName": "合成电路新版" if state['mode'].startswith('schedule_v2') else "合成电路基础", "instructorName": "合成教师-1", "roomName": "D1144",
             "position": "虎溪校区", "weekDay": 1, "teachingWeek": "11000000000000000000",
             "period": "11000000000000"}]})
     if request.path.endswith('/get-student-exam-list'):
         record('personal_exams_requested')
+        if state['mode'] == 'schedule_empty':
+            return web.json_response({"status": "success", "data": {"content": []}})
         return web.json_response({"status": "success", "data": {"content": [{
             "courseName": "合成电路考试", "examDate": "2026-12-21", "startTime": "09:00",
             "endTime": "11:00", "roomName": "D1201", "seatNum": 8}]}})
     result = await external_api(request)
     return result if result is not None else await base_api(request)
+
+
+async def timetable_stall():
+    if state['mode'] == 'schedule_stall':
+        record('school_timetable_request_held')
+        while state['mode'] == 'schedule_stall' and state['hold']:
+            await asyncio.sleep(.05)
+
+
+def timetable_fault():
+    # Only external school inputs. Real Auth capture/parsing and Queue writes
+    # decide the application result; the timeout mode is a school gateway 504.
+    if state['mode'] == 'schedule_failure':
+        record('school_timetable_http_503')
+        return web.json_response({"error": "UPSTREAM_UNAVAILABLE"}, status=503)
+    if state['mode'] == 'schedule_timeout':
+        record('school_timetable_http_504')
+        return web.json_response({"error": "SCHOOL_GATEWAY_TIMEOUT"}, status=504)
+    if state['mode'] == 'schedule_schema_error':
+        record('school_timetable_invalid_schema')
+        return web.json_response({"classTimetableVOList": {"invalid": "not an array"}})
+    return None
 
 
 async def external_page(request):
@@ -73,6 +103,8 @@ async def external_api(request):
     }
     if path in catalogs:
         kind, rows = catalogs[path]
+        if kind == 'teaching_class' and state['session'] == '202611' and state['mode'].startswith('schedule_v2'):
+            rows = [{"id": "63", "name": "合成电路02班新学期", "classNbr": "02", "teacherName": "合成教师"}]
         record('catalog_' + kind)
         if state['mode'] in {'course_cache', 'course_cache_other'}:
             if kind == 'course_catalog':
@@ -81,7 +113,7 @@ async def external_api(request):
                 second = request.query.get('courseId') == '32'
                 suffix = '另一用户' if state['mode'] == 'course_cache_other' else ('新学期' if state['session'] == '202611' else '')
                 rows = [{"id":"62" if second else "61", "name":('合成力学01班' if second else '合成电路01班')+suffix, "classNbr":"01", "teacherName":"合成教师"}]
-        while state['hold']:
+        while state['hold'] and state['mode'] not in {'schedule_v2_hold', 'schedule_stall'}:
             await asyncio.sleep(.05)
         if state['mode'] == 'external_forbidden':
             return web.json_response({"error":"PERMISSION_DENIED"}, status=403)
@@ -106,11 +138,15 @@ async def external_api(request):
         if not isinstance(ids, list):
             raise web.HTTPBadRequest(text='Expected target identifiers')
         record('external_table_' + kind)
-        if state['mode'] == 'schedule_failure':
-            return web.json_response({"error":"UPSTREAM_UNAVAILABLE"}, status=503)
+        while state['mode'] == 'schedule_v2_hold' and state['hold']:
+            await asyncio.sleep(.05)
+        await timetable_stall()
+        fault = timetable_fault()
+        if fault is not None:
+            return fault
         rows = []
-        for target in ids:
-            row = {"courseName":"外部电路基础","instructorName":"合成教师-1",
+        for target in ([] if state['mode'] == 'schedule_empty' else ids):
+            row = {"courseName":"外部电路新版" if state['mode'].startswith('schedule_v2') else "外部电路基础","instructorName":"合成教师-1",
                 "roomName":"合成实验室" if target=='42' else "合成教室", "position":"虎溪校区",
                 "weekDay":1,"teachingWeek":"11000000000000000000","period":"11000000000000"}
             if kind == 'room': row['roomId'] = target

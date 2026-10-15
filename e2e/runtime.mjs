@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdtemp, mkdir, rm, readdir } from 'node:fs/promis
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { lifecycleObserver, lifecycleControls } from './lifecycle-runtime.mjs';
 import { readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
 
 export const password = 'Synthetic-only-123!';
@@ -57,7 +58,7 @@ async function registerClient(db, origin) {
   assert.deepEqual(row, values, 'OAuth caller prerequisites must read back exactly');
 }
 
-export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'], external = false, directory = false, sourceTypes = 'admin_class,instructor,room,laboratory,course' }) {
+export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'], external = false, directory = false, sourceTypes = 'admin_class,instructor,room,laboratory,course', lifecycleProfile }) {
   assert.match(authCommit, /^[a-f0-9]{40}$/, 'A fixed Auth commit is required');
   const root = process.cwd();
   const auth = resolve(authDirectory);
@@ -157,7 +158,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
           authRequests.push(observation);
           return response;
         },
-      }],
+      }, ...(lifecycleProfile ? [lifecycleObserver] : [])],
     });
     let db = await runtime.getD1Database('DB', 'schedule-e2e');
     for (const migration of migrations) for (const query of migration.queries) await db.prepare(query).run();
@@ -186,6 +187,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       await runtime.updateConsumerBindings('schedule-e2e', { EXTERNAL_DIRECTORY_USER_ID: accounts.owner.userId });
       db = await runtime.getD1Database('DB', 'schedule-e2e');
     }
+    const lifecycle = lifecycleProfile ? await lifecycleControls({ runtime, db, accounts, profile: lifecycleProfile, secrets }) : null;
     const directoryInputs = [];
     async function directoryState() {
       return {
@@ -199,6 +201,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       try {
         const url = new URL(request.url, 'http://127.0.0.1');
         const account = accounts[url.searchParams.get('account')];
+        if (lifecycle && await lifecycle.handle(request, response, url, account)) return;
         if (directory && url.pathname === '/directory' && ['GET', 'POST'].includes(request.method)) {
           if (request.method === 'POST') {
             let raw = ''; for await (const chunk of request) raw += chunk;
@@ -273,7 +276,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       async diagnostics() {
         const rows = await db.prepare('SELECT source_type,source_name,sync_status,sync_error_code,sync_error_message,import_quality,skipped_count FROM subscriptions ORDER BY source_type').all();
         const school = accounts.owner ? await (await fetch(runtime.schoolOrigin + '/fixture?email=owner%40example.test')).json() : null;
-        return { subscriptions: rows.results, school, ...(directory ? { directory: await directoryState(), directoryInputs } : {}) };
+        return { subscriptions: rows.results, school, ...(lifecycle ? { lifecycle: await lifecycle.diagnostics() } : {}), ...(directory ? { directory: await directoryState(), directoryInputs } : {}) };
       },
       async close() {
         const errors = [];

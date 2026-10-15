@@ -43,7 +43,7 @@ Linux 还需 `node node_modules/playwright-core/cli.js install-deps chromium`。
 
 每条运行在 finally 中关闭 Auth/容器/Workflow、Schedule 资产服务和只读观察端口，实际 TCP 检查三个本地监听器已关闭；固定Auth同时按本轮native DO ID检查业务容器及独立egress proxy已删除（proxyObjectsRemoved），不只按业务镜像查询；清理错误与业务失败同时保留。校验产物前移除合成登录秘密、OAuth 令牌/授权码/nonce 和公共日历 token，不上传 profile 或数据库。
 
-`test:e2e:harness` 实跑四个控制：零选择、错误 Auth pin、故意错误的最终 ICS 内容、真实资源关闭后注入清理失败。分别检查指定失败原因；清理失败即使业务通过也必须失败。
+`test:e2e:harness` 实跑五个控制：零选择、错误 Auth pin、故意错误的最终 ICS 内容、故意错误的编辑后 CSV 内容、真实资源关闭后注入清理失败。分别检查指定失败原因；清理失败即使业务通过也必须失败。
 
 CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅程按 round 1/2 × desktop/mobile 四个独立 job 验证。保留原40分钟单job预算；四个失败控制只在首轮desktop job运行，并 always 上传脱敏产物。CI 接线不等于其实际成功，最终结论需读取对应提交的远端结果。
 
@@ -64,3 +64,13 @@ CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅�
 所有selected attempt还须无cleanup=failed/cleanup-phase secondaryErrors：固定e2e0.21有时不将它计入passed/exit0的主结论。运行入口独立拒绝该情况。
 
 按视口定位可用 `SCHEDULE_E2E_VIEWPORT=desktop npm run test:e2e`，接受desktop/mobile/all，默认all；非法值非零。此参数只改变视口，不跳过该视口应执行的用例。新Web旅程保留tester-army/e2e；现有新窗口适配范围不变。
+
+## 订阅生命周期（SCHEDULE-03）
+
+新增12条旅程（合计31条/视口），覆盖主人共享链接的标签/格式编辑、重开、轮换、删除与另一用户拒绝；个人及外部各自的手动次数、冷却和自动间隔；设备退出后的原生scheduled→Queue；学校503、504、错误结构、合法空表和恢复；真实管理员撤权/恢复、封禁、自助解绑；教学班新学期停用与显式重选；#103默认个人视图不占外部条数的当前行为。外部故障旅程还持有真实学校HTTP请求，等真实浏览器采集超时后再恢复。
+
+生命周期前置权益使用不同的个人/外部额度与间隔，避免误串权益仍通过。只在已生成的实际时钟字段上推进截止，或删除实际caps/harvest缓存输入；每次压缩时钟前观察学校profile和Chromium进程归零，最多120秒。不预造成功记录，不直接调用消费者。证据分别记录时钟输入和只读实际状态转换；失败保留的课表、空表和最终公开日历均由生产路径生成。
+
+每条finally除了平台按本轮原生DO名称检查，还按其返回的实际业务/proxy ID定向查询确认不存在。必须有`proxyObjectsRemoved=true`及`removedProxyIds`数组；已绑定生命周期至少有一个实际proxy ID。缺失或残留即非零并停止后续旅程。框架selected attempt的cleanup失败/cleanup secondaryErrors同样独立拒绝。聚合报告复用已脱敏的单条产物，避免重新写入内存中的链接token。
+
+定位本票：`npm run test:e2e -- --grep '^lifecycle'`。`SCHEDULE_E2E_BROWSER=firefox`或`webkit`选择补充浏览器，默认chromium；需要相应Playwright二进制（`node node_modules/playwright-core/cli.js install firefox webkit`）。浏览器仍为后台独立临时profile。`PLAYWRIGHT_BROWSERS_PATH`仅指定已安装二进制目录，不传用户profile。`SCHEDULE_E2E_BREAK_ASSERTION=1`也会故意破坏本票的实际CSV读回断言，用于独立非零控制。

@@ -10,6 +10,8 @@ const output = resolve(process.env.SCHEDULE_E2E_OUTPUT || `.e2e/run-${Date.now()
 assert.ok(output.startsWith(resolve('.e2e') + '/'), 'Evidence must stay under .e2e');
 const viewport = process.env.SCHEDULE_E2E_VIEWPORT || (process.env.SCHEDULE_E2E_MOBILE ? 'mobile' : 'all');
 assert.ok(['all', 'desktop', 'mobile'].includes(viewport), 'Unknown E2E viewport');
+const browser = process.env.SCHEDULE_E2E_BROWSER || 'chromium';
+assert.ok(['chromium', 'firefox', 'webkit'].includes(browser), 'Unknown E2E browser');
 const variants = viewport === 'all' ? ['desktop', 'mobile'] : [viewport];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 2) {
@@ -24,11 +26,11 @@ const cancel = () => { cancelled = true; process.exitCode = 1; };
 process.on('SIGINT', cancel);
 process.on('SIGTERM', cancel);
 
-async function cli(command, env, timeout = 600000) {
+async function cli(command, env, timeout = 900000) {
   const child = spawn(process.execPath, ['node_modules/e2e/dist/cli/bin.js', ...command], {
     cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, CI: process.env.CI,
-      DO_NOT_TRACK: '1', E2E_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false', ...env },
+      DO_NOT_TRACK: '1', E2E_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false', PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH, ...env },
   });
   let stdout = '', stderr = '', interrupted = false, hardStop;
   const signal = name => {
@@ -70,8 +72,8 @@ const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 for (const variant of variants) {
   const variantDirectory = join(output, variant);
   await mkdir(variantDirectory, { recursive: true });
-  const variantEvidence = { variant, source, status: 'failed', expectedIds: [], executedIds: [], groups: [], errors: [] };
-  const env = { SCHEDULE_E2E_MOBILE: variant === 'mobile' ? '1' : '' };
+  const variantEvidence = { variant, browser, source, status: 'failed', expectedIds: [], executedIds: [], groups: [], errors: [] };
+  const env = { SCHEDULE_E2E_BROWSER: browser, SCHEDULE_E2E_MOBILE: variant === 'mobile' ? '1' : '' };
   try {
     const discover = async filters => {
       const result = await cli(['list', '--reporter', 'json', ...filters], { ...env, SCHEDULE_E2E_OUTPUT: variantDirectory }, 30000);
@@ -95,6 +97,7 @@ for (const variant of variants) {
           authCommit: process.env.SCHEDULE_AUTH_COMMIT || dependency.commit,
           external: pair.tags.includes('external'),
           directory: pair.tags.includes('directory'),
+          lifecycleProfile: pair.tags.find(tag => tag.startsWith('lifecycle:'))?.slice(10),
           ...(pair.tags.includes('external-disabled') ? { sourceTypes: '' } : {}),
           accountNames: pair.tags.filter(tag => tag.startsWith('account:')).map(tag => tag.slice(8)) });
         assert.equal(cancelled, false, 'Run interrupted during startup');
@@ -129,6 +132,15 @@ for (const variant of variants) {
           catch (error) { evidence.errors.push(describe(error)); }
           try {
             evidence.resources = await runtime.close();
+            assert.equal(evidence.resources.platform?.proxyObjectsRemoved, true, 'Native egress proxy cleanup was not verified');
+            const proxies = evidence.resources.platform.removedProxyIds;
+            assert.ok(Array.isArray(proxies) && proxies.every(id => /^[a-f0-9]{64}$/.test(id)), 'Missing actual removed proxy IDs');
+            if (pair.tags.some(tag => tag.startsWith('lifecycle:'))) assert.ok(proxies.length > 0, 'Bound lifecycle journey must remove its actual native proxy');
+            for (const id of [...proxies, ...evidence.resources.platform.removedContainerIds]) {
+              assert.match(id, /^[a-f0-9]{64}$/);
+              assert.equal(execFileSync('docker', ['ps', '-aq', '--no-trunc', '--filter', `id=${id}`], { encoding: 'utf8' }).trim(), '', 'An owned native object remains after cleanup');
+            }
+            evidence.resources.actualRemovedIdsVerified = true;
             if (process.env.SCHEDULE_E2E_FAIL_CLEANUP === '1') throw new Error('Injected cleanup failure after real resources stopped');
             evidence.cleanup = 'passed';
           } catch (error) { evidence.cleanup = 'failed'; evidence.errors.push(describe(error)); }
@@ -136,7 +148,12 @@ for (const variant of variants) {
         if (!evidence.errors.length) evidence.status = 'passed';
         const write = () => writeFile(join(directory, 'runtime.json'), JSON.stringify(evidence, null, 2) + '\n');
         await write();
-        if (runtime) try { await runtime.checkArtifacts(directory); }
+        if (runtime) try {
+          await runtime.checkArtifacts(directory);
+          // Carry the sanitized group into the later aggregate; otherwise the
+          // aggregate would reintroduce raw tokens from its in-memory copy.
+          Object.assign(evidence, JSON.parse(await readFile(join(directory, 'runtime.json'), 'utf8')));
+        }
         catch (error) { evidence.status = 'failed'; evidence.errors.push(describe(error)); await write(); }
         console.log(`${variant}: ${pair.title}: ${evidence.status}; cleanup ${evidence.cleanup}`);
       }

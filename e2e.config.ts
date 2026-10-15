@@ -4,7 +4,7 @@ import { surfaceOf, web } from '@e2e-dev/web';
 // Config and test modules are loaded in distinct module graphs by e2e. Share
 // the handle within this worker so the public surface refers to its attempt.
 const holder = globalThis as typeof globalThis & { scheduleE2eEngine?: ReturnType<typeof web> };
-export const scheduleEngine = holder.scheduleE2eEngine ??= web({ viewport: process.env.SCHEDULE_E2E_MOBILE
+export const scheduleEngine = holder.scheduleE2eEngine ??= web({ browser: (process.env.SCHEDULE_E2E_BROWSER || 'chromium') as 'chromium' | 'firefox' | 'webkit', viewport: process.env.SCHEDULE_E2E_MOBILE
   ? { width: 390, height: 844 } : { width: 1440, height: 900 } });
 export const browserContext = () => surfaceOf(scheduleEngine)!.context();
 
