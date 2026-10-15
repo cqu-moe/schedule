@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { resolve, join, dirname } from 'node:path';
 import { startSchedule } from './runtime.mjs';
 import { createHash } from 'node:crypto';
+import { describeFailure, publishGroup, safeFailure, writeSafeJson } from './artifact-safety.mjs';
 
 const root = process.cwd();
 const output = resolve(process.env.SCHEDULE_E2E_OUTPUT || `.e2e/run-${Date.now()}`);
@@ -19,8 +20,10 @@ for (let index = 0; index < args.length; index += 2) {
     'This required gate accepts title filters only; browser visibility, retries and zero-test overrides are forbidden');
 }
 const dependency = JSON.parse(await readFile(join(root, 'e2e/auth-dependency.json'), 'utf8'));
-const describe = error => ({ name: error.name, message: error.message,
-  ...(error instanceof AggregateError ? { errors: error.errors.map(describe) } : {}) });
+await mkdir(resolve('.e2e'), { recursive: true });
+const privateRoot = await mkdtemp(join(resolve('.e2e'), 'private-artifacts-'));
+await mkdir(dirname(output), { recursive: true });
+await mkdir(output, { mode: 0o700 });
 let cancelled = false;
 const cancel = () => { cancelled = true; process.exitCode = 1; };
 process.on('SIGINT', cancel);
@@ -73,10 +76,12 @@ for (const variant of variants) {
   const variantDirectory = join(output, variant);
   await mkdir(variantDirectory, { recursive: true });
   const variantEvidence = { variant, browser, source, status: 'failed', expectedIds: [], executedIds: [], groups: [], errors: [] };
+  const privateVariant = join(privateRoot, variant);
+  await mkdir(privateVariant);
   const env = { SCHEDULE_E2E_BROWSER: browser, SCHEDULE_E2E_MOBILE: variant === 'mobile' ? '1' : '' };
   try {
     const discover = async filters => {
-      const result = await cli(['list', '--reporter', 'json', ...filters], { ...env, SCHEDULE_E2E_OUTPUT: variantDirectory }, 30000);
+      const result = await cli(['list', '--reporter', 'json', ...filters], { ...env, SCHEDULE_E2E_OUTPUT: privateVariant }, 30000);
       if (filters.length && result.code === 2 && /^NO_TESTS: \d+ tests were collected but none is runnable:/.test(result.stderr)) {
         throw new Error('Zero selected tests');
       }
@@ -84,17 +89,18 @@ for (const variant of variants) {
       return JSON.parse(result.stdout).pairs.filter(pair => pair.kind === 'test' && pair.disposition === 'run');
     };
     const all = await discover([]), selected = args.length ? await discover(args) : all;
-    await writeFile(join(variantDirectory, 'discovery.json'), JSON.stringify({ all, selected }, null, 2));
+    await writeSafeJson(join(variantDirectory, 'discovery.json'), { all, selected }, privateRoot);
     assert.ok(selected.length, 'Zero selected tests');
     assert.ok(selected.every(pair => all.some(known => known.id === pair.id)));
     variantEvidence.expectedIds = ids(selected);
     for (const pair of selected) {
       assert.equal(cancelled, false, 'Run interrupted before starting another isolated journey');
-      const directory = join(variantDirectory, pair.id.slice(0, 12));
+      const directory = join(privateVariant, pair.id.slice(0, 12));
+      const destination = join(variantDirectory, pair.id.slice(0, 12));
       await mkdir(directory, { recursive: true });
       const evidence = { test: pair.title, expectedIds: [pair.id], cleanup: 'not-started', status: 'failed', errors: [] };
-      variantEvidence.groups.push(evidence);
-      let runtime;
+      let runtime, published;
+      let phase = 'startup';
       try {
         runtime = await startSchedule({ authDirectory: process.env.SCHEDULE_AUTH_DIRECTORY || resolve(root, '.e2e/deps/auth'),
           authCommit: process.env.SCHEDULE_AUTH_COMMIT || dependency.commit,
@@ -108,6 +114,7 @@ for (const variant of variants) {
         evidence.cleanup = 'pending';
         // User filters already chose the discovered pairs. Repeating --grep
         // would OR them with this exact group and break runtime isolation.
+        phase = 'child';
         const result = await cli(['run', '--grep', `^${escapePattern(pair.title)}$`], { ...env,
           SCHEDULE_E2E_OUTPUT: directory, SCHEDULE_E2E_URL: runtime.origin,
           SCHEDULE_AUTH_URL: runtime.authOrigin, SCHEDULE_E2E_CONTROL: runtime.controlOrigin,
@@ -128,11 +135,11 @@ for (const variant of variants) {
         assert.equal(executed.some(test => test.attempts?.some(attempt => attempt.cleanup === 'failed' ||
           attempt.secondaryErrors?.some(error => error.phase === 'cleanup'))), false, 'Browser cleanup failed in framework attempt evidence');
         for (const key of ['failed', 'interrupted', 'skipped', 'flaky']) assert.equal(report.run.summary[key], 0, key);
-      } catch (error) { evidence.errors.push(describe(error)); }
+      } catch (error) { evidence.errors.push(describeFailure(error, phase)); }
       finally {
         if (runtime) {
           try { evidence.diagnostics = await runtime.diagnostics(); }
-          catch (error) { evidence.errors.push(describe(error)); }
+          catch (error) { evidence.errors.push(describeFailure(error, 'diagnostics')); }
           try {
             evidence.resources = await runtime.close();
             assert.equal(evidence.resources.platform?.proxyObjectsRemoved, true, 'Native egress proxy cleanup was not verified');
@@ -146,26 +153,28 @@ for (const variant of variants) {
             evidence.resources.actualRemovedIdsVerified = true;
             if (process.env.SCHEDULE_E2E_FAIL_CLEANUP === '1') throw new Error('Injected cleanup failure after real resources stopped');
             evidence.cleanup = 'passed';
-          } catch (error) { evidence.cleanup = 'failed'; evidence.errors.push(describe(error)); }
+          } catch (error) { evidence.cleanup = 'failed'; evidence.errors.push(describeFailure(error, 'cleanup')); }
         }
         if (!evidence.errors.length) evidence.status = 'passed';
-        const write = () => writeFile(join(directory, 'runtime.json'), JSON.stringify(evidence, null, 2) + '\n');
-        await write();
-        if (runtime) try {
-          await runtime.checkArtifacts(directory);
-          // Carry the sanitized group into the later aggregate; otherwise the
-          // aggregate would reintroduce raw tokens from its in-memory copy.
-          Object.assign(evidence, JSON.parse(await readFile(join(directory, 'runtime.json'), 'utf8')));
-        }
-        catch (error) { evidence.status = 'failed'; evidence.errors.push(describe(error)); await write(); }
+        published = await publishGroup({ directory, destination, evidence, runtime, privateRoot });
+        variantEvidence.groups.push(published);
         console.log(`${variant}: ${pair.title}: ${evidence.status}; cleanup ${evidence.cleanup}`);
       }
-      if (evidence.errors.length) throw new Error(`Journey failed; evidence ${directory}`);
+      if (published.status !== 'passed') throw new Error(`Journey failed; evidence ${destination}`);
     }
     assert.deepEqual(variantEvidence.executedIds.sort(), variantEvidence.expectedIds, 'Incomplete suite');
     variantEvidence.status = 'passed';
-  } catch (error) { variantEvidence.errors.push(describe(error)); process.exitCode = 1; }
-  await writeFile(join(variantDirectory, 'run.json'), JSON.stringify(variantEvidence, null, 2) + '\n');
+  } catch (error) {
+    const failure = describeFailure(error, 'child');
+    variantEvidence.errors.push(safeFailure(failure)); process.exitCode = 1;
+    try { await writeFile(join(privateRoot, variant + '-failure.json'), JSON.stringify(failure, null, 2) + '\n', { mode: 0o600 }); }
+    catch (writeError) { variantEvidence.errors.push(safeFailure(describeFailure(writeError, 'private-write'))); }
+  }
+  try { await writeSafeJson(join(variantDirectory, 'run.json'), variantEvidence, privateRoot); }
+  catch (error) {
+    process.exitCode = 1;
+    console.error(JSON.stringify({ status: 'failed', errors: [...variantEvidence.errors, safeFailure(describeFailure(error, 'receipt-write'))] }));
+  }
   console.log(`${variant}: ${variantEvidence.status}; evidence ${variantDirectory}`);
   if (process.exitCode) break;
 }

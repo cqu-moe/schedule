@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { lifecycleObserver, lifecycleControls } from './lifecycle-runtime.mjs';
+import { sanitizeArtifacts } from './artifact-safety.mjs';
 import { readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
 
 export const password = 'Synthetic-only-123!';
@@ -323,43 +324,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
           listenersClosed: [port, controlPort, Number(assetOrigin.port)], authRequests };
       },
       async checkArtifacts(path) {
-        await runtime.redact(path);
-        async function visit(directory) {
-          for (const entry of await readdir(directory, { withFileTypes: true })) {
-            const file = join(directory, entry.name);
-            if (entry.isDirectory()) await visit(file);
-            else if (/\.(json|md|log|txt)$/.test(entry.name)) {
-              let contents = await readFile(file, 'utf8');
-              for (const secret of secrets) if (secret) contents = contents.split(secret).join('[synthetic-secret-redacted]');
-              contents = contents.replace(/([?&](?:code|state|nonce|sig|code_challenge)=)[^&\s"<>\\]+/g, '$1[synthetic-secret-redacted]');
-              await writeFile(file, contents);
-            }
-          }
-        }
-        await visit(path);
-        // Redaction changes text attachment bytes. Keep the framework's
-        // attachment receipts consistent with the actual sanitized files.
-        const reportPath = join(path, 'report.json');
-        let report;
-        try { report = JSON.parse(await readFile(reportPath, 'utf8')); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-        if (report) {
-          const artifactRoot = resolve(path, 'results');
-          async function update(value) {
-            if (!value || typeof value !== 'object') return;
-            if (typeof value.path === 'string' && typeof value.sha256 === 'string' && typeof value.size === 'number') {
-              const artifact = resolve(artifactRoot, value.path);
-              assert.ok(artifact.startsWith(artifactRoot + '/'), 'Artifact must remain inside this run');
-              const bytes = await readFile(artifact);
-              value.size = bytes.length;
-              value.sha256 = createHash('sha256').update(bytes).digest('hex');
-            }
-            for (const child of Object.values(value)) await update(child);
-          }
-          await update(report);
-          await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
-        }
-        await runtime.checkArtifacts(path);
+        return sanitizeArtifacts(path, { redact: directory => runtime.redact(directory),
+          check: directory => runtime.checkArtifacts(directory), secrets, privateRoot: join(root, '.e2e') });
       },
     };
   } catch (error) {
