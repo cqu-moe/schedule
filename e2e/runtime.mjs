@@ -229,6 +229,28 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
           }
         }
         await visit(path);
+        // Redaction changes text attachment bytes. Keep the framework's
+        // attachment receipts consistent with the actual sanitized files.
+        const reportPath = join(path, 'report.json');
+        let report;
+        try { report = JSON.parse(await readFile(reportPath, 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        if (report) {
+          const artifactRoot = resolve(path, 'results');
+          async function update(value) {
+            if (!value || typeof value !== 'object') return;
+            if (typeof value.path === 'string' && typeof value.sha256 === 'string' && typeof value.size === 'number') {
+              const artifact = resolve(artifactRoot, value.path);
+              assert.ok(artifact.startsWith(artifactRoot + '/'), 'Artifact must remain inside this run');
+              const bytes = await readFile(artifact);
+              value.size = bytes.length;
+              value.sha256 = createHash('sha256').update(bytes).digest('hex');
+            }
+            for (const child of Object.values(value)) await update(child);
+          }
+          await update(report);
+          await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
+        }
         await runtime.checkArtifacts(path);
       },
     };
