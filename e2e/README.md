@@ -78,3 +78,13 @@ CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅�
 每条finally除了平台按本轮原生DO名称检查，还按其返回的实际业务/proxy ID定向查询确认不存在。必须有`proxyObjectsRemoved=true`及`removedProxyIds`数组；已绑定生命周期至少有一个实际proxy ID。缺失或残留即非零并停止后续旅程。框架selected attempt的cleanup失败/cleanup secondaryErrors同样独立拒绝。聚合报告复用已脱敏的单条产物，避免重新写入内存中的链接token。
 
 定位本票：`npm run test:e2e -- --grep '^lifecycle'`。`SCHEDULE_E2E_BROWSER=firefox`或`webkit`选择补充浏览器，默认chromium；需要相应Playwright二进制（`node node_modules/playwright-core/cli.js install firefox webkit`）。浏览器仍为后台独立临时profile。`PLAYWRIGHT_BROWSERS_PATH`仅指定已安装二进制目录，不传用户profile。`SCHEDULE_E2E_BREAK_ASSERTION=1`也会故意破坏本票的实际CSV读回断言，用于独立非零控制。
+
+WebKit 会拒绝 HTTP localhost 上的 Secure 登录 Cookie；Web SPI 0.15.0 又没有接受隔离测试证书的配置，因此直接切换 `SCHEDULE_E2E_BROWSER=webkit` 不代表完整套件可运行。完成上述 `e2e:prepare` 后，可使用窄范围 HTTPS 补验，保持产品 Cookie 和系统信任不变：
+
+```sh
+SCHEDULE_WEBKIT_TLS_MODE=stock-red node e2e/webkit-tls.mjs
+SCHEDULE_WEBKIT_TLS_VIEWPORT=desktop node e2e/webkit-tls.mjs
+SCHEDULE_WEBKIT_TLS_VIEWPORT=mobile node e2e/webkit-tls.mjs
+```
+
+第一条要求实际 stock 引擎因本地测试证书拒绝且完整清理；后两条使用临时 Playwright WebKit context 验证学校拒绝、显式重试恢复及空订阅读回。每次使用新的 `SCHEDULE_WEBKIT_TLS_OUTPUT=.e2e/<本轮目录>` 保留证据。脚本会检查并安装匹配的 WebKit 二进制；证书仅在该 context 接受，结束后删除。它只覆盖这一条旅程，不能替代全部31条或完整发布门禁。默认 Chromium 入口保持不变，启动、业务或清理失败仍非零。

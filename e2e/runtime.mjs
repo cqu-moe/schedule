@@ -58,7 +58,13 @@ async function registerClient(db, origin) {
   assert.deepEqual(row, values, 'OAuth caller prerequisites must read back exactly');
 }
 
-export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'], external = false, directory = false, sourceTypes = 'admin_class,instructor,room,laboratory,course', lifecycleProfile }) {
+export async function startSchedule({ authDirectory, authCommit, accountNames = ['owner', 'other', 'unbound', 'no-sync'], external = false, directory = false, sourceTypes = 'admin_class,instructor,room,laboratory,course', lifecycleProfile, publicOrigin }) {
+  if (publicOrigin !== undefined) {
+    assert.equal(typeof publicOrigin, 'string', 'Schedule public origin must be a URL string');
+    const url = new URL(publicOrigin);
+    assert.ok(url.protocol === 'https:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) &&
+      publicOrigin === url.origin, 'Schedule public origin must be origin-only loopback HTTPS');
+  }
   assert.match(authCommit, /^[a-f0-9]{40}$/, 'A fixed Auth commit is required');
   const root = process.cwd();
   const auth = resolve(authDirectory);
@@ -103,7 +109,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     assert.equal(await (await assets.fetch('http://assets.test/')).text(), expectedHtml,
       'The actual Schedule production assets must be served, not another worker build');
     const port = await reservePort();
-    const origin = `http://localhost:${port}`;
+    const directOrigin = `http://localhost:${port}`;
+    const origin = publicOrigin ?? directOrigin;
     const migrations = await readD1Migrations(join(root, 'drizzle/migrations'));
     const { startSchoolAuth } = await import(pathToFileURL(join(auth, 'e2e/school/runtime.mjs')).href);
     process.chdir(auth);
@@ -287,7 +294,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     });
     await new Promise((done, reject) => { control.once('error', reject); control.listen(0, '127.0.0.1', done); });
     const controlPort = control.address().port;
-    return { origin, authOrigin: runtime.origin, authCommit, db, accounts,
+    return { origin, directOrigin, authOrigin: runtime.origin, authCommit, db, accounts,
       controlOrigin: `http://127.0.0.1:${control.address().port}`, schoolOrigin: runtime.schoolOrigin,
       async diagnostics() {
         const rows = await db.prepare('SELECT source_type,source_name,sync_status,sync_error_code,sync_error_message,import_quality,skipped_count FROM subscriptions ORDER BY source_type').all();
