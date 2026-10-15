@@ -109,7 +109,7 @@ test('external selection belongs to its actual authorized user, not another boun
 
 
 for (const [mode, message] of [
-  ['external_forbidden', '当前账号无权查看该目标'],
+  ['external_forbidden', '当前账号无权查询外部课表'],
   ['external_schema_error', '外部课表暂时无法查询，请稍后重试'],
 ]) test(`external search ${mode}: real school failure is visible and an explicit retry can recover`,
   {tags:['account:owner','external']}, async ({app,browser,screen}) => {
@@ -124,7 +124,8 @@ for (const [mode, message] of [
     externalRequests.length = 0;
     await screen.getByRole('tab','教室',{exact:true}).click();
     await screen.getByLabel('搜索教室',{exact:true}).fill('合成教室');
-    await expect(screen.getByText(message,{exact:true})).toBeVisible();
+    await expect(screen.getByRole('alert')).toContainText(message);
+    await expect(screen.getByRole('button','重试搜索',{exact:true})).toBeVisible();
     await expect(screen.getByRole('button','订阅合成教室',{exact:true})).toHaveCount(0);
     expect(externalRequests.filter(x=>x.sourceType==='room').map(x=>x.directory)).toEqual([true,false]);
     const failed = await school({});
