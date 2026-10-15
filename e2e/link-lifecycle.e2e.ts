@@ -98,6 +98,9 @@ test('lifecycle quota observation 103: default personal views preserve one exter
     expect(quota.status).toBe(409);
     expect(quota.body.detail.error.code).toBe('QUOTA_EXCEEDED');
     expect((await control()).subscriptions).toEqual(before.subscriptions);
+    // Initial setup/share/quota and later deletion are distinct owner flows.
+    // Keep the production per-IP budget and begin the latter in a fresh window.
+    await new Promise(resolve => setTimeout(resolve, 61000));
     await app.open('/dashboard');
     await screen.getByRole('button', `${room.view.source_name}的更多操作`, { exact: true }).click();
     await screen.getByRole('menuitem', '删除', { exact: true }).click();
