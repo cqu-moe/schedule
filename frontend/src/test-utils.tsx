@@ -76,6 +76,7 @@ export function mockSubscription(
 }
 
 export const defaultMockSession: AppContextValue = {
+  sessionPending: false,
   externalAvailability: {
     search_types: ['admin_class', 'instructor', 'room', 'laboratory', 'course'],
     create_types: ['admin_class', 'instructor', 'room', 'laboratory', 'course'],

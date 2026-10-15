@@ -56,6 +56,38 @@ describe('DepartmentTreeSelect', () => {
     expect(within(dialog).queryByText('数学与统计学院')).not.toBeInTheDocument()
   })
 
+  it('keeps the dialog layout while loading and retains known choices during refresh', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const view = render(<DepartmentTreeSelect loading onChange={onChange} />)
+    expect(screen.getByRole('combobox')).toHaveAttribute('aria-busy', 'true')
+    const dialog = await openDialog(user)
+    expect(within(dialog).getByRole('searchbox', { name: '搜索学院' })).toBeInTheDocument()
+    expect(within(dialog).getByText('正在加载学院')).toBeInTheDocument()
+    expect(within(dialog).queryByText('未找到匹配的学院')).not.toBeInTheDocument()
+    view.rerender(<DepartmentTreeSelect departments={tree} value="d2" onChange={onChange} />)
+    const option = within(dialog).getByRole('treeitem', { name: '数学与统计学院' })
+    view.rerender(<DepartmentTreeSelect departments={tree} value="d2" loading onChange={onChange} />)
+    expect(within(dialog).getByRole('treeitem', { name: '数学与统计学院' })).toBe(option)
+    expect(within(dialog).getByRole('tree')).toHaveAttribute('aria-busy', 'true')
+    expect(option).toHaveAttribute('aria-selected', 'true')
+    await user.click(option)
+    expect(onChange).toHaveBeenCalledWith('d2')
+  })
+
+  it('disables an already open picker when a subscription is submitting', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const view = render(<DepartmentTreeSelect departments={tree} onChange={onChange} />)
+    const dialog = await openDialog(user)
+    view.rerender(<DepartmentTreeSelect departments={tree} disabled onChange={onChange} />)
+    expect(within(dialog).getByRole('searchbox', { name: '搜索学院' })).toBeDisabled()
+    const option = within(dialog).getByRole('treeitem', { name: '数学与统计学院' })
+    expect(option).toBeDisabled()
+    await user.click(option)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('reports no matches', async () => {
     const user = userEvent.setup()
     render(<DepartmentTreeSelect departments={tree} value="" onChange={vi.fn()} />)

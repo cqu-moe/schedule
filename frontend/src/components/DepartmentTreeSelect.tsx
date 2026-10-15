@@ -8,7 +8,9 @@ import {
   DialogTitle,
   DialogTrigger,
   Input,
+  Skeleton,
 } from '@cqu-moe/ui'
+import { LoadingRegion } from './LoadingSkeletons'
 import { Check, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import type { DepartmentNode } from '@/types/api'
 
@@ -17,6 +19,8 @@ export interface DepartmentTreeSelectProps {
   value?: string
   onChange: (id: string) => void
   id?: string
+  loading?: boolean
+  disabled?: boolean
 }
 
 function flatten(nodes: DepartmentNode[]): DepartmentNode[] {
@@ -78,10 +82,11 @@ interface NodeRowProps {
   level: number
   value: string
   filtering: boolean
+  disabled: boolean
   onSelect: (node: DepartmentNode) => void
 }
 
-function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowProps) {
+function DepartmentNodeRow({ node, level, value, filtering, disabled, onSelect }: NodeRowProps) {
   const [open, setOpen] = useState(false)
   const children = node.children ?? []
   const hasChildren = children.length > 0
@@ -94,6 +99,7 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
     <li role="none">
       {rootGroup ? (
         <Button
+          disabled={disabled}
           variant="ghost"
           type="button"
           style={toggleRowStyle(level)}
@@ -114,6 +120,7 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
         <div className="flex w-full items-center">
           {hasChildren && (
             <Button
+              disabled={disabled}
               variant="ghost"
               type="button"
               style={chevronStyle(level)}
@@ -130,6 +137,7 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
             </Button>
           )}
           <Button
+            disabled={disabled}
             variant="ghost"
             type="button"
             style={selectStyle()}
@@ -150,6 +158,7 @@ function DepartmentNodeRow({ node, level, value, filtering, onSelect }: NodeRowP
               node={child}
               level={level + 1}
               value={value}
+              disabled={disabled}
               filtering={filtering}
               onSelect={onSelect}
             />
@@ -165,6 +174,8 @@ export default function DepartmentTreeSelect({
   value = '',
   onChange,
   id,
+  loading = false,
+  disabled = false,
 }: DepartmentTreeSelectProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -175,6 +186,7 @@ export default function DepartmentTreeSelect({
   const filtering = query.trim().length > 0
 
   function select(node: DepartmentNode) {
+    if (disabled) return
     onChange(node.id)
     setOpen(false)
     setQuery('')
@@ -184,6 +196,7 @@ export default function DepartmentTreeSelect({
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (next && disabled) return
         setOpen(next)
         if (!next) setQuery('')
       }}
@@ -195,9 +208,13 @@ export default function DepartmentTreeSelect({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-busy={loading}
+          disabled={disabled}
           className="w-full justify-between font-normal"
         >
-          <span className="truncate">{selectedLabel || '请选择学院'}</span>
+          {loading && departments.length === 0
+            ? <><span className="invisible w-24" aria-hidden="true">选择学院</span><span className="sr-only">正在加载学院</span></>
+            : <span className="truncate">{selectedLabel || '请选择学院'}</span>}
           <ChevronsUpDown style={mutedIconStyle} aria-hidden />
         </Button>
       </DialogTrigger>
@@ -210,10 +227,15 @@ export default function DepartmentTreeSelect({
           type="search"
           aria-label="搜索学院"
           placeholder="搜索学院…"
+          disabled={disabled}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        {visible.length === 0 ? (
+        {loading && departments.length === 0 ? (
+          <LoadingRegion label="正在加载学院">
+            {[0, 1, 2, 3, 4].map(row => <div key={row} style={baseRowStyle(0)}><Skeleton className="loading-line w-40" /></div>)}
+          </LoadingRegion>
+        ) : visible.length === 0 ? (
           <p
             style={{
               fontSize: 'var(--text-sm)',
@@ -226,13 +248,14 @@ export default function DepartmentTreeSelect({
             未找到匹配的学院
           </p>
         ) : (
-          <ul role="tree" aria-label="学院列表" className="m-0 max-h-72 list-none overflow-y-auto p-0">
+          <ul role="tree" aria-label="学院列表" aria-busy={loading} className="m-0 max-h-72 list-none overflow-y-auto p-0">
             {visible.map((node) => (
               <DepartmentNodeRow
                 key={node.id}
                 node={node}
                 level={0}
                 value={value}
+                disabled={disabled}
                 filtering={filtering}
                 onSelect={select}
               />

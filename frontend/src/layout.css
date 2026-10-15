@@ -88,18 +88,6 @@
 .site-skip:focus {
   transform: none;
 }
-.route-progress {
-  position: fixed;
-  top: 0;
-  inset-inline: 0;
-  z-index: 100;
-  padding: var(--space-1) var(--space-4);
-  background: var(--surface);
-  color: var(--muted-foreground);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-xs);
-  text-align: center;
-}
 @media (max-width: 767px) {
   .calendar-preview-header {
     padding-inline: var(--space-4);

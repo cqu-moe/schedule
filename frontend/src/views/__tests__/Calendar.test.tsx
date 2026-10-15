@@ -168,8 +168,7 @@ describe('Calendar view (/view/:token)', () => {
     mockApi.getViewData.mockReturnValue(new Promise(() => {}))
     renderCalendar('test-token')
     expect(screen.getByRole('heading', { level: 1, name: '课表日历' })).toBeInTheDocument()
-    expect(screen.getByText('正在获取学期与教学周信息。')).toBeInTheDocument()
-    expect(screen.getByText('正在加载课表')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载课表')
     expect(screen.queryByTestId('fullcalendar')).not.toBeInTheDocument()
   })
 
