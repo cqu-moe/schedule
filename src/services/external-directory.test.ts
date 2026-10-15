@@ -90,13 +90,13 @@ async function insertActive(id: string, overrides: Record<string, unknown> = {})
   await env.DB.prepare("UPDATE external_directory_state SET active_run_id=? WHERE id=1").bind(id).run()
 }
 
-async function insertPublished(id: string, sessionId = TERM.id) {
+async function insertCatalog(id: string, sessionId = TERM.id) {
   await env.DB.prepare(`INSERT INTO external_directory_runs
     (id,owner_id,status,phase,started_at,finished_at,session_id,session_name,departments_json,next_attempt_at)
-    VALUES (?,?,'complete',6,?,?,?,?,'[]',?)`)
+    VALUES (?,?,'complete',5,?,?,?,?,'[]',?)`)
     .bind(id, OWNER, NOW - WEEK, NOW, sessionId, "2026秋", NOW).run()
   await env.DB.prepare(`UPDATE external_directory_state
-    SET published_run_id=?,observed_session_id=?,observed_at=? WHERE id=1`)
+    SET catalog_run_id=?,observed_session_id=?,observed_at=? WHERE id=1`)
     .bind(id, sessionId, NOW).run()
 }
 
@@ -129,84 +129,84 @@ afterEach(async () => {
 })
 
 describe("weekly shared directory generation", () => {
-  it("runs catalog stages, one ten-class teacher batch, deduplicates teachers, and publishes atomically", async () => {
-    const classes = Array.from({ length: 10 }, (_value, index) => `class-${String(index + 1).padStart(2, "0")}`)
+  it("collects five core catalogs, publishes atomically, and never requests classes or teachers", async () => {
     const recipes: DirectoryRecipe[] = []
-    let releaseFinal!: (result: DirectoryResult) => void
     const directory = vi.fn(async (args: DirectoryArgs): Promise<DirectoryResult | { error: string }> => {
       recipes.push(args)
-      if (args.kind === "instructors") {
-        return new Promise(resolve => { releaseFinal = resolve })
+      if (args.sourceType === "department") {
+        return { contractVersion: 1, kind: "catalog", sourceType: args.sourceType, session: TERM, departments: [{ id: "dept-a", name: "计算机学院" }] }
       }
-      const sourceType = args.sourceType
-      if (sourceType === "department") {
-        return { contractVersion: 1, kind: "catalog", sourceType, session: TERM, departments: [{ id: "dept-a", name: "计算机学院" }] }
-      }
-      const rows = sourceType === "admin_class"
+      const rows = args.sourceType === "admin_class"
         ? [item("admin-1", "电气1班", "电气学院 · 2026级", { departmentId: "dept-a", grade: "2026" })]
-        : sourceType === "course_catalog"
+        : args.sourceType === "course_catalog"
           ? [item("course-1", "大学物理", "PHYS1001", { courseCode: "PHYS1001" })]
-          : sourceType === "teaching_class"
-            ? classes.map(id => item(id, `${id}班`))
-            : [item(`${sourceType}-1`, `${sourceType}目标`)]
-      return { contractVersion: 1, kind: "catalog", sourceType, session: TERM, items: rows }
+          : [item(`${args.sourceType}-1`, `${args.sourceType}目标`)]
+      return { contractVersion: 1, kind: "catalog", sourceType: args.sourceType, session: TERM, items: rows }
     })
-    const { env: testEnv } = harness(directory)
+    const { env: testEnv, send } = harness(directory)
+    await insertCatalog("old-core")
+    await env.DB.prepare(`UPDATE external_directory_state SET published_run_id='legacy-teacher-run' WHERE id=1`).run()
+    await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES ('old-core','admin_class','old','旧班级')`).run()
     const runId = "generation-run"
-    await insertActive(runId, { started_at: NOW })
+    await insertActive(runId, { started_at: NOW, failure_count: 2, last_error: "SCHOOL_UNAVAILABLE" })
 
-    for (let phase = 0; phase < 6; phase += 1) {
+    for (let phase = 0; phase < 5; phase += 1) {
       await processExternalDirectory(testEnv, message(runId))
-      const current = await run(runId)
-      expect(current).toMatchObject({ status: "running", phase: phase + 1, last_error: null })
-      expect(await state()).toMatchObject({ active_run_id: runId, published_run_id: null })
-      vi.setSystemTime(Number(current!.next_attempt_at))
+      if (phase < 4) vi.setSystemTime(Number((await run(runId))!.next_attempt_at))
     }
 
-    const final = processExternalDirectory(testEnv, message(runId))
-    await vi.waitFor(() => expect(directory).toHaveBeenCalledTimes(7))
-    expect(await run(runId)).toMatchObject({ status: "running", phase: 6 })
-    expect(await env.DB.prepare("SELECT count(*) AS count FROM external_directory_items WHERE kind='instructor'").first())
-      .toEqual({ count: 0 })
-    expect(await state()).toMatchObject({ active_run_id: runId, published_run_id: null })
-
-    releaseFinal({
-      contractVersion: 1,
-      kind: "instructors",
-      session: TERM,
-      classes: classes.map(classId => ({
-        classId,
-        items: classId.endsWith("8") || classId.endsWith("9") || classId === "class-10"
-          ? []
-          : [item("teacher-shared", "同名师"), item(`teacher-${classId}`, `${classId}教师`)],
-      })),
-    })
-    await final
-
-    expect(recipes.slice(0, 6).map(recipe => recipe.kind === "catalog" ? recipe.sourceType : recipe)).toEqual([
-      "department", "room", "laboratory", "admin_class", "course_catalog", "teaching_class",
+    expect(recipes).toHaveLength(5)
+    expect(recipes.map(recipe => recipe.kind === "catalog" ? recipe.sourceType : recipe.kind)).toEqual([
+      "department", "room", "laboratory", "admin_class", "course_catalog",
     ])
-    expect(recipes[6]).toMatchObject({ kind: "instructors", classIds: classes, expectedSessionId: TERM.id })
+    expect(send).toHaveBeenCalledTimes(4)
+    expect(await run(runId)).toMatchObject({
+      status: "complete",
+      phase: 5,
+      lease_token: null,
+      failure_count: 0,
+      last_error: null,
+    })
     expect(await state()).toMatchObject({
       active_run_id: null,
-      published_run_id: runId,
+      catalog_run_id: runId,
+      published_run_id: "legacy-teacher-run",
       observed_session_id: TERM.id,
       next_due_at: NOW + WEEK,
     })
-    expect(await run(runId)).toMatchObject({ status: "complete", phase: 6 })
-    const teachers = await env.DB.prepare(`SELECT id FROM external_directory_items WHERE run_id=? AND kind='instructor' ORDER BY id`)
-      .bind(runId).all<{ id: string }>()
-    expect(teachers.results.map(row => row.id)).toEqual([
-      "teacher-class-01", "teacher-class-02", "teacher-class-03", "teacher-class-04",
-      "teacher-class-05", "teacher-class-06", "teacher-class-07", "teacher-shared",
-    ])
-    const pending = await env.DB.prepare(`SELECT count(*) AS count FROM external_directory_items WHERE run_id=? AND kind='teaching_class' AND collected=0`)
-      .bind(runId).first()
-    expect(pending).toEqual({ count: 0 })
+    expect(await env.DB.prepare(`SELECT count(*) AS count FROM external_directory_items WHERE run_id=? AND kind IN ('teaching_class','instructor')`)
+      .bind(runId).first()).toEqual({ count: 0 })
+    expect(await lookupDirectory(testEnv, "early-reader", { sourceType: "department" })).toMatchObject({
+      departments: [{ id: "dept-a", name: "计算机学院" }],
+    })
+    expect(await lookupDirectory(testEnv, "early-reader", { sourceType: "room", keyword: "room" })).toMatchObject({
+      items: [{ id: "room-1", name: "room目标" }],
+    })
+    expect(await lookupDirectory(testEnv, "early-reader", { sourceType: "course_catalog", keyword: "大学物理" })).toMatchObject({
+      items: [{ id: "course-1", name: "大学物理" }],
+    })
+    expect(await lookupDirectory(testEnv, "early-reader", { sourceType: "instructor", keyword: "教师" })).toBeNull()
   })
 
-  it("keeps the old published generation when a later active stage returns invalid schema", async () => {
-    await insertPublished("old-run")
+  it("terminates a queued legacy teacher-phase run before any Auth RPC", async () => {
+    const directory = vi.fn<DirectoryRpc>()
+    const { env: testEnv } = harness(directory)
+    await insertActive("legacy-teacher-run", {
+      phase: 5,
+      session_id: TERM.id,
+      session_name: TERM.name,
+      departments_json: "[]",
+    })
+
+    await processExternalDirectory(testEnv, message("legacy-teacher-run"))
+
+    expect(directory).not.toHaveBeenCalled()
+    expect(await run("legacy-teacher-run")).toMatchObject({ status: "failed", last_error: "TEACHER_CRAWL_CANCELLED" })
+    expect(await state()).toMatchObject({ active_run_id: null })
+  })
+
+  it("keeps the previous catalog when an active core stage returns invalid schema", async () => {
+    await insertCatalog("old-run")
     await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES ('old-run','admin_class','old','旧班级')`).run()
     const directory = vi.fn(async () => ({ contractVersion: 1, kind: "catalog", sourceType: "room", session: TERM, items: [] }))
     const { env: testEnv } = harness(directory)
@@ -224,6 +224,7 @@ describe("weekly shared directory generation", () => {
       session: TERM,
       items: [{ id: "old", name: "旧班级", extra: "" }],
     })
+    expect(await state()).toMatchObject({ catalog_run_id: "old-run" })
     expect(await run("partial-run")).toMatchObject({
       status: "running",
       phase: 1,
@@ -233,19 +234,21 @@ describe("weekly shared directory generation", () => {
   })
 
   it("aborts an old-term generation, invalidates its cache, and retries after the short cooldown", async () => {
-    await insertPublished("old-run", "old-term")
-    await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES ('old-run','admin_class','old','旧班级')`).run()
+    await insertCatalog("old-run", "old-term")
+    await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES
+      ('old-run','admin_class','old','旧班级')`).run()
     const directory = vi.fn(async () => ({ error: "unexpected-directory-call" }))
     const { env: testEnv, send } = harness(directory)
     await observeDirectorySession(testEnv, "new-term", NOW + 1)
     await insertActive("old-generation", { phase: 1, session_id: "old-term", session_name: "旧学期", departments_json: "[]" })
 
     expect(await lookupDirectory(testEnv, "any-reader", { sourceType: "admin_class", keyword: "旧" })).toBeNull()
+    expect(await lookupDirectory(testEnv, "any-reader", { sourceType: "instructor", keyword: "旧" })).toBeNull()
     await processExternalDirectory(testEnv, message("old-generation"))
 
     expect(directory).not.toHaveBeenCalled()
     expect(await run("old-generation")).toMatchObject({ status: "failed", last_error: "CURRENT_SESSION_CHANGED" })
-    expect(await state()).toMatchObject({ active_run_id: null, published_run_id: "old-run", observed_session_id: "new-term", next_due_at: NOW + 15 * 60_000 })
+    expect(await state()).toMatchObject({ active_run_id: null, catalog_run_id: "old-run", observed_session_id: "new-term", next_due_at: NOW + 15 * 60_000 })
 
     await scheduleExternalDirectory(testEnv)
     expect(send).not.toHaveBeenCalled()
@@ -332,7 +335,7 @@ describe("weekly shared directory generation", () => {
   })
 
   it("starts a paced weekly run only at the stable due time and honors the owner opt-in", async () => {
-    await insertPublished("previous-run")
+    await insertCatalog("previous-run")
     await env.DB.prepare(`UPDATE external_directory_state SET next_due_at=?`).bind(NOW + WEEK).run()
     const directory = vi.fn(async (args: DirectoryArgs): Promise<DirectoryResult | { error: string }> => ({
       contractVersion: 1,
@@ -345,7 +348,7 @@ describe("weekly shared directory generation", () => {
 
     await scheduleExternalDirectory(enabled.env)
     expect(enabled.send).not.toHaveBeenCalled()
-    expect(await state()).toMatchObject({ active_run_id: null, published_run_id: "previous-run" })
+    expect(await state()).toMatchObject({ active_run_id: null, catalog_run_id: "previous-run" })
 
     vi.setSystemTime(NOW + WEEK)
     const paddedOwner = { ...enabled.env, EXTERNAL_DIRECTORY_USER_ID: ` \t${OWNER}\n ` } as Env
@@ -372,53 +375,41 @@ describe("weekly shared directory generation", () => {
     expect((await state())?.active_run_id).toBeNull()
   })
 
-  it("retains the old generation and terminates an empty teacher union on the next delivery", async () => {
-    await insertPublished("old-run")
-    await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES ('old-run','admin_class','old','旧班级')`).run()
-    const directory = vi.fn(async (args: DirectoryArgs): Promise<DirectoryResult | { error: string }> => ({
-      contractVersion: 1,
-      kind: "instructors",
-      session: TERM,
-      classes: args.classIds.map(classId => ({ classId, items: [] })),
-    }))
-    const { env: testEnv } = harness(directory)
-    await insertActive("empty-teachers", {
-      phase: 6,
-      session_id: TERM.id,
-      session_name: TERM.name,
-      departments_json: "[]",
-    })
-    await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name)
-      VALUES ('empty-teachers','teaching_class','class-01','班级')`).run()
+  it("cleanup retains the catalog pointer and ignores the retired teacher pointer", async () => {
+    await insertCatalog("catalog-run")
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name) VALUES
+        ('catalog-run','room','room','教室'),
+        ('catalog-run','laboratory','lab','实验室'),
+        ('catalog-run','admin_class','admin','班级'),
+        ('catalog-run','course_catalog','course','课程')`),
+      env.DB.prepare(`INSERT INTO external_directory_runs
+        (id,owner_id,status,phase,started_at,finished_at,session_id,session_name,departments_json,next_attempt_at)
+        VALUES ('teacher-run',?,'complete',6,?,?,?,'旧学期','[]',0)`).bind(OWNER, NOW - 3 * WEEK, NOW - 2 * WEEK, TERM.id),
+      env.DB.prepare(`INSERT INTO external_directory_runs (id,owner_id,started_at)
+        VALUES ('unreferenced-run',?,?)`).bind(OWNER, NOW - 3 * WEEK),
+      env.DB.prepare(`UPDATE external_directory_runs SET started_at=? WHERE id='catalog-run'`).bind(NOW - 3 * WEEK),
+      env.DB.prepare(`UPDATE external_directory_state
+        SET active_run_id=NULL,published_run_id='teacher-run',catalog_run_id='catalog-run',next_due_at=? WHERE id=1`)
+        .bind(NOW + WEEK),
+    ])
+    const { env: testEnv } = harness(vi.fn(async () => ({ error: "unexpected-school-call" })))
 
-    await processExternalDirectory(testEnv, message("empty-teachers"))
-    expect(directory).toHaveBeenCalledOnce()
-    expect(await run("empty-teachers")).toMatchObject({ status: "running", phase: 6, last_error: null })
-    expect(await env.DB.prepare(`SELECT count(*) AS count FROM external_directory_items WHERE run_id='empty-teachers' AND kind='instructor'`).first())
+    await scheduleExternalDirectory(testEnv)
+
+    expect(await env.DB.prepare(`SELECT count(*) AS count FROM external_directory_runs WHERE id='catalog-run'`).first())
+      .toEqual({ count: 1 })
+    expect(await env.DB.prepare(`SELECT count(*) AS count FROM external_directory_runs WHERE id IN ('teacher-run','unreferenced-run')`).first())
       .toEqual({ count: 0 })
-    expect(await state()).toMatchObject({ active_run_id: "empty-teachers", published_run_id: "old-run" })
-
-    const current = await run("empty-teachers")
-    vi.setSystemTime(Number(current!.next_attempt_at))
-    const terminalStartedAt = Date.now()
-    await processExternalDirectory(testEnv, message("empty-teachers"))
-
-    expect(directory).toHaveBeenCalledOnce()
-    expect(await run("empty-teachers")).toMatchObject({ status: "failed", last_error: "EMPTY_TEACHER_DIRECTORY" })
-    expect(await state()).toMatchObject({
-      active_run_id: null,
-      published_run_id: "old-run",
-      next_due_at: terminalStartedAt + 6 * 60 * 60_000,
-    })
-    expect(await lookupDirectory(testEnv, "any-reader", { sourceType: "admin_class", keyword: "旧" })).toMatchObject({
-      items: [{ id: "old", name: "旧班级" }],
-    })
+    expect(await state()).toMatchObject({ catalog_run_id: "catalog-run", published_run_id: "teacher-run" })
+    expect(await lookupDirectory(testEnv, "reader", { sourceType: "admin_class", keyword: "班级" })).toMatchObject({ items: [{ id: "admin" }] })
+    expect(await lookupDirectory(testEnv, "reader", { sourceType: "instructor", keyword: "教师" })).toBeNull()
   })
 })
 
 describe("published shared-directory lookup", () => {
   beforeEach(async () => {
-    await insertPublished("lookup-run")
+    await insertCatalog("lookup-run")
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name,extra,department_id,grade) VALUES
         ('lookup-run','admin_class','percent','%班','特殊','dept-a','2026'),
