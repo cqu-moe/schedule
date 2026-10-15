@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from "vitest";
 import { applyD1Migrations, env } from "cloudflare:test";
 import { Hono } from "hono";
 import type { SessionEnv } from "../../middleware/session";
@@ -136,6 +136,37 @@ function enabledApp(user: string, search: ReturnType<typeof vi.fn>, caps = FULL_
   return buildApp(user, caps, { EXTERNAL_SUBSCRIPTION_TYPES: "admin_class", AUTH: { ...auth, cquExternalSearch: search } });
 }
 
+async function resetDirectoryTables() {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM external_directory_items"),
+    env.DB.prepare("DELETE FROM external_directory_course_cache"),
+    env.DB.prepare("DELETE FROM external_directory_runs"),
+    env.DB.prepare("DELETE FROM external_directory_state"),
+    env.DB.prepare("INSERT INTO external_directory_state (id) VALUES (1)"),
+  ]);
+}
+
+async function seedSharedDirectory() {
+  await resetDirectoryTables();
+  await env.DB.prepare(`INSERT INTO external_directory_runs
+    (id,owner_id,status,phase,started_at,finished_at,session_id,session_name,departments_json,next_attempt_at)
+    VALUES ('route-shared','shared-owner','complete',6,0,0,'route-term','当前学期','[]',0)`).run();
+  await env.DB.prepare(`UPDATE external_directory_state
+    SET published_run_id='route-shared',observed_session_id='route-term',observed_at=1`).run();
+  await env.DB.prepare(`INSERT INTO external_directory_items (run_id,kind,id,name,extra) VALUES
+    ('route-shared','admin_class','percent','%班','百分号字面量'),
+    ('route-shared','admin_class','ordinary','普通班','普通')`).run();
+}
+
+function directoryApp(user: string, search: ReturnType<typeof vi.fn>, caps = FULL_CAPS) {
+  const auth = fakeAuth(user, caps);
+  return buildApp(user, caps, {
+    EXTERNAL_SUBSCRIPTION_TYPES: "admin_class,course",
+    EXTERNAL_DIRECTORY_USER_ID: "shared-owner",
+    AUTH: { ...auth, cquExternalSearch: search },
+  });
+}
+
 describe("external search admission and cache", () => {
   it("isolates cached searches by owner and filters and checks revoked capability before reading", async () => {
     const search = vi.fn().mockResolvedValue(schoolResult());
@@ -228,6 +259,100 @@ describe("external search admission and cache", () => {
   it("reports unavailable when the new Auth method is absent", async () => {
     const app = buildApp("old-auth", FULL_CAPS, { EXTERNAL_SUBSCRIPTION_TYPES: "admin_class" });
     expect((await app.request("/search?source_type=admin_class")).status).toBe(503);
+  });
+});
+
+describe("external directory cache-only route boundary", () => {
+  beforeEach(seedSharedDirectory);
+  afterEach(resetDirectoryTables);
+
+  it("checks live admission before a shared cache hit", async () => {
+    const search = vi.fn();
+    const app = directoryApp("cache-denied", search, capsWith({ external: false }));
+    const response = await app.request("/search?source_type=admin_class&keyword=%25&lookup=directory");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ detail: { error: { code: "FEATURE_NOT_ENABLED" } } });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("serves shared hits, returns cache-only misses, and falls back with selection receipts", async () => {
+    const userA = `route-cache-a-${crypto.randomUUID()}`;
+    const search = vi.fn(async (args: { sourceType: string }) => {
+      if (args.sourceType === "admin_class") {
+        return { contractVersion: 1, sourceType: "admin_class", session: { id: "route-term", name: "当前学期" }, items: [{ id: "fallback", name: "学校班级", extra: "" }], truncated: false };
+      }
+      if (args.sourceType === "course_catalog") {
+        return { contractVersion: 1, sourceType: "course_catalog", session: { id: "route-term", name: "当前学期" }, items: [{ id: "course-1", name: "大学物理", extra: "PHYS1001" }], truncated: false };
+      }
+      return { contractVersion: 1, sourceType: "course", course: { id: "course-1", name: "大学物理" }, session: { id: "route-term", name: "当前学期" }, items: [{ id: "class-1", name: "物理01班", extra: "教师甲" }], truncated: false };
+    });
+    const app = directoryApp(userA, search);
+
+    const shared = await app.request("/search?source_type=admin_class&keyword=%25&lookup=directory");
+    expect(shared.status).toBe(200);
+    const sharedBody = await shared.json() as { selection_token: string; results: unknown[] };
+    expect(sharedBody).toMatchObject({ results: [{ id: "percent", name: "%班" }], selection_token: expect.any(String) });
+    expect(search).not.toHaveBeenCalled();
+
+    const miss = await app.request("/search?source_type=admin_class&keyword=不存在&lookup=directory");
+    expect(miss.status).toBe(409);
+    expect(await miss.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_DIRECTORY_MISS" } } });
+    expect(search).not.toHaveBeenCalled();
+
+    const fallback = await app.request("/search?source_type=admin_class&keyword=不存在");
+    expect(fallback.status).toBe(200);
+    const fallbackBody = await fallback.json() as { selection_token: string };
+    expect(fallbackBody.selection_token).not.toBe(sharedBody.selection_token);
+    expect(search).toHaveBeenCalledOnce();
+
+    const catalog = await app.request("/search?source_type=course&keyword=物理");
+    expect(catalog.status).toBe(200);
+    const catalogBody = await catalog.json() as { selection_token: string };
+    const classesPath = `/teaching-classes?course_id=course-1&selection_token=${catalogBody.selection_token}`;
+    const classes = await app.request(classesPath);
+    expect(classes.status).toBe(200);
+    const classBody = await classes.json() as { selection_token: string };
+    expect(search).toHaveBeenCalledTimes(3);
+
+    const cachedClasses = await app.request(`${classesPath}&lookup=directory`);
+    expect(cachedClasses.status).toBe(200);
+    const cachedBody = await cachedClasses.json() as { selection_token: string; results: unknown[] };
+    expect(cachedBody).toMatchObject({ results: [{ id: "class-1", name: "物理01班" }], selection_token: expect.any(String) });
+    expect(cachedBody.selection_token).not.toBe(classBody.selection_token);
+    expect(search).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not expose one user's on-demand course cache to another authenticated user", async () => {
+    const userA = `route-course-a-${crypto.randomUUID()}`;
+    const userB = `route-course-b-${crypto.randomUUID()}`;
+    const searchResult = (classId: string, className: string, sourceType: "course" | "course_catalog") =>
+      sourceType === "course_catalog"
+        ? { contractVersion: 1, sourceType, session: { id: "route-term", name: "当前学期" }, items: [{ id: "course-1", name: "大学物理", extra: "PHYS1001" }], truncated: false }
+        : { contractVersion: 1, sourceType, course: { id: "course-1", name: "大学物理" }, session: { id: "route-term", name: "当前学期" }, items: [{ id: classId, name: className, extra: "" }], truncated: false };
+    const searchA = vi.fn(async (args: { sourceType: "course" | "course_catalog" }) => searchResult("class-a", "用户A班级", args.sourceType));
+    const searchB = vi.fn(async (args: { sourceType: "course" | "course_catalog" }) => searchResult("class-b", "用户B班级", args.sourceType));
+    const appA = directoryApp(userA, searchA);
+    const appB = directoryApp(userB, searchB);
+
+    const catalogA = await appA.request("/search?source_type=course&keyword=物理");
+    const tokenA = ((await catalogA.json()) as { selection_token: string }).selection_token;
+    expect((await appA.request(`/teaching-classes?course_id=course-1&selection_token=${tokenA}`)).status).toBe(200);
+    expect(searchA).toHaveBeenCalledTimes(2);
+
+    const catalogB = await appB.request("/search?source_type=course&keyword=物理");
+    const tokenB = ((await catalogB.json()) as { selection_token: string }).selection_token;
+    const miss = await appB.request(`/teaching-classes?course_id=course-1&selection_token=${tokenB}&lookup=directory`);
+    expect(miss.status).toBe(409);
+    expect(await miss.json()).toMatchObject({ detail: { error: { code: "EXTERNAL_DIRECTORY_MISS" } } });
+    expect(searchB).toHaveBeenCalledOnce();
+
+    const fallback = await appB.request(`/teaching-classes?course_id=course-1&selection_token=${tokenB}`);
+    expect(fallback.status).toBe(200);
+    expect(await fallback.json()).toMatchObject({ results: [{ id: "class-b", name: "用户B班级" }] });
+    expect(searchB).toHaveBeenCalledTimes(2);
+    const cached = await appB.request(`/teaching-classes?course_id=course-1&selection_token=${tokenB}&lookup=directory`);
+    expect(await cached.json()).toMatchObject({ results: [{ id: "class-b", name: "用户B班级" }] });
+    expect(searchB).toHaveBeenCalledTimes(2);
   });
 });
 

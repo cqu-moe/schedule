@@ -120,6 +120,7 @@ export interface AuthService {
     courseId?: string; courseName?: string; deadlineAt?: number;
   }): Promise<unknown>;
   cquExternalSearch?(args: import("./external-search").ExternalSearchArgs): Promise<import("./external-search").ExternalSearchResult | { error: string }>;
+  cquExternalDirectory?(args: import("./external-directory-contract").DirectoryArgs): Promise<import("./external-directory-contract").DirectoryResult | { error: string }>;
   /** Legacy RPC shape retained for existing fixtures/dev services; browser requests
    * authenticate through the application session and native OAuth introspection. */
   verifySession(cookieHeader: string): Promise<VerifiedSession | null>;

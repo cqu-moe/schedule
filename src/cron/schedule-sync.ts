@@ -1,6 +1,7 @@
 import { externalAvailability } from "../config/external-availability";
 import { checkExternalTerms, processExternalTermCheck } from "../services/external-term";
 import { processExternalSyncMessage } from "../services/external-sync";
+import { scheduleExternalDirectory, processExternalDirectory } from "../services/external-directory";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
@@ -69,7 +70,7 @@ import {
 
 /** Queue message: one subscription to sync for a given auth user. */
 export interface ScheduleSyncMessage {
-  purpose?: "external_term_check";
+  purpose?: "external_term_check" | "external_directory";
   subscriptionId: string;
   userId: string;
   sourceVersion?: number;
@@ -150,7 +151,7 @@ async function markTerminalSuccess(
  * faster cadence exists for entitlement reconciliation (issue #87).
  */
 export async function enqueueScheduleSync(env: Env, lifecycle?: ExecutionContext): Promise<void> {
-  const results = await Promise.allSettled([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env)]);
+  const results = await Promise.allSettled([enqueueRegularScheduleSync(env, lifecycle), checkExternalTerms(env), scheduleExternalDirectory(env)]);
   for (const result of results) if (result.status === "rejected") throw result.reason;
 }
 
@@ -505,6 +506,10 @@ export async function processScheduleSyncBatch(
         if (current) captureScheduleSyncTerminal(env, lifecycle, current, "success");
       };
       try {
+        if (message.body.purpose === "external_directory") {
+          await processExternalDirectory(env, message, batch.messages.some(other => other.body.userId === userId && other.body.purpose !== "external_directory"));
+          return;
+        }
         if (message.body.purpose === "external_term_check") {
           const previous = externalByUser.get(userId) ?? Promise.resolve();
           const next = previous.catch(() => {}).then(() => processExternalTermCheck(env, message, deadlineAt));

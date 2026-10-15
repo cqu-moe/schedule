@@ -126,6 +126,8 @@ export default function Add() {
   const [subsStatus, setSubsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [departmentsLoading, setDepartmentsLoading] = useState(false)
   const [departmentsError, setDepartmentsError] = useState(false)
+  const [schoolLookupActive, setSchoolLookupActive] = useState(false)
+  const [departmentsSchoolLookup, setDepartmentsSchoolLookup] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchSeq = useRef(0)
@@ -281,8 +283,16 @@ export default function Add() {
     departmentsAbortRef.current = controller
     setDepartmentsLoading(true)
     setDepartmentsError(false)
+    setDepartmentsSchoolLookup(false)
     try {
-      const data = await api.getDepartments({ signal: controller.signal })
+      const data = await api.getDepartments({
+        signal: controller.signal,
+        onSchoolLookup: () => {
+          if (departmentsAbortRef.current === controller && !controller.signal.aborted) {
+            setDepartmentsSchoolLookup(true)
+          }
+        },
+      })
       if (controller.signal.aborted) return
       setDepartments(data.departments)
       setCurrentTerm(data.session ?? null)
@@ -291,6 +301,7 @@ export default function Add() {
       setDepartmentsError(true)
       toast.error(parseApiError(err, '加载院系列表失败'))
     } finally {
+      if (departmentsAbortRef.current === controller) setDepartmentsSchoolLookup(false)
       if (departmentsAbortRef.current === controller && !controller.signal.aborted) {
         setDepartmentsLoading(false)
       }
@@ -304,6 +315,7 @@ export default function Add() {
     }
     return () => {
       departmentsAbortRef.current?.abort()
+      setDepartmentsSchoolLookup(false)
     }
   }, [sessionLoading, canSearchExternal, availability, sourceType, loadDepartments])
 
@@ -328,6 +340,7 @@ export default function Add() {
     setSearching(true)
     setSearched(false)
     setTruncated(false)
+    setSchoolLookupActive(false)
     clearError()
     const controller = startSearchRequest()
     try {
@@ -342,7 +355,12 @@ export default function Add() {
           request.sourceType === 'admin_class' && request.grade !== 'all'
             ? request.grade
             : undefined,
-      }, { signal: controller.signal })
+      }, {
+        signal: controller.signal,
+        onSchoolLookup: () => {
+          if (seq === searchSeq.current && !controller.signal.aborted) setSchoolLookupActive(true)
+        },
+      })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
       setSelectionToken(data.selection_token ?? null)
@@ -364,6 +382,7 @@ export default function Add() {
       if (seq !== searchSeq.current) return
       setSearching(false)
       setSearched(true)
+      setSchoolLookupActive(false)
     }
   }
 
@@ -378,6 +397,7 @@ export default function Add() {
     catalogToken.current = null
     setSearchResults([])
     setTruncated(false)
+    setSchoolLookupActive(false)
   }
 
   function retrySearch() {
@@ -455,10 +475,16 @@ export default function Add() {
     setSearchResults([])
     setSearching(true)
     setSearched(false)
+    setSchoolLookupActive(false)
     clearError()
     const controller = startSearchRequest()
     try {
-      const data = await api.searchTeachingClasses(item.id, token, { signal: controller.signal })
+      const data = await api.searchTeachingClasses(item.id, token, {
+        signal: controller.signal,
+        onSchoolLookup: () => {
+          if (seq === searchSeq.current && !controller.signal.aborted) setSchoolLookupActive(true)
+        },
+      })
       if (seq !== searchSeq.current) return
       setSearchResults(data.results)
       setSelectionToken(data.selection_token)
@@ -468,7 +494,11 @@ export default function Add() {
       if (seq !== searchSeq.current || controller.signal.aborted) return
       setErrorMessage(parseApiError(error, '教学班查询失败，请重试或重新选择课程'))
     } finally {
-      if (seq === searchSeq.current) { setSearching(false); setSearched(true) }
+      if (seq === searchSeq.current) {
+        setSearching(false)
+        setSearched(true)
+        setSchoolLookupActive(false)
+      }
     }
   }
 
@@ -721,7 +751,13 @@ export default function Add() {
                                 清除学院筛选
                               </Button>
                             )}
-                            {departmentsLoading && <p role="status" className="add-result-extra">正在加载学院…</p>}
+                            {departmentsLoading && (
+                              <p role="status" className="add-result-extra">
+                                {departmentsSchoolLookup
+                                  ? '目录中未找到，正在向学校查询，耗时会比平常稍长。'
+                                  : '正在加载学院…'}
+                              </p>
+                            )}
                           </div>
                           <div className="add-field">
                             <Label htmlFor="grade-select">年级</Label>
@@ -800,7 +836,9 @@ export default function Add() {
                       {truncated && <p className="add-warning" role="status">结果可能不完整，请缩小搜索范围。</p>}
                       {searching && (
                         <p id="external-lookup-status" className="add-searching" role="status">
-                          搜索中…
+                          {schoolLookupActive
+                            ? '目录中未找到，正在向学校查询，耗时会比平常稍长。'
+                            : '搜索中…'}
                         </p>
                       )}
 

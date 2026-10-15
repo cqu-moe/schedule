@@ -37,6 +37,9 @@ export interface Env {
   EXTERNAL_SUBSCRIPTION_TYPES?: string;
   /** Optional comma-separated pilot IDs. Present but empty closes all admission. */
   EXTERNAL_SUBSCRIPTION_PILOT_USER_IDS?: string;
+  /** Explicitly consenting Auth user used for the weekly shared directory.
+   * Unset disables collection and shared-directory reads. Configure out of Git. */
+  EXTERNAL_DIRECTORY_USER_ID?: string;
   AUTH_ORIGIN?: string;
   GIT_COMMIT: string;
   GIT_DATE: string;
