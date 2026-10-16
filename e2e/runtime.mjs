@@ -16,6 +16,17 @@ export const password = 'Synthetic-only-123!';
 const clientId = 'schedule-e2e-browser';
 const clientSecret = 'synthetic-schedule-oauth-secret';
 
+export async function readDirectoryState(db) {
+  // A Queue transaction may commit between separate reads of these tables.
+  const [state, runs, items, courseCache] = await db.batch([
+    db.prepare('SELECT * FROM external_directory_state WHERE id=1'),
+    db.prepare('SELECT id,status,phase,session_id,next_attempt_at,lease_until,last_error,failure_count FROM external_directory_runs ORDER BY started_at,id'),
+    db.prepare('SELECT run_id,kind,id,name FROM external_directory_items ORDER BY run_id,kind,id'),
+    db.prepare('SELECT user_id,session_id,course_id FROM external_directory_course_cache ORDER BY user_id,session_id,course_id'),
+  ]);
+  return { state: state.results[0] ?? null, runs: runs.results, items: items.results, courseCache: courseCache.results };
+}
+
 async function reservePort() {
   const server = createServer();
   await new Promise((done, reject) => {
@@ -206,14 +217,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     startupStage = 'lifecycle-controls';
     const lifecycle = lifecycleProfile ? await lifecycleControls({ runtime, db, accounts, profile: lifecycleProfile, secrets }) : null;
     const directoryInputs = [];
-    async function directoryState() {
-      return {
-        state: await db.prepare('SELECT * FROM external_directory_state WHERE id=1').first(),
-        runs: (await db.prepare('SELECT id,status,phase,session_id,next_attempt_at,lease_until,last_error,failure_count FROM external_directory_runs ORDER BY started_at,id').all()).results,
-        items: (await db.prepare('SELECT run_id,kind,id,name FROM external_directory_items ORDER BY run_id,kind,id').all()).results,
-        courseCache: (await db.prepare('SELECT user_id,session_id,course_id FROM external_directory_course_cache ORDER BY user_id,session_id,course_id').all()).results,
-      };
-    }
+    const directoryState = () => readDirectoryState(db);
     control = createServer(async (request, response) => {
       try {
         const url = new URL(request.url, 'http://127.0.0.1');
