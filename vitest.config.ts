@@ -8,6 +8,8 @@ export default defineWorkersConfig(async () => {
     include: ["src/**/*.test.ts"],
     poolOptions: {
       workers: {
+        // Avoid starting one workerd process per file on small CI runners.
+        singleWorker: true,
         wrangler: {
           configPath: "./wrangler.jsonc",
         },
