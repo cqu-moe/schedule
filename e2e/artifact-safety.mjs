@@ -7,10 +7,15 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const textFile = name => /\.(json|md|log|txt)$/.test(name);
 const phases = new Set(['startup', 'child', 'diagnostics', 'cleanup', 'artifacts', 'private-write', 'verified-read', 'publish', 'receipt-write']);
 const groupKeys = ['test', 'expectedIds', 'cleanup', 'status', 'errors', 'authCommit', 'summary', 'runnerExitCode', 'diagnostics', 'resources'];
+const startupStages = new Set(['fixture-build', 'asset-service', 'consumer-configuration', 'native-school-auth',
+  'database-client', 'account-binding', 'lifecycle-controls', 'control-listener']);
+const startupCodes = new Set(['EADDRINUSE', 'EACCES', 'EPERM', 'ENOSPC', 'EMFILE', 'ENFILE',
+  'ENOMEM', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOENT', 'ERR_RUNTIME_FAILURE', 'ERR_ASSERTION']);
 
 export function describeFailure(error, phase) {
   return { name: error.name, message: error.message, phase,
     ...(error instanceof AggregateError ? { errors: error.errors.map(nested => describeFailure(nested, phase)) } : {}),
+    ...(error.startupDiagnostics ? { startupDiagnostics: error.startupDiagnostics } : {}),
     ...(/^[a-f0-9]{40}$/.test(error.actual) && /^[a-f0-9]{40}$/.test(error.expected)
       ? { actual: error.actual, expected: error.expected } : {}),
     ...(error.artifactDiagnostics ? { artifactDiagnostics: error.artifactDiagnostics } : {}) };
@@ -23,6 +28,16 @@ export function safeFailure(error) {
     value.actual = error.actual; value.expected = error.expected;
   }
   if (error.errors) value.errors = error.errors.map(safeFailure);
+  if (error.startupDiagnostics) {
+    const startup = error.startupDiagnostics;
+    value.startupDiagnostics = {
+      stage: startupStages.has(startup.stage) ? startup.stage : 'unknown',
+      codes: Array.isArray(startup.codes)
+        ? startup.codes.slice(0, 16).map(code => startupCodes.has(code) ? code : 'unclassified') : [],
+      ...Object.fromEntries(['elapsedMs', 'cleanupErrors'].filter(key => Number.isSafeInteger(startup[key]) && startup[key] >= 0)
+        .map(key => [key, startup[key]])),
+    };
+  }
   if (error.artifactDiagnostics) value.artifactDiagnostics = error.artifactDiagnostics.map(item => ({
     category: item.category === 'dependency-sensitive-check' ? item.category : 'artifact-check-error',
     file: ['report.json', 'runtime.json', 'runner.log', 'trace.md', 'screen-at-failure.txt'].includes(item.file) ? item.file : 'other-artifact',

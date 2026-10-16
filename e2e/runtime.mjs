@@ -351,8 +351,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       collect(failure.cause);
     };
     collect(error);
-    console.error('Schedule startup failed:', JSON.stringify({ stage: startupStage,
-      elapsedMs: Date.now() - startupStarted, codes }));
+    const startupDiagnostics = { stage: startupStage, elapsedMs: Date.now() - startupStarted, codes };
+    console.error('Schedule startup failed:', JSON.stringify(startupDiagnostics));
     const errors = [error];
     if (control?.listening) try { await new Promise((done, reject) => control.close(error => error ? reject(error) : done())); }
     catch (cleanup) { errors.push(cleanup); }
@@ -362,6 +362,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     try { await rm(work, { recursive: true, force: true }); } catch (cleanup) { errors.push(cleanup); }
     console.error('Schedule startup cleanup:', JSON.stringify({ initializedAuth: Boolean(runtime),
       initializedAssets: Boolean(assetRuntime), cleanupErrors: errors.length - 1 }));
-    throw errors.length > 1 ? new AggregateError(errors, 'Schedule startup and cleanup failed') : error;
+    startupDiagnostics.cleanupErrors = errors.length - 1;
+    throw Object.assign(errors.length > 1 ? new AggregateError(errors, 'Schedule startup and cleanup failed') : error,
+      { startupDiagnostics });
   }
 }
