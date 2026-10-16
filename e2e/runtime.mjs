@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, writeFile, mkdtemp, mkdir, rm, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
+import { scheduleMiniflare } from './miniflare-runtime.mjs';
 import { lifecycleObserver, lifecycleControls } from './lifecycle-runtime.mjs';
 import { sanitizeArtifacts } from './artifact-safety.mjs';
 import { readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
@@ -96,7 +96,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     // Miniflare 4.20260521.0 uses one fixed Assets:storage service name per
     // instance. Give this second production build its own native asset store;
     // the business Worker, Auth RPC, D1 and Queue still share the main runtime.
-    const { Miniflare } = createRequire(join(auth, 'package.json'))('miniflare');
+    const { Miniflare } = scheduleMiniflare(auth);
     startupStage = 'asset-service';
     assetRuntime = new Miniflare({
       host: '127.0.0.1', port: 0, name: 'schedule-assets', modules: true,
