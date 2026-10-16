@@ -222,7 +222,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
           const since = Number(url.searchParams.get('since'));
           assert.ok(Number.isFinite(since) && since > 0);
           const diagnostics = await runtime.diagnostics();
-          const outcomes = diagnostics.runtimeLog.flatMap(line => {
+          const outcomes = diagnostics.runtimeLog.flatMap(chunk => chunk.split(/\r?\n/)).flatMap(line => {
             try {
               const event = JSON.parse(line);
               return event.evt === 'st_mint' && event.clientId === clientId &&
