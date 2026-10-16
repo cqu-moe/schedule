@@ -54,7 +54,7 @@ jobs:
           umask 077
           private_directory="$(mktemp -d "$PWD/.e2e/private-ci-observer-XXXXXX")"
           set +e
-          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs e2e/miniflare-runtime.test.mjs > "$private_directory/runner.log" 2>&1
+          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs e2e/miniflare-runtime.test.mjs e2e/auth-artifact-runtime.test.mjs > "$private_directory/runner.log" 2>&1
           status=$?
           set -e
           printf 'Schedule observer contract exited %d; raw output retained privately.\n' "$status"
@@ -125,7 +125,7 @@ jobs:
           umask 077
           private_directory="$(mktemp -d "$PWD/.e2e/private-ci-observer-XXXXXX")"
           set +e
-          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs e2e/miniflare-runtime.test.mjs > "$private_directory/runner.log" 2>&1
+          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs e2e/miniflare-runtime.test.mjs e2e/auth-artifact-runtime.test.mjs > "$private_directory/runner.log" 2>&1
           status=$?
           set -e
           printf 'Schedule observer contract exited %d; raw output retained privately.\n' "$status"

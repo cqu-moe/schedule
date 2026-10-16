@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdtemp, mkdir, rm, readdir } from 'node:fs/promis
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { scheduleMiniflare } from './miniflare-runtime.mjs';
+import { importSchoolAuth } from './auth-artifact-runtime.mjs';
 import { lifecycleObserver, lifecycleControls } from './lifecycle-runtime.mjs';
 import { sanitizeArtifacts } from './artifact-safety.mjs';
 import { readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
@@ -117,7 +118,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     const directOrigin = `http://localhost:${port}`;
     const origin = publicOrigin ?? directOrigin;
     const migrations = await readD1Migrations(join(root, 'drizzle/migrations'));
-    const { startSchoolAuth } = await import(pathToFileURL(join(auth, 'e2e/school/runtime.mjs')).href);
+    const { startSchoolAuth } = await importSchoolAuth(auth);
     process.chdir(auth);
     startupStage = 'native-school-auth';
     runtime = await startSchoolAuth({ expectedCommit: authCommit, fixtureDirectory: fixture,
