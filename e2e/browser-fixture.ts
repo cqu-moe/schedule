@@ -7,21 +7,34 @@ export const externalRequests: Array<{path: string; sourceType: string | null; d
 export function installNetworkGuard() {
 let unexpected: string[];
 let responses: Array<{ at: string; path: string; status: number }>;
+const pendingRoutes = new Map<object, { started: number; origin: string; path: string; decision: string }>();
+// Failure-only timing evidence: never retain URL parameters, dynamic paths or credentials.
+const diagnosticPaths = new Set(['/api/v1/auth/sign-out', '/api/v1/auth/get-session',
+  '/api/v2/config', '/api/v2/subscriptions', '/api/v2/me', '/api/v2/notification-settings',
+  '/api/v2/auth/login', '/api/v2/auth/callback', '/login', '/settings', '/dashboard']);
 beforeEach(async ({ app, browser }) => {
   unexpected = [];
   responses = [];
   externalRequests.length = 0;
+  pendingRoutes.clear();
   const allowed = [process.env.SCHEDULE_E2E_URL!, process.env.SCHEDULE_AUTH_URL!];
   await browser.route('**/*', async route => {
-    if (new URL(route.request.url).href === 'https://static.cloudflareinsights.com/beacon.min.js') {
-      await route.fulfill({ status: 200, contentType: 'application/javascript', body: '/* synthetic analytics vendor */' });
-      return;
-    }
     const url = new URL(route.request.url);
-    if (url.pathname.startsWith('/api/v2/external/')) externalRequests.push({path:url.pathname,sourceType:url.searchParams.get('source_type'),directory:url.searchParams.get('lookup') === 'directory'});
-    const origin = url.origin;
-    if (allowed.includes(origin)) await route.continue();
-    else { unexpected.push(origin); await route.abort(); }
+    const vendor = url.href === 'https://static.cloudflareinsights.com/beacon.min.js';
+    pendingRoutes.set(route, { started: Date.now(),
+      origin: url.origin === allowed[0] ? 'schedule' : url.origin === allowed[1] ? 'auth' : 'other',
+      path: diagnosticPaths.has(url.pathname) ? url.pathname : 'other',
+      decision: vendor ? 'fulfill' : allowed.includes(url.origin) ? 'continue' : 'abort' });
+    try {
+      if (vendor) {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: '/* synthetic analytics vendor */' });
+        return;
+      }
+      if (url.pathname.startsWith('/api/v2/external/')) externalRequests.push({path:url.pathname,sourceType:url.searchParams.get('source_type'),directory:url.searchParams.get('lookup') === 'directory'});
+      const origin = url.origin;
+      if (allowed.includes(origin)) await route.continue();
+      else { unexpected.push(origin); await route.abort(); }
+    } finally { pendingRoutes.delete(route); }
   });
   // Start the engine on a JSON endpoint before loading any application script.
   await app.open('/api/v2/config');
@@ -37,6 +50,9 @@ beforeEach(async ({ app, browser }) => {
   });
 });
 afterEach(async () => {
+  // Framework settles handlers before afterEach; a timed-out handler remains here.
+  if (pendingRoutes.size) console.info('Schedule pending route decisions:', JSON.stringify(
+    [...pendingRoutes.values()].map(({ started, ...route }) => ({ ...route, elapsedMs: Date.now() - started }))));
   console.info('Schedule owner response statuses:', JSON.stringify(responses));
   expect(unexpected).toEqual([]);
 });

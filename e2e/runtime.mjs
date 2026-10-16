@@ -77,6 +77,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
   const authRequests = [];
   const secrets = new Set([password, clientSecret]);
   let runtime, control, assetRuntime;
+  const startupStarted = Date.now();
+  let startupStage = 'fixture-build';
   try {
     const fixture = join(work, 'school');
     await mkdir(fixture);
@@ -95,6 +97,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     // instance. Give this second production build its own native asset store;
     // the business Worker, Auth RPC, D1 and Queue still share the main runtime.
     const { Miniflare } = createRequire(join(auth, 'package.json'))('miniflare');
+    startupStage = 'asset-service';
     assetRuntime = new Miniflare({
       host: '127.0.0.1', port: 0, name: 'schedule-assets', modules: true,
       compatibilityDate: '2026-05-01',
@@ -109,12 +112,14 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     const expectedHtml = await readFile(join(root, 'frontend/dist/index.html'), 'utf8');
     assert.equal(await (await assets.fetch('http://assets.test/')).text(), expectedHtml,
       'The actual Schedule production assets must be served, not another worker build');
+    startupStage = 'consumer-configuration';
     const port = await reservePort();
     const directOrigin = `http://localhost:${port}`;
     const origin = publicOrigin ?? directOrigin;
     const migrations = await readD1Migrations(join(root, 'drizzle/migrations'));
     const { startSchoolAuth } = await import(pathToFileURL(join(auth, 'e2e/school/runtime.mjs')).href);
     process.chdir(auth);
+    startupStage = 'native-school-auth';
     runtime = await startSchoolAuth({ expectedCommit: authCommit, fixtureDirectory: fixture,
       workers: ({ authOrigin, authWorkerName }) => [{
         name: 'schedule-e2e', modulesRoot: work, modules: [{ type: 'ESModule', path: scriptPath, contents }],
@@ -168,11 +173,13 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
         },
       }, ...(lifecycleProfile ? [lifecycleObserver] : [])],
     });
+    startupStage = 'database-client';
     let db = await runtime.getD1Database('DB', 'schedule-e2e');
     for (const migration of migrations) for (const query of migration.queries) await db.prepare(query).run();
     await registerClient(runtime.db, origin);
     const { prepareSchoolBinding } = await import(pathToFileURL(join(auth, 'e2e/school/prepare-binding.mjs')).href);
     const accounts = {};
+    startupStage = 'account-binding';
     assert.ok(accountNames.length && accountNames.every(key => ['owner', 'other', 'unbound', 'no-sync', 'no-external'].includes(key)));
     for (const key of accountNames) {
       const email = `${key}@example.test`;
@@ -195,6 +202,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       await runtime.updateConsumerBindings('schedule-e2e', { EXTERNAL_DIRECTORY_USER_ID: accounts.owner.userId });
       db = await runtime.getD1Database('DB', 'schedule-e2e');
     }
+    startupStage = 'lifecycle-controls';
     const lifecycle = lifecycleProfile ? await lifecycleControls({ runtime, db, accounts, profile: lifecycleProfile, secrets }) : null;
     const directoryInputs = [];
     async function directoryState() {
@@ -293,6 +301,7 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
         response.end(JSON.stringify({ subscriptions: rows.results, views: views.results }));
       } catch { response.writeHead(500).end('Readback failed'); }
     });
+    startupStage = 'control-listener';
     await new Promise((done, reject) => { control.once('error', reject); control.listen(0, '127.0.0.1', done); });
     const controlPort = control.address().port;
     return { origin, directOrigin, authOrigin: runtime.origin, authCommit, db, accounts,
@@ -329,6 +338,21 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
       },
     };
   } catch (error) {
+    // Startup has no initialized scanner. Emit only fixed labels/numbers; raw
+    // messages, stacks and child output remain in the existing private evidence.
+    const allowedCodes = new Set(['EADDRINUSE', 'EACCES', 'EPERM', 'ENOSPC', 'EMFILE', 'ENFILE',
+      'ENOMEM', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOENT', 'ERR_RUNTIME_FAILURE', 'ERR_ASSERTION']);
+    const codes = [], seen = new Set();
+    const collect = failure => {
+      if (!failure || seen.has(failure) || seen.size >= 16) return;
+      seen.add(failure);
+      codes.push(allowedCodes.has(failure.code) ? failure.code : 'unclassified');
+      if (failure instanceof AggregateError) failure.errors.forEach(collect);
+      collect(failure.cause);
+    };
+    collect(error);
+    console.error('Schedule startup failed:', JSON.stringify({ stage: startupStage,
+      elapsedMs: Date.now() - startupStarted, codes }));
     const errors = [error];
     if (control?.listening) try { await new Promise((done, reject) => control.close(error => error ? reject(error) : done())); }
     catch (cleanup) { errors.push(cleanup); }
@@ -336,6 +360,8 @@ export async function startSchedule({ authDirectory, authCommit, accountNames = 
     if (assetRuntime) try { await assetRuntime.dispose(); } catch (cleanup) { errors.push(cleanup); }
     process.chdir(root);
     try { await rm(work, { recursive: true, force: true }); } catch (cleanup) { errors.push(cleanup); }
+    console.error('Schedule startup cleanup:', JSON.stringify({ initializedAuth: Boolean(runtime),
+      initializedAssets: Boolean(assetRuntime), cleanupErrors: errors.length - 1 }));
     throw errors.length > 1 ? new AggregateError(errors, 'Schedule startup and cleanup failed') : error;
   }
 }
