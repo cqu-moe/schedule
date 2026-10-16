@@ -88,3 +88,28 @@ SCHEDULE_WEBKIT_TLS_VIEWPORT=mobile node e2e/webkit-tls.mjs
 ```
 
 第一条要求实际 stock 引擎因本地测试证书拒绝且完整清理；后两条使用临时 Playwright WebKit context 验证学校拒绝、显式重试恢复及空订阅读回。每次使用新的 `SCHEDULE_WEBKIT_TLS_OUTPUT=.e2e/<本轮目录>` 保留证据。脚本会检查并安装匹配的 WebKit 二进制；证书仅在该 context 接受，结束后删除。它只覆盖这一条旅程，不能替代全部31条或完整发布门禁。默认 Chromium 入口保持不变，启动、业务或清理失败仍非零。
+
+## 完整 Firefox / WebKit 发布前矩阵
+
+准备固定 Auth、独立依赖和前端构建后：
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.e2e/browsers" SCHEDULE_RELEASE_OUTPUT=.e2e/release-controls-unique node e2e/release-web.mjs --self-check
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.e2e/browsers" SCHEDULE_RELEASE_OUTPUT=.e2e/release-round1-unique node e2e/release-web.mjs
+```
+
+入口串行运行原31条 tester-army/e2e 用例，Firefox/WebKit × desktop/mobile，共124个实际attempt；没有复制旅程、弱化断言或开启重试。每引擎分别实跑原有错误课程内容断言、零选择及真实资源停止后的cleanup拒绝控制。第二轮必须使用新的独占输出目录；代码存在或第一轮通过均不代表两轮发布验收完成。
+
+Firefox沿用HTTP；WebKit通过原临时loopback证书代理保留产品Secure Cookie。固定Web SPI 0.15.0缺少TLS context选项且CDP provider不支持WebKit，因此只在WebKit测试子进程中加载`tls-context-loader.mjs`：校验安装包版本、`surface.js`完整SHA-256及唯一context创建位置，在内存增加`ignoreHTTPSErrors:true`。安装的依赖文件、用例和断言不变。`NODE_EXTRA_CA_CERTS`仅给该子进程信任本次临时证书，支持原旅程中的独立Node HTTP读回；不更改系统信任或钥匙串。CLI及实际worker均记录适配hash；默认Chromium HTTP没有这些选项。
+
+每个FF/WK子进程使用私有HOME/TMPDIR，观察实际headless引擎路径、临时profile、浏览器退出和profile删除。HOME/profile与临时证书位于独立`.e2e/private-browser-*`、`private-tls-*`，不进入可发布组；清理失败时保留私有材料和原错误。WebKit另核对真实HTTPS回调携带Secure登录Cookie、证书/监听器清理；唯一不登录的旧教师目录终止用例仍执行原平台断言及真实浏览器beforeEach，不制造OAuth callback要求。
+
+本入口整合已审178c686的private→verified publish：原生report/log先在owner私有stage脱敏、完整扫描、验证所有文件hash，才发布整组；拒绝时只发布安全失败投影。release外层没有runtime秘密登记表，故其原始child stdout/stderr仅写独立mode0700 `private-release-*`中的0600日志，不转发控制台、不上传、不冒称已扫描。公开异常只含固定安全message/phase/hash，原始异常和并存失败留私有journal；启动/最终源码核验失败同样非零。`node e2e/release-safety-check.mjs`独立检查外层真实child stdout/stderr与异常泄漏边界；属于离线harness控制，不是浏览器业务证据。
+
+旧a21首轮或旧CI失败仍按原指纹保留，不计入组合源码验收。两个fresh完整轮次须在相同冻结组合源码执行；经独立复审的隔离分支、明确不部署的Linux CI可以承担这两轮，不能把入口接线、局部回归或smoke称为完整release通过。
+
+`.github/workflows/e2e.yml` 的premerge完整浏览器入口是PR opt-in标签 `e2e-release-browsers`：父给PR添加该标签时执行FF/WK；保留标签后的synchronize/reopened也验证新候选。普通无标签PR仍只跑原Chromium round1/2×desktop/mobile矩阵；无关标签不额外启动浏览器组。labeled事件使用独立concurrency key，跳过的路由job也使用独立check名称，不取消或覆盖必需Chromium检查。默认PR的首轮desktop额外运行一次 `node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs` 观察顺序contract，其他原步骤/矩阵/40分钟预算不变。
+
+默认分支存在该workflow及dispatch入口后，也可手动 `workflow_dispatch` 设置布尔 `release_web=true`（false运行原Chromium矩阵）；手动run独立concurrency key。release矩阵为Firefox/WebKit × desktop/mobile × round1/2，共8个fresh job、每job原31条、每轮124个原始attempt，每job仍40分钟、安装所选引擎及系统依赖。仅首轮Firefox desktop运行一次观察顺序contract，额外安装WebKit，并执行 `node e2e/release-web.mjs --self-check` 实际六负控。PR标签入口不依赖workflow先合入默认分支，不能把缺少默认入口时的手动命令当成premerge路径。
+
+release的原始runner/control及观察contract输出只写私有0700目录内的0600日志，console只输出固定exit状态。上传allowlist仅包含该cell的独占 `run-release-*` 和六负控的独占 `release-controls-ci-*` 中的已验证JSON/trace/readback图片/runner.log；不匹配 `private-*`、profile、证书或原始外层日志。接线不表示已执行：父复审、最终组合源码hash（含workflow及父的三个observer文件）及8份实际artifact验收仍必要；不触发部署或tag。本票不添加标签、dispatch、提交或推送。

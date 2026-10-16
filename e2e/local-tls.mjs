@@ -204,7 +204,7 @@ export async function startLocalTlsProxy({ backendPort, output, reservation }) {
     server.on('clientError', (_error, socket) => socket.destroy());
     await reservation.release();
     await new Promise((done, reject) => server.once('error', reject).listen(port, '127.0.0.1', done));
-    return { origin: `https://127.0.0.1:${port}`, certificateFingerprint, observations, upgrades, close };
+    return { origin: `https://127.0.0.1:${port}`, certificatePath, certificateFingerprint, observations, upgrades, close };
   } catch (primaryError) {
     const cleanupErrors = [];
     let cleanupEvidence;

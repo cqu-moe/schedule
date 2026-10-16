@@ -105,6 +105,7 @@ for (const kind of ['personal', 'external'] as const) {
       const failureModes = ['schedule_failure', 'schedule_timeout', 'schedule_schema_error', ...(kind === 'external' ? ['schedule_stall'] : [])];
       for (const [index, mode] of failureModes.entries()) {
         const recoveryMode = index % 2 === 1 ? 'success' : 'schedule_v2';
+        const expectedEvent = index === 0 ? 'school_timetable_http_503' : index === 1 ? 'school_timetable_http_504' : index === 2 ? 'school_timetable_invalid_schema' : 'school_timetable_request_held';
         const failed = await withSchoolInput({ mode, hold: mode === 'schedule_stall', clearEvents: true },
           { mode: recoveryMode, hold: false }, async () => {
             if (kind === 'personal') await expire('harvest');
@@ -112,15 +113,17 @@ for (const kind of ['personal', 'external'] as const) {
             const before = (await control()).subscriptions.find(sub => sub.id === previous.id)!;
             await cron();
             const started = Date.now();
-            const failed = await waitForSubscription(sub => sub.sync_run_id !== previous.sync_run_id && sub.sync_error_code !== null && ['queued', 'error'].includes(sub.sync_status), type, 240000);
+            const failed = await waitForSubscription(sub => sub.sync_run_id !== previous.sync_run_id && sub.sync_error_code !== null && ['queued', 'error'].includes(sub.sync_status), type, 240000, expectedEvent);
             expect(failed.last_synced_at).toBe(before.last_synced_at);
             expect(payload(failed)).toEqual(payload(previous));
             const retained = await publicRead(initial.token);
             expect(retained.status).toBe(200);
             expect(retained.text).toBe(previousPublic);
-            const expectedEvent = index === 0 ? 'school_timetable_http_503' : index === 1 ? 'school_timetable_http_504' : index === 2 ? 'school_timetable_invalid_schema' : 'school_timetable_request_held';
             if (mode === 'schedule_stall') expect(Date.now() - started >= 15000).toBe(true);
-            expect((await school()).events.some(event => event.kind === expectedEvent)).toBe(true);
+            const schoolEvent = (await school()).events.find(event => event.kind === expectedEvent);
+            expect(Boolean(schoolEvent)).toBe(true);
+            // Capacity waiting must not count toward the held-request timeout.
+            if (mode === 'schedule_stall') expect(Date.now() - schoolEvent!.at >= 15000).toBe(true);
             await app.open('/dashboard');
             await expect(screen.getByRole('listitem').filter({ hasText: initial.view.source_name })).toContainText(failed.sync_status === 'queued' ? '重试' : '失败');
             await app.open('/api/v2/config');

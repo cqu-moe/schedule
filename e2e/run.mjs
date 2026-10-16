@@ -3,6 +3,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { startSchedule } from './runtime.mjs';
+import { startScheduleForBrowser } from './release-runtime.mjs';
+import { browserCustody } from './browser-custody.mjs';
 import { createHash } from 'node:crypto';
 import { describeFailure, publishGroup, safeFailure, writeSafeJson } from './artifact-safety.mjs';
 
@@ -30,12 +32,15 @@ process.on('SIGINT', cancel);
 process.on('SIGTERM', cancel);
 
 async function cli(command, env, timeout = 900000) {
+  const custody = command[0] === 'run' && browser !== 'chromium'
+    ? await browserCustody(resolve(root, '.e2e'), browser) : undefined;
   const child = spawn(process.execPath, ['node_modules/e2e/dist/cli/bin.js', ...command], {
     cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, CI: process.env.CI,
-      DO_NOT_TRACK: '1', E2E_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false', PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH, ...env },
+      DO_NOT_TRACK: '1', E2E_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false', PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
+      ...custody?.env, ...env },
   });
-  let stdout = '', stderr = '', interrupted = false, hardStop;
+  let stdout = '', stderr = '', interrupted = false, hardStop, browserEvidence, primary;
   const signal = name => {
     try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; }
   };
@@ -53,11 +58,24 @@ async function cli(command, env, timeout = 900000) {
     const code = await new Promise((done, reject) => {
       child.once('error', reject); child.once('close', (code, signal) => done(signal ? 1 : code));
     });
-    return { code: interrupted ? 1 : code, stdout, stderr };
+    return { code: interrupted ? 1 : code, stdout, stderr,
+      ...(custody ? { browserCustody: browserEvidence = await custody.finish(stdout + stderr) } : {}) };
+  } catch (error) {
+    primary = error;
+    throw error;
   } finally {
     clearTimeout(timer); clearTimeout(hardStop);
     if (child.pid) signal('SIGKILL');
     process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
+    if (custody) {
+      const cleanup = [];
+      try {
+        browserEvidence ??= await custody.finish(stdout + stderr);
+        await writeFile(join(env.SCHEDULE_E2E_OUTPUT, 'browser-custody.json'), JSON.stringify(browserEvidence, null, 2) + '\n', { mode: 0o600 });
+        if (primary && browserEvidence.errors.length) throw new Error('Browser custody failed after child failure');
+      } catch (error) { cleanup.push(error); }
+      if (cleanup.length) throw new AggregateError(primary ? [primary, ...cleanup] : cleanup, 'Child and browser custody failures');
+    }
   }
 }
 
@@ -102,7 +120,7 @@ for (const variant of variants) {
       let runtime, published;
       let phase = 'startup';
       try {
-        runtime = await startSchedule({ authDirectory: process.env.SCHEDULE_AUTH_DIRECTORY || resolve(root, '.e2e/deps/auth'),
+        runtime = await (browser === 'webkit' ? startScheduleForBrowser : startSchedule)({ authDirectory: process.env.SCHEDULE_AUTH_DIRECTORY || resolve(root, '.e2e/deps/auth'),
           authCommit: process.env.SCHEDULE_AUTH_COMMIT || dependency.commit,
           external: pair.tags.includes('external'),
           directory: pair.tags.includes('directory'),
@@ -119,6 +137,7 @@ for (const variant of variants) {
           SCHEDULE_E2E_OUTPUT: directory, SCHEDULE_E2E_URL: runtime.origin,
           SCHEDULE_AUTH_URL: runtime.authOrigin, SCHEDULE_E2E_CONTROL: runtime.controlOrigin,
           SCHEDULE_SCHOOL_CONTROL: runtime.schoolOrigin,
+          ...runtime.browserEnvironment,
           SCHEDULE_E2E_BREAK_ASSERTION: process.env.SCHEDULE_E2E_BREAK_ASSERTION || '' });
         await writeFile(join(directory, 'runner.log'), result.stdout + result.stderr);
         const report = JSON.parse(await readFile(join(directory, 'report.json'), 'utf8'));
@@ -130,6 +149,12 @@ for (const variant of variants) {
         variantEvidence.executedIds.push(...ids(executed));
         evidence.summary = report.run.summary;
         evidence.runnerExitCode = result.code;
+        if (result.browserCustody) {
+          assert.deepEqual(result.browserCustody.errors, [], 'Browser custody cleanup failed');
+          for (const key of ['headless', 'engineBinary', 'browserExited', 'profileRemoved', 'privateHomeRemoved']) {
+            assert.equal(result.browserCustody[key], true, `Browser custody ${key}`);
+          }
+        }
         assert.equal(result.code, 0, 'E2E child failed');
         assert.equal(report.run.status, 'passed');
         assert.equal(executed.some(test => test.attempts?.some(attempt => attempt.cleanup === 'failed' ||

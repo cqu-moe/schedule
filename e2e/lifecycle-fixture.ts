@@ -43,7 +43,7 @@ async function schoolIdle() {
   }
 }
 
-export async function school(changes?: Record<string, unknown>): Promise<{ events: Array<{ kind: string }>; state: { mode: string }; profiles: number; chromeProcesses: number }> {
+export async function school(changes?: Record<string, unknown>): Promise<{ events: Array<{ kind: string; at: number }>; state: { mode: string }; profiles: number; chromeProcesses: number }> {
   const response = await fetch(`${process.env.SCHEDULE_E2E_CONTROL}/school?account=owner`, changes
     ? { method: 'POST', body: JSON.stringify(changes), signal: AbortSignal.timeout(30000) } : {});
   expect(response.status).toBe(200);
@@ -62,13 +62,17 @@ export async function withSchoolInput<T>(changes: Record<string, unknown>, resto
     }
   }
 }
-export async function waitForSubscription(predicate: (sub: StoredSubscription) => boolean, type = 'personal', timeout = 120000) {
+export async function waitForSubscription(predicate: (sub: StoredSubscription) => boolean, type = 'personal', timeout = 120000, requiredSchoolEvent?: string) {
   const deadline = Date.now() + timeout;
   for (;;) {
+    // Read the school input first, then its persisted application outcome. A
+    // queued capacity deferral can precede the actual school request; it must
+    // not complete a test whose owner is a particular school failure.
+    const inputObserved = !requiredSchoolEvent || (await school()).events.some(event => event.kind === requiredSchoolEvent);
     const snapshot = await control();
     const sub = snapshot.subscriptions.find(item => item.source_type === type);
-    if (sub && predicate(sub)) return sub;
-    if (Date.now() >= deadline) throw new Error(`Subscription ${type} did not reach its required state (last=${sub?.sync_status}/${sub?.sync_error_code})`);
+    if (inputObserved && sub && predicate(sub)) return sub;
+    if (Date.now() >= deadline) throw new Error(`Subscription ${type} did not reach its required state (last=${sub?.sync_status}/${sub?.sync_error_code}; schoolInputObserved=${inputObserved})`);
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 }

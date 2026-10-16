@@ -2,19 +2,28 @@ name: Production application E2E
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_web:
+        description: Run the complete Firefox/WebKit release matrix
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: application-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: application-e2e-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.event.action == 'labeled' && format('label-{0}-{1}', github.event.pull_request.number, github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   application:
-    name: Real Auth, queue and calendar journeys
+    if: (github.event_name != 'workflow_dispatch' || !inputs.release_web) && (github.event_name != 'pull_request' || github.event.action != 'labeled')
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && 'Label release routing' || github.event_name == 'workflow_dispatch' && inputs.release_web && 'Manual release routing' || 'Real Auth, queue and calendar journeys' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -38,6 +47,18 @@ jobs:
       - run: node node_modules/playwright-core/cli.js install-deps chromium
       - run: npm run e2e:prepare
       - run: npm run typecheck && npm test
+      - name: Check required school-event observation ordering
+        if: matrix.round == 1 && matrix.viewport == 'desktop'
+        shell: bash
+        run: |
+          umask 077
+          private_directory="$(mktemp -d "$PWD/.e2e/private-ci-observer-XXXXXX")"
+          set +e
+          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs > "$private_directory/runner.log" 2>&1
+          status=$?
+          set -e
+          printf 'Schedule observer contract exited %d; raw output retained privately.\n' "$status"
+          exit "$status"
       - run: npm run test:e2e
       - run: npm run test:e2e:harness
         if: matrix.round == 1 && matrix.viewport == 'desktop'
@@ -57,6 +78,100 @@ jobs:
             .e2e/negative-*/**/results/**/*.txt
             .e2e/negative-*/**/*.png
             .e2e/negative-*/**/runner.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  release-web:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.release_web) ||
+      (github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'e2e-release-browsers') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers'))
+    name: Release Web (${{ matrix.browser }}, ${{ matrix.viewport }}, round ${{ matrix.round }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+        viewport: [desktop, mobile]
+        round: [1, 2]
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      DO_NOT_TRACK: '1'
+      E2E_TELEMETRY_DISABLED: '1'
+      SCHEDULE_E2E_BROWSER: ${{ matrix.browser }}
+      SCHEDULE_E2E_VIEWPORT: ${{ matrix.viewport }}
+      SCHEDULE_E2E_OUTPUT: .e2e/run-release-${{ github.run_id }}-${{ github.run_attempt }}-round-${{ matrix.round }}-${{ matrix.browser }}-${{ matrix.viewport }}
+      SCHEDULE_RELEASE_OUTPUT: .e2e/release-controls-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install this cell's browser and system dependencies
+        run: node node_modules/playwright-core/cli.js install --with-deps "$SCHEDULE_E2E_BROWSER"
+      - run: npm run e2e:prepare
+      - run: npm run typecheck:e2e
+      - name: Check required school-event observation ordering
+        if: matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop'
+        shell: bash
+        run: |
+          umask 077
+          private_directory="$(mktemp -d "$PWD/.e2e/private-ci-observer-XXXXXX")"
+          set +e
+          node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs > "$private_directory/runner.log" 2>&1
+          status=$?
+          set -e
+          printf 'Schedule observer contract exited %d; raw output retained privately.\n' "$status"
+          exit "$status"
+      - name: Install the second engine for the six controls
+        if: matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop'
+        run: node node_modules/playwright-core/cli.js install --with-deps webkit
+      - name: Require all six real Firefox/WebKit rejection controls
+        if: matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop'
+        shell: bash
+        run: |
+          umask 077
+          private_directory="$(mktemp -d "$PWD/.e2e/private-ci-controls-XXXXXX")"
+          set +e
+          node e2e/release-web.mjs --self-check > "$private_directory/runner.log" 2>&1
+          status=$?
+          set -e
+          printf 'Schedule six-control gate exited %d; raw output retained privately.\n' "$status"
+          exit "$status"
+      - name: Run all 31 original journeys once in this fresh cell
+        shell: bash
+        run: |
+          umask 077
+          private_directory="$(mktemp -d "$PWD/.e2e/private-ci-cell-XXXXXX")"
+          set +e
+          npm run test:e2e > "$private_directory/runner.log" 2>&1
+          status=$?
+          set -e
+          printf 'Schedule release cell exited %d; raw output retained privately.\n' "$status"
+          exit "$status"
+      - name: Upload only verified cell artifacts and safe control receipts
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: schedule-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-round-${{ matrix.round }}-${{ matrix.browser }}-${{ matrix.viewport }}
+          path: |
+            ${{ env.SCHEDULE_E2E_OUTPUT }}/**/*.json
+            ${{ env.SCHEDULE_E2E_OUTPUT }}/**/*.md
+            ${{ env.SCHEDULE_E2E_OUTPUT }}/**/results/**/*.txt
+            ${{ env.SCHEDULE_E2E_OUTPUT }}/**/*.png
+            ${{ env.SCHEDULE_E2E_OUTPUT }}/**/runner.log
+            ${{ env.SCHEDULE_RELEASE_OUTPUT }}/**/*.json
+            ${{ env.SCHEDULE_RELEASE_OUTPUT }}/**/*.md
+            ${{ env.SCHEDULE_RELEASE_OUTPUT }}/**/results/**/*.txt
+            ${{ env.SCHEDULE_RELEASE_OUTPUT }}/**/*.png
+            ${{ env.SCHEDULE_RELEASE_OUTPUT }}/**/runner.log
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
