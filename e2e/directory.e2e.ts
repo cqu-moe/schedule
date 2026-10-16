@@ -46,12 +46,12 @@ async function waitForIdleSchool() {
   }
 }
 let observedCapacityRecoveries = 0;
-async function advance(id: string, phase: number) {
+async function advance(id: string, phase: number, action: 'deliver-due' | 'expired-lease' = 'deliver-due') {
   await waitForIdleSchool();
   const before = await directory();
   const previous=before.runs.find(run=>run.id===id)!;
   const started = Date.now();
-  await directory('deliver-due');
+  await directory(action);
   let outcome = await waitForRun(id,run=>run.phase===phase || run.status!=='running' || run.failure_count>previous.failure_count);
   if (outcome.run.phase === previous.phase && outcome.run.status === 'running' && outcome.run.failure_count > previous.failure_count) {
     // A real background Auth operation can acquire the browser after our idle
@@ -169,10 +169,7 @@ test('directory retries respect duplicates, foreground work, interrupted leases 
     await directory('duplicate');
     expect((await directory()).runs.find(run=>run.id===id)?.phase).toBe(1);
     expect((await school()).events).toEqual([]);
-    await directory('expired-lease');
-    const recovered=await waitForRun(id,run=>run.phase>1||run.failure_count>0);
-    expect(recovered.run.phase).toBe(2);
-    expect(recovered.run.failure_count).toBe(0);
+    await advance(id,2,'expired-lease');
     await school({session:'202611',pageSession:'202611',clearEvents:true});
     await directory('deliver-due');
     const drift=await waitForRun(id,run=>run.status==='failed');
