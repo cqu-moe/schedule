@@ -33,3 +33,11 @@ jobs:
         run: npx --yes pnpm@11.19.0 check:design
       - name: Test
         run: npx --yes pnpm@11.19.0 test
+      - name: Install browser test dependencies
+        working-directory: .
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/playwright-core/cli.js install --with-deps chromium
+      - name: Check overlay layout in Chromium
+        working-directory: .
+        run: npm run test:frontend:layout
