@@ -15,7 +15,7 @@ svg {
 }
 
 html {
-  scrollbar-gutter: stable;
+  /* Modal scroll locks compensate for the scrollbar; a stable gutter doubles that gap. */
   scroll-padding-top: var(--space-6);
 }
 body {

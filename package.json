@@ -12,6 +12,7 @@
     "deploy": "npm run build:frontend && npm run db:migrate:remote && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
     "test": "vitest run",
     "test:frontend": "cd frontend && npx -y pnpm@11.19.0 run test",
+    "test:frontend:layout": "node e2e/overlay-layout.mjs",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local",
