@@ -20,13 +20,13 @@
   width: var(--space-8);
   height: var(--space-8);
 }
-.brand-mark .brand-logo-white {
+.brand-mark .brand-logo-dark {
   display: none;
 }
-:root[data-theme='dark'] .brand-logo-black {
+:root[data-theme='dark'] .brand-logo-light {
   display: none;
 }
-:root[data-theme='dark'] .brand-logo-white {
+:root[data-theme='dark'] .brand-logo-dark {
   display: block;
 }
 .landing-root {
@@ -45,6 +45,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+.landing-root .landing-utilities > button,
+.landing-root .landing-utilities > a,
+.landing-root .landing-utilities > [role='status'] {
+  min-height: 44px;
+  min-width: 44px;
 }
 .calendar-preview {
   min-height: 100dvh;
@@ -100,7 +106,8 @@
     flex-wrap: wrap;
   }
   .landing-utilities {
-    margin-left: auto;
+    width: 100%;
+    justify-content: flex-end;
     gap: var(--space-1);
   }
   .site-brand {

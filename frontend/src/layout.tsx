@@ -150,18 +150,18 @@ export default function Layout({ children }: { children?: ReactNode }) {
     <Link to="/" className="site-brand">
       <span className="brand-mark" aria-hidden="true">
         <img
-          src="/brand/logo-black.svg"
+          src="/brand/logo.svg"
           alt=""
           width={32}
           height={32}
-          className="brand-logo-black"
+          className="brand-logo-light"
         />
         <img
-          src="/brand/logo-white.svg"
+          src="/brand/logo-dark.svg"
           alt=""
           width={32}
           height={32}
-          className="brand-logo-white"
+          className="brand-logo-dark"
         />
       </span>
       <span>CQU Schedule</span>
@@ -242,6 +242,7 @@ export default function Layout({ children }: { children?: ReactNode }) {
           <header className="landing-header">
             {brand}
             <nav className="landing-utilities" aria-label="主导航">
+              <Button asChild variant="ghost" size="sm"><a href="#how">如何使用</a></Button>
               <Button asChild variant="ghost" size="sm">
                 <Link to={isAuthenticated ? '/dashboard' : '/api-docs'}>
                   {isAuthenticated ? '我的订阅' : '使用指南'}
