@@ -78,6 +78,15 @@ export function DashboardRouteSkeleton() {
   </>
 }
 
+export function DocsRouteSkeleton() {
+  return <>
+    <PageHeader title="使用指南与 API" description="将课表接入日历，或使用公开接口读取日程。" />
+    <LoadingRegion label="正在加载使用指南">
+      <Skeleton className="h-64 w-full" />
+    </LoadingRegion>
+  </>
+}
+
 export function ExternalFormSkeleton({ reselect = false }: { reselect?: boolean }) {
   return <LoadingRegion label="正在确认外部订阅可用性">
     <div className="add-card">
