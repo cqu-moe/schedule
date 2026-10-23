@@ -530,8 +530,19 @@ export default function Dashboard() {
   const hasActiveCooldown = subscriptions.some(isRefreshCoolingDown)
   useEffect(() => {
     if (!hasActiveCooldown) return
-    const timer = window.setInterval(() => setCooldownClock(Date.now()), 1000)
-    return () => window.clearInterval(timer)
+    let timer: number | undefined
+    const updateVisibility = () => {
+      window.clearInterval(timer)
+      if (document.visibilityState === 'hidden') return
+      setCooldownClock(Date.now())
+      timer = window.setInterval(() => setCooldownClock(Date.now()), 1000)
+    }
+    updateVisibility()
+    document.addEventListener('visibilitychange', updateVisibility)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', updateVisibility)
+    }
   }, [hasActiveCooldown])
 
   function isNewExternal(sub: Subscription): boolean {

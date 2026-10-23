@@ -10,7 +10,6 @@ import { Button, ContentContainer, PageHeader, PageState } from '@cqu-moe/ui'
 import Layout from '@/layout'
 import RouteSkeleton from '@/components/RouteSkeleton'
 import Home from '@/views/Home'
-import Docs from '@/views/Docs'
 import SignedOut from '@/views/SignedOut'
 
 const SITE_NAME = 'CQU Schedule'
@@ -81,7 +80,7 @@ export const appRoutes: RouteObject[] = [
       },
       {
         path: 'api-docs',
-        Component: Docs,
+        lazy: async () => ({ Component: (await import('@/views/Docs')).default }),
         handle: { title: `使用指南与 API | ${SITE_NAME}` },
       },
       {

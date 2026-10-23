@@ -81,6 +81,29 @@ describe('router (v2)', () => {
     expect(router.state.matches.at(-1)?.route.path).toBe('*')
   })
 
+  it.each(['direct', 'navigation'])('loads the guide on demand with a loading state and keeps its anchor (%s)', async entry => {
+    const scrollIntoView = vi.fn()
+    const original = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    try {
+      const { router, resolveModule } = renderRoute(entry === 'direct' ? '/api-docs#subscribe' : '/', 'api-docs')
+      let navigation: Promise<void> | undefined
+      if (entry === 'navigation') {
+        await act(async () => { navigation = router.navigate('/api-docs#subscribe') })
+      }
+      expect(screen.getByRole('heading', { level: 1, name: '使用指南与 API' })).toBeInTheDocument()
+      expect(screen.getByText('正在加载使用指南')).toHaveAttribute('role', 'status')
+      expect(screen.queryByRole('heading', { name: '订阅到你的日历' })).not.toBeInTheDocument()
+      await act(async () => { resolveModule(); await navigation })
+      expect(await screen.findByRole('heading', { name: '订阅到你的日历' })).toBeInTheDocument()
+      expect(screen.queryByText('正在加载使用指南')).not.toBeInTheDocument()
+      expect(router.state.location.hash).toBe('#subscribe')
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('subscribe'))
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original
+    }
+  })
+
   it.each(['/dashboard', '/add/?reselect=sub-1', '/Dashboard', '/Add/?reselect=MiXeD-sub'])('keeps %s behind loading UI until both module and session are ready', async path => {
     let resolveSession!: (value: MeResponse) => void
     vi.mocked(api.getMe).mockReturnValue(new Promise(resolve => { resolveSession = resolve }))
