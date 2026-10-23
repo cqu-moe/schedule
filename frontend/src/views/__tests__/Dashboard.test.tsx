@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { Profiler, StrictMode } from 'react'
 import { MemoryRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
 import { AppProvider, type AppContextValue } from '@/providers/app'
@@ -437,6 +437,47 @@ describe('Dashboard view (v2)', () => {
       expect(mockApi.refreshSubscription).toHaveBeenCalledWith('ext-1')
       expect(mockApi.refreshPersonalSubscription).not.toHaveBeenCalled()
     })
+  })
+
+  it('pauses the cooldown clock while hidden and catches up immediately on return', async () => {
+    vi.useFakeTimers()
+    const now = Date.now()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    mockApi.getSubscriptions.mockResolvedValue(mockList([
+      mockSubscription({ manual_refresh_at: new Date(now).toISOString() }),
+    ]))
+    const onRender = vi.fn()
+    const view = renderWithApp(<Profiler id="dashboard" onRender={onRender}><Dashboard /></Profiler>, {
+      session: { reloadSession: vi.fn(() => new Promise<never>(() => {})) },
+    })
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getAllByRole('button', { name: '5 分钟后可同步' })).toHaveLength(2)
+
+      visibility.mockReturnValue('hidden')
+      fireEvent(document, new Event('visibilitychange'))
+      onRender.mockClear()
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+      expect(onRender).not.toHaveBeenCalled()
+      expect(screen.getAllByRole('button', { name: '5 分钟后可同步' })).toHaveLength(2)
+
+      visibility.mockReturnValue('visible')
+      fireEvent(document, new Event('visibilitychange'))
+      expect(screen.getAllByRole('button', { name: '3 分钟后可同步' })).toHaveLength(2)
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+      expect(screen.getAllByRole('button', { name: '2 分钟后可同步' })).toHaveLength(2)
+
+      visibility.mockReturnValue('hidden')
+      fireEvent(document, new Event('visibilitychange'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+      visibility.mockReturnValue('visible')
+      fireEvent(document, new Event('visibilitychange'))
+      expect(screen.getByRole('button', { name: '同步' })).toBeEnabled()
+      expect(screen.queryByRole('button', { name: /分钟后可同步/ })).not.toBeInTheDocument()
+    } finally {
+      view.unmount()
+      visibility.mockRestore()
+    }
   })
 
   it('uses the list-owned external manual quota while keeping personal refresh independent', async () => {
