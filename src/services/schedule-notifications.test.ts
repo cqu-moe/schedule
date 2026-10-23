@@ -173,6 +173,8 @@ describe("renderScheduleChangeEmail", () => {
     expect(result.html).toContain("数学 &lt;实验&gt;");
     expect(result.html).not.toContain("数学 <实验>");
     expect(result.html).toContain("CQU Schedule");
+    expect(result.html).toContain("https://schedule.cqu.moe/brand/icon-192.png");
+    expect(result.text).toContain("系统通知，请勿回复。");
     expect(result.html).toContain('scope="col"');
     expect(result.html).toContain('lang="zh-CN" dir="ltr"');
     expect(result.html).not.toContain("var(--");

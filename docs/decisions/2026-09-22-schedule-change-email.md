@@ -2,6 +2,12 @@
 
 采用用户在2026年9月22日选定的「变化直读」版式，并与CQU Schedule网站保持一致：system-ui字体栈、细边框圆角卡片、黑白主按钮、灰色辅助文字。保留完整日期、课程/考试分区、新增与取消次数。
 
+## 2026-10-24 身份与版式统一
+
+邮件业务归属为 Schedule，即使由 Auth 消费队列并代发，也固定使用 `CQU Schedule <noreply@schedule.cqu.moe>` 和域名受限的 `SCHEDULE_RESEND_API_KEY`。正文使用当前 Schedule 图标，32px 品牌头、16px 正文和13px辅助文字，简化外框、按钮和间距；不改变本页已确认的“变化直读”结构与日期规则。HTML 与纯文本都说明系统邮件不接收回复。
+
+`frontend/public/brand/bimi.svg` 是现有标志的 SVG Tiny-PS 版本；上线后供 `default._bimi.schedule.cqu.moe` 的标准头像声明引用。声明本身不保证所有收件箱展示，不要求逐客户端验收。
+
 ## 内容规则
 
 - 改动按真实字段列为「原安排 → 调整后」，未变信息只显示一次。不能通过拆分描述字符串猜测教室、教师或实验字段。
