@@ -164,6 +164,25 @@ const render = (oldCourses: ReturnType<typeof course>[], newCourses: ReturnType<
 ), now);
 
 describe("renderScheduleChangeEmail", () => {
+  it("starts the inbox preview with the course and changes, then separates it from the body", () => {
+    const original = course({ name: "Co-op训练简介", position: "虎溪校区", day_of_week: 5, start_session: 3, end_session: 4, weeks: [8, 9, 10, 11, 12] });
+    const result = render([original], [{ ...original, start_session: 5, end_session: 6, room: "A102" }]);
+    const preheader = result.html.match(/<body\b[^>]*>\s*<div\b[^>]*>(.*?)<\/div>/s)?.[1] ?? "";
+
+    expect(preheader).toMatch(/^Co-op训练简介：改时间、换教室。打开邮件查看具体安排。/);
+    expect(preheader).not.toContain("2026年");
+    expect(preheader).toMatch(/(?:&#847;|&zwnj;|&nbsp;){150,}$/);
+  });
+
+  it("limits long inbox previews without splitting Unicode characters", () => {
+    const original = course({ name: "🎓".repeat(100) });
+    const result = render([original], [{ ...original, room: "A102" }]);
+    const preheader = result.html.match(/<body\b[^>]*>\s*<div\b[^>]*>(.*?)<\/div>/s)?.[1] ?? "";
+
+    expect(preheader).toMatch(new RegExp(`^${"🎓".repeat(89)}…&`));
+    expect(result.text).toContain(original.name);
+  });
+
   it("compares changed fields without repeating unchanged context or parsing teacher separators", () => {
     const original = course({ name: "数学 <实验>", position: "虎溪校区", lecturer: "张 · 老师" });
     const result = render([original], [{ ...original, room: "A102" }]);
@@ -171,6 +190,7 @@ describe("renderScheduleChangeEmail", () => {
     expect(result.text).not.toContain("老师：张 · 老师 →");
     expect(result.html.split("张 · 老师")).toHaveLength(2);
     expect(result.html).toContain("数学 &lt;实验&gt;");
+    expect(result.html).toContain("数学 &lt;实验&gt;：换教室。打开邮件查看具体安排。");
     expect(result.html).not.toContain("数学 <实验>");
     expect(result.html).toContain("CQU Schedule");
     expect(result.html).toContain("https://schedule.cqu.moe/brand/icon-192.png");
@@ -217,6 +237,7 @@ describe("renderScheduleChangeEmail", () => {
     expect(result.text).toContain("9月8日（周二）");
     expect(result.text).toContain("9月12日（周六）");
     expect(result.text).not.toContain("整门");
+    expect(result.html).toContain("英语：取消1次课；程序设计：新增1次课。打开邮件查看具体安排。");
   });
 
   it("shows exam room and seat changes while preserving teacher-only course changes", () => {
@@ -225,6 +246,7 @@ describe("renderScheduleChangeEmail", () => {
     expect(result.text).toContain("考场：D1137 → D1237");
     expect(result.text).toContain("座位：18号 → 20号");
     expect(result.html).toContain("考试");
+    expect(result.html).toContain("高等数学：换老师；大学物理（考试）：换考场、改座位。打开邮件查看具体安排。");
   });
 
   it("retains the years on cross-year exam moves and handles empty diffs", () => {
