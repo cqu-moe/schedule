@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -70,6 +70,7 @@ const CALENDAR_BUTTON_HINTS = {
 const CALENDAR_SLOT_LABEL_FORMAT = { hour: '2-digit', minute: '2-digit', hour12: false } as const
 const CALENDAR_EVENT_TIME_FORMAT = { hour: '2-digit', minute: '2-digit', hour12: false } as const
 const CALENDAR_TIME_ZONE = 'Asia/Chongqing'
+const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000
 const eventDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit',
   day: '2-digit',
@@ -134,6 +135,8 @@ export default function Calendar() {
   const courseColors = useRef(new Map<string, string>())
   const calendarApiRef = useRef<CalendarApi | null>(null)
   const activeEventElRef = useRef<HTMLElement | null>(null)
+  const calendarContainerRef = useRef<HTMLDivElement | null>(null)
+  const refreshAnimationRef = useRef<Animation | null>(null)
 
   function getCourseColor(name: string): string {
     const existing = courseColors.current.get(name)
@@ -147,25 +150,59 @@ export default function Calendar() {
 
   useEffect(() => {
     let cancelled = false
+    let pending = false
+    let lastRequestAt = 0
+    let currentContent = ''
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
     setLoading(true)
     setError(null)
-    void (async () => {
+
+    function checkForUpdates() {
+      clearTimeout(refreshTimer)
+      if (cancelled || pending || document.visibilityState !== 'visible' || !navigator.onLine) return
+      const remaining = REFRESH_INTERVAL_MS - (Date.now() - lastRequestAt)
+      if (remaining > 0) refreshTimer = setTimeout(checkForUpdates, remaining)
+      else void load(true)
+    }
+
+    async function load(background = false) {
+      pending = true
+      lastRequestAt = Date.now()
       try {
         const data = await api.getViewData(token)
         if (cancelled) return
-        setSemester(data.semester)
-        setSemesterStart(data.semester_start ?? '')
-        setEvents(
-          data.events.map((event) =>
-            toCalendarEvent(
-              event,
-              event.type === 'exam' ? 'var(--destructive)' : getCourseColor(event.name),
+        // generated_at changes on every response, even when the schedule is identical.
+        const content = JSON.stringify([data.semester, data.semester_start, data.events])
+        if (content !== currentContent) {
+          if (currentContent && document.visibilityState === 'visible' &&
+            !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            refreshAnimationRef.current = calendarContainerRef.current?.animate?.(
+              [{ opacity: 1 }, { opacity: 0 }],
+              { duration: 100, easing: 'ease-out', fill: 'forwards' },
+            ) ?? null
+            await refreshAnimationRef.current?.finished.catch(() => {})
+            if (cancelled) return
+          }
+          currentContent = content
+          setSemester(data.semester)
+          setSemesterStart(data.semester_start ?? '')
+          semesterStartRef.current = data.semester_start ?? ''
+          if (calendarApiRef.current) {
+            setCurrentWeek(getSemesterWeek(calendarApiRef.current.getDate(), semesterStartRef.current))
+          }
+          setEvents(
+            data.events.map((event) =>
+              toCalendarEvent(
+                event,
+                event.type === 'exam' ? 'var(--destructive)' : getCourseColor(event.name),
+              ),
             ),
-          ),
-        )
+          )
+        }
+        setError(null)
         captureScheduleEvent('schedule_action_finished', {
           actor_type: 'user',
-          trigger: 'user',
+          trigger: background ? 'automatic' : 'user',
           operation: 'view_calendar',
           outcome: 'success',
           format: 'web',
@@ -174,6 +211,12 @@ export default function Calendar() {
         if (cancelled) return
         const code = apiErrorCode(cause)
         const status = (cause as { response?: { status?: number } })?.response?.status
+        if (code === 'FORMAT_NOT_ALLOWED' || code === 'NOT_FOUND' || status === 403 || status === 404) {
+          currentContent = ''
+          setEvents([])
+          setShowDetail(false)
+          setSelectedEvent(null)
+        }
         if (code === 'FORMAT_NOT_ALLOWED') {
           setError({ state: 'forbidden', message: '该分享链接未开启网页查看' })
         } else if (status === 403) {
@@ -183,25 +226,52 @@ export default function Calendar() {
           status === 404
         ) {
           setError({ state: 'not-found', message: '链接不存在或已失效' })
-        } else {
+        } else if (!background || !currentContent) {
           setError({ state: 'error', message: parseApiError(cause, '加载课表数据失败') })
         }
         captureScheduleEvent('schedule_action_finished', {
           actor_type: 'user',
-          trigger: 'user',
+          trigger: background ? 'automatic' : 'user',
           operation: 'view_calendar',
           outcome: 'failure',
           format: 'web',
           ...(code ? { error_code: code } : {}),
         })
       } finally {
-        if (!cancelled) setLoading(false)
+        pending = false
+        if (!cancelled) {
+          setLoading(false)
+          checkForUpdates()
+        }
       }
-    })()
+    }
+
+    void load()
+    document.addEventListener('visibilitychange', checkForUpdates)
+    window.addEventListener('pageshow', checkForUpdates)
+    window.addEventListener('online', checkForUpdates)
     return () => {
       cancelled = true
+      clearTimeout(refreshTimer)
+      document.removeEventListener('visibilitychange', checkForUpdates)
+      window.removeEventListener('pageshow', checkForUpdates)
+      window.removeEventListener('online', checkForUpdates)
+      refreshAnimationRef.current?.cancel()
+      refreshAnimationRef.current = null
     }
   }, [token, reloadNonce])
+
+  useLayoutEffect(() => {
+    if (!refreshAnimationRef.current) return
+    refreshAnimationRef.current.cancel()
+    refreshAnimationRef.current = null
+    if (document.visibilityState === 'visible' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      calendarContainerRef.current?.animate?.(
+        [{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' },
+      )
+    }
+  }, [events])
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 767px)')
@@ -330,7 +400,7 @@ export default function Calendar() {
           }
         />
       ) : (
-        <div className="cal-calendar">
+        <div className="cal-calendar" ref={calendarContainerRef}>
           {events.length === 0 && (
             <div className="cal-empty">
               <PageState
