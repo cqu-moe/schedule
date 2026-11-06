@@ -117,3 +117,5 @@ PR 标签 `e2e-release-browsers` 追加 Firefox/WebKit × desktop/mobile × roun
 依赖使用 setup-node 的 npm/pnpm 包存储缓存，不缓存浏览器、node_modules、运行时状态或测试证据。每次准备只安装所选浏览器，固定 Auth pin、真实前端构建与 Docker 基础镜像构建仍执行。
 
 release 的原始 runner/control 与观察 contract 输出仍写私有目录；上传仅包含各片独占 `run-release-*` 和六负控 `release-controls-ci-*` 中的已验证产物，不匹配 `private-*`、profile、证书或原始外层日志。入口接线不等于完整矩阵验收；发布前仍需检查全部分片和两轮证据。
+
+<!-- Final documentation-only CI routing probe. -->
