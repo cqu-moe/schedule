@@ -18,8 +18,8 @@ assert.ok(['chromium', 'firefox', 'webkit'].includes(browser), 'Unknown E2E brow
 const variants = viewport === 'all' ? ['desktop', 'mobile'] : [viewport];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 2) {
-  assert.ok(['--grep', '--grep-invert'].includes(args[index]) && args[index + 1],
-    'This required gate accepts title filters only; browser visibility, retries and zero-test overrides are forbidden');
+  assert.ok(['--grep', '--grep-invert', '--shard'].includes(args[index]) && args[index + 1],
+    'This required gate accepts title filters and shards only; browser visibility, retries and zero-test overrides are forbidden');
 }
 const dependency = JSON.parse(await readFile(join(root, 'e2e/auth-dependency.json'), 'utf8'));
 await mkdir(resolve('.e2e'), { recursive: true });

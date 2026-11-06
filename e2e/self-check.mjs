@@ -18,7 +18,7 @@ async function rejected(name, args, environment, validate) {
   assert.equal(report.status, 'failed');
   await validate(report, output);
 }
-await rejected('empty', ['--grep', '^intentionally-no-such-journey$'], {}, report => {
+await rejected('empty', ['--grep', '^intentionally-no-such-journey$', '--shard', '1/4'], {}, report => {
   assert.deepEqual(report.expectedIds, []);
   assert.deepEqual(report.executedIds, []);
   assert.deepEqual(report.groups, []);

@@ -7,37 +7,82 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: frontend-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   frontend:
-    name: Build, design rules, and tests
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: Frontend build, design and unit tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-frontend
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Check design rules
+        run: pnpm check:design
+      - name: Test
+        run: pnpm test
+
+  layout:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: Chromium overlay layout
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+          cache: npm
+      - uses: ./.github/actions/setup-frontend
       - name: Install dependencies
-        run: npx --yes pnpm@11.19.0 install --frozen-lockfile
-      - name: Build
-        run: npx --yes pnpm@11.19.0 build
-      - name: Check design rules
-        run: npx --yes pnpm@11.19.0 check:design
-      - name: Test
-        run: npx --yes pnpm@11.19.0 test
-      - name: Install browser test dependencies
-        working-directory: .
         run: |
+          pnpm --dir frontend install --frozen-lockfile
           npm ci --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
       - name: Check overlay layout in Chromium
-        working-directory: .
         run: npm run test:frontend:layout
+
+  required:
+    # Keep the existing required check present on docs-only PRs, and fail closed.
+    name: Build, design rules, and tests
+    if: always()
+    needs: [changes, frontend, layout]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every applicable check
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          FRONTEND: ${{ needs.frontend.result }}
+          LAYOUT: ${{ needs.layout.result }}
+        run: |
+          test "$CHANGES" = success
+          if [ "$CODE" = true ]; then
+            test "$FRONTEND" = success
+            test "$LAYOUT" = success
+          else
+            test "$CODE" = false
+            test "$FRONTEND" = skipped
+            test "$LAYOUT" = skipped
+          fi

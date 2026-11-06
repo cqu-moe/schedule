@@ -28,5 +28,7 @@ command('npm', ['run', 'build'], join(auth, 'frontend'));
 command(process.execPath, ['e2e/school/build.mjs'], auth);
 command('npx', ['--yes', 'pnpm@11.19.0', 'install', '--frozen-lockfile'], join(root, 'frontend'));
 command('npx', ['--yes', 'pnpm@11.19.0', 'run', 'build'], join(root, 'frontend'));
-command(process.execPath, ['node_modules/playwright-core/cli.js', 'install', 'chromium']);
+const browser = process.env.SCHEDULE_E2E_BROWSER || 'chromium';
+assert.ok(['chromium', 'firefox', 'webkit'].includes(browser), 'Unknown E2E browser');
+command(process.execPath, ['node_modules/playwright-core/cli.js', 'install', browser]);
 console.log(`Built real Schedule and Auth ${pin.commit}; no service has been deployed.`);

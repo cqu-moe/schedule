@@ -1,0 +1,16 @@
+name: Set up frontend dependencies
+description: Install the pinned pnpm and restore its package store, not node_modules or browsers.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      with:
+        version: 11.19.0
+        run_install: false
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+        cache: pnpm
+        cache-dependency-path: |
+          frontend/pnpm-lock.yaml
+          e2e/auth-dependency.json
