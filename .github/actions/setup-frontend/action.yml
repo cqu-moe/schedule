@@ -1,5 +1,9 @@
 name: Set up frontend dependencies
 description: Install the pinned pnpm and restore its package store, not node_modules or browsers.
+inputs:
+  cache-dependency-path:
+    description: Inputs defining the package store used by this job
+    default: frontend/pnpm-lock.yaml
 runs:
   using: composite
   steps:
@@ -11,6 +15,4 @@ runs:
       with:
         node-version: '22'
         cache: pnpm
-        cache-dependency-path: |
-          frontend/pnpm-lock.yaml
-          e2e/auth-dependency.json
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}

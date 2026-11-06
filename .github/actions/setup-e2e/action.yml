@@ -15,6 +15,12 @@ runs:
           package-lock.json
           e2e/auth-dependency.json
     - uses: ./.github/actions/setup-frontend
+      with:
+        # A frontend-only job must not win the immutable cache key before Auth is installed.
+        cache-dependency-path: |
+          frontend/pnpm-lock.yaml
+          e2e/auth-dependency.json
+          e2e/prepare.mjs
     - run: npm ci
       shell: bash
     - name: Install browser system dependencies
