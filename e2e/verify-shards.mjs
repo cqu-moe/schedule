@@ -14,7 +14,7 @@ for (const browser of browsers) for (const round of ['1', '2']) for (const viewp
 let fingerprint;
 for (const artifact of await readdir(root)) {
   const normal = /^schedule-e2e-.+-round-([12])-(desktop|mobile)-shard-([1-4])$/.exec(artifact);
-  const release = /^schedule-release-.+-\d+-\d+-round-([12])-(firefox|webkit)-(desktop|mobile)-shard-([1-4])$/.exec(artifact);
+  const release = /^schedule-release-.+-round-([12])-(firefox|webkit)-(desktop|mobile)-shard-([1-4])$/.exec(artifact);
   assert.ok(normal || release, `Unexpected artifact: ${artifact}`);
   const [, round, browser, viewport, shard] = normal
     ? [null, normal[1], 'chromium', normal[2], normal[3]] : release;

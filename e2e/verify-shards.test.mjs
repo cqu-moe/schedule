@@ -34,7 +34,7 @@ for (const [name, damage, failure] of cases) test(name, async () => {
       for (const [index, selected] of selections.entries()) {
         const name = browser === 'chromium'
           ? `schedule-e2e-commit-round-${round}-${viewport}-shard-${index + 1}`
-          : `schedule-release-commit-123-1-round-${round}-${browser}-${viewport}-shard-${index + 1}`;
+          : `schedule-release-commit-round-${round}-${browser}-${viewport}-shard-${index + 1}`;
         const directory = join(root, name, 'run-fixture', viewport);
         await mkdir(directory, { recursive: true });
         await writeFile(join(directory, 'discovery.json'), JSON.stringify({ all, selected }));

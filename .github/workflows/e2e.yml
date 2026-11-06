@@ -47,6 +47,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-e2e
+        timeout-minutes: 5
       - name: Check types, backend tests and shard coverage once
         if: matrix.round == 1 && matrix.viewport == 'desktop' && matrix.shard == 1
         run: npm run typecheck && npm run typecheck:e2e && npm test && node --test e2e/verify-shards.test.mjs
@@ -103,6 +104,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-e2e
+        timeout-minutes: 5
         with:
           browser: ${{ matrix.browser }}
       - name: Check required school-event observation ordering
@@ -151,7 +153,8 @@ jobs:
         if: always() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: schedule-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-round-${{ matrix.round }}-${{ matrix.browser }}-${{ matrix.viewport }}-shard-${{ matrix.shard }}
+          # download-artifact selects the latest same-named artifact after a partial rerun.
+          name: schedule-release-${{ github.sha }}-round-${{ matrix.round }}-${{ matrix.browser }}-${{ matrix.viewport }}-shard-${{ matrix.shard }}
           path: |
             ${{ env.SCHEDULE_E2E_OUTPUT }}/**/*.json
             ${{ env.SCHEDULE_E2E_OUTPUT }}/**/*.md
@@ -181,6 +184,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-e2e
+        timeout-minutes: 5
       - name: Check required school-event observation ordering
         shell: bash
         run: |
