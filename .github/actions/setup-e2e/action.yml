@@ -26,4 +26,4 @@ runs:
       shell: bash
       env:
         SCHEDULE_E2E_BROWSER: ${{ inputs.browser }}
-      run: npm run e2e:prepare
+      run: node e2e/prepare.mjs

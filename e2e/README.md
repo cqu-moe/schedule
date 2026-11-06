@@ -15,7 +15,7 @@ npm run test:e2e:harness
 
 Linux 还需 `node node_modules/playwright-core/cli.js install-deps chromium`。准备命令从 [固定提交](auth-dependency.json) 安装、构建 Auth，构建学校浏览器基础镜像与 Schedule 前端，下载 Chromium；不会部署。已有依赖 checkout 必须干净且精确匹配 pin，脚本不会重置别人的修改。
 
-开发定位可用 `SCHEDULE_E2E_MOBILE=1 npm run test:e2e -- --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
+开发定位可用 `SCHEDULE_E2E_MOBILE=1 npm run test:e2e -- --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert` / `--shard index/total` / `--ci-shard 1..4`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
 
 ## 个人课表验收旅程
 
@@ -108,7 +108,7 @@ Firefox沿用HTTP；WebKit通过原临时loopback证书代理保留产品Secure 
 
 旧a21首轮或旧CI失败仍按原指纹保留，不计入组合源码验收。两个fresh完整轮次须在相同冻结组合源码执行；经独立复审的隔离分支、明确不部署的Linux CI可以承担这两轮，不能把入口接线、局部回归或smoke称为完整release通过。
 
-`.github/workflows/e2e.yml` 保留 Chromium × desktop/mobile × round1/2，每个组合通过框架原生 `--shard 1/4` 至 `4/4` 分给四台 Ubuntu runner。各片仍逐条创建和清理真实 runtime，零选择、漏执行、重试或清理失败均非零；`sharding.test.mjs` 用真实发现结果确认分片不重不漏。后端类型检查、单测、观察顺序 contract 以及 Chromium harness 负控各执行一次，不随矩阵重复。
+`.github/workflows/e2e.yml` 保留 Chromium × desktop/mobile × round1/2，每个组合通过 `--ci-shard 1..4` 分给四台 Ubuntu runner：实测约五分钟的 personal failures 旅程独占第四片，其余旅程使用框架原生三分片。各片仍逐条创建和清理真实 runtime，零选择、漏执行、重试或清理失败均非零；矩阵结束后用每片真实的发现、选择、执行与源码指纹证据确认全部浏览器/视口/轮次不重不漏。后端类型检查、单测、观察顺序 contract 以及 Chromium harness 负控各执行一次，不随矩阵重复。
 
 PR 标签 `e2e-release-browsers` 追加 Firefox/WebKit × desktop/mobile × round1/2，同样分四片；首轮 Firefox desktop 第一片保留真实六负控。添加此标签重新执行当前 PR 的完整矩阵；无关标签不取消正在执行的门禁。手动 `workflow_dispatch` 的 `release_web=true` 只选择 Firefox/WebKit，false 选择 Chromium。
 

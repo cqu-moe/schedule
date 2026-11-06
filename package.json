@@ -8,7 +8,7 @@
     "deploy:secrets": "op read op://Development/schedule-cloudflare/CLIENT_ID | wrangler secret put CALENDAR_CLIENT_ID && op read op://Development/schedule-cloudflare/CLIENT_SECRET | wrangler secret put CALENDAR_CLIENT_SECRET",
     "dev": "wrangler dev",
     "dev:frontend": "cd frontend && npx -y pnpm@11.19.0 run dev",
-    "build:frontend": "cd frontend && npx -y pnpm@11.19.0 install --frozen-lockfile && VITE_POSTHOG_HOST=https://p.cqu.moe VITE_RELEASE=${VITE_RELEASE:-$(git rev-parse --short HEAD)} npx -y pnpm@11.19.0 run build",
+    "build:frontend": "VITE_POSTHOG_HOST=https://p.cqu.moe VITE_RELEASE=${VITE_RELEASE:-$(git rev-parse --short HEAD)} npx --yes --package pnpm@11.19.0 --call 'pnpm --dir frontend install --frozen-lockfile && pnpm --dir frontend run build'",
     "deploy": "npm run build:frontend && npm run db:migrate:remote && wrangler deploy --var GIT_COMMIT:$(git rev-parse --short HEAD) --var GIT_DATE:$(git log -1 --format=%cd --date=short)",
     "test": "vitest run",
     "test:frontend": "cd frontend && npx -y pnpm@11.19.0 run test",
@@ -18,7 +18,7 @@
     "db:migrate:local": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply schedule-beta-cqu-moe-db --remote",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
-    "e2e:prepare": "node e2e/prepare.mjs",
+    "e2e:prepare": "npx --yes --package pnpm@11.19.0 -- node e2e/prepare.mjs",
     "test:e2e": "npm run typecheck:e2e && node e2e/run.mjs",
     "test:e2e:harness": "node e2e/self-check.mjs"
   },

@@ -17,6 +17,14 @@ const browser = process.env.SCHEDULE_E2E_BROWSER || 'chromium';
 assert.ok(['chromium', 'firefox', 'webkit'].includes(browser), 'Unknown E2E browser');
 const variants = viewport === 'all' ? ['desktop', 'mobile'] : [viewport];
 const args = process.argv.slice(2);
+if (args[0] === '--ci-shard') {
+  const shard = args[1];
+  assert.ok(args.length === 2 && ['1', '2', '3', '4'].includes(shard), 'Expected CI shard 1..4');
+  // This measured five-minute journey gets its own runner; partition the rest natively.
+  const slow = '^lifecycle personal failures:';
+  args.splice(0, args.length, ...(shard === '4' ? ['--grep', slow]
+    : ['--grep-invert', slow, '--shard', `${shard}/3`]));
+}
 for (let index = 0; index < args.length; index += 2) {
   assert.ok(['--grep', '--grep-invert', '--shard'].includes(args[index]) && args[index + 1],
     'This required gate accepts title filters and shards only; browser visibility, retries and zero-test overrides are forbidden');

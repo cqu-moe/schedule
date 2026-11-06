@@ -26,24 +26,6 @@ jobs:
   changes:
     uses: ./.github/workflows/ci-changes.yml
 
-  checks:
-    needs: changes
-    if: needs.changes.outputs.code == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers')
-    name: Backend types, unit tests and E2E contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck && npm run typecheck:e2e && npm test
-      - run: node --test e2e/sharding.test.mjs
-
   application:
     needs: changes
     if: needs.changes.outputs.code == 'true' && (github.event_name != 'workflow_dispatch' || !inputs.release_web) && (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers')
@@ -53,9 +35,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        shard: [4, 1, 3, 2]
         round: [1, 2]
         viewport: [desktop, mobile]
-        shard: [1, 2, 3, 4]
     env:
       WRANGLER_SEND_METRICS: 'false'
       DO_NOT_TRACK: '1'
@@ -65,8 +47,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-e2e
+      - name: Check types, backend tests and shard coverage once
+        if: matrix.round == 1 && matrix.viewport == 'desktop' && matrix.shard == 1
+        run: npm run typecheck && npm run typecheck:e2e && npm test && node --test e2e/verify-shards.test.mjs
       - name: Run isolated journeys in this shard
-        run: node e2e/run.mjs --shard ${{ matrix.shard }}/4
+        run: node e2e/run.mjs --ci-shard ${{ matrix.shard }}
       - name: Upload sanitized reports and readback images
         if: always() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -101,9 +86,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        shard: [4, 1, 3, 2]
         browser: [firefox, webkit]
         viewport: [desktop, mobile]
-        shard: [1, 2, 3, 4]
         round: [1, 2]
     env:
       WRANGLER_SEND_METRICS: 'false'
@@ -133,6 +118,9 @@ jobs:
           set -e
           printf 'Schedule observer contracts exited %d; raw output retained privately.\n' "$status"
           exit "$status"
+      - name: Check release-only types and shard coverage once
+        if: github.event_name == 'workflow_dispatch' && matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop' && matrix.shard == 1
+        run: npm run typecheck:e2e && node --test e2e/verify-shards.test.mjs
       - name: Install the second engine for the six controls
         if: matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop' && matrix.shard == 1
         run: node node_modules/playwright-core/cli.js install --with-deps webkit
@@ -154,7 +142,7 @@ jobs:
           umask 077
           private_directory="$(mktemp -d "$PWD/.e2e/private-ci-cell-XXXXXX")"
           set +e
-          node e2e/run.mjs --shard ${{ matrix.shard }}/4 > "$private_directory/runner.log" 2>&1
+          node e2e/run.mjs --ci-shard ${{ matrix.shard }} > "$private_directory/runner.log" 2>&1
           status=$?
           set -e
           printf 'Schedule release cell exited %d; raw output retained privately.\n' "$status"
@@ -219,3 +207,54 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+
+  coverage:
+    name: Complete E2E matrix coverage
+    needs: [changes, application, release-web, harness]
+    if: always() && needs.changes.outputs.code == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NORMAL: ${{ github.event_name != 'workflow_dispatch' || !inputs.release_web }}
+      RELEASE: ${{ (github.event_name == 'workflow_dispatch' && inputs.release_web) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-release-browsers')) }}
+    steps:
+      - name: Require every selected matrix and control
+        env:
+          APPLICATION: ${{ needs.application.result }}
+          RELEASE_WEB: ${{ needs.release-web.result }}
+          HARNESS: ${{ needs.harness.result }}
+        run: |
+          if [ "$NORMAL" = true ]; then
+            test "$APPLICATION" = success
+            test "$HARNESS" = success
+          else
+            test "$APPLICATION" = skipped
+            test "$HARNESS" = skipped
+          fi
+          if [ "$RELEASE" = true ]; then
+            test "$RELEASE_WEB" = success
+          else
+            test "$RELEASE_WEB" = skipped
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: env.NORMAL == 'true'
+        with:
+          pattern: schedule-e2e-*
+          path: .e2e/ci-artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: env.RELEASE == 'true'
+        with:
+          pattern: schedule-release-*
+          path: .e2e/ci-artifacts
+      - name: Verify exact-once execution from actual shard evidence
+        run: |
+          browsers=''
+          if [ "$NORMAL" = true ]; then browsers=chromium; fi
+          if [ "$RELEASE" = true ]; then browsers="${browsers:+$browsers,}firefox,webkit"; fi
+          node e2e/verify-shards.mjs .e2e/ci-artifacts "$browsers"
