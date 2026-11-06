@@ -27,7 +27,10 @@ runs:
       shell: bash
       env:
         BROWSER: ${{ inputs.browser }}
-      run: node node_modules/playwright-core/cli.js install-deps "$BROWSER"
+      run: |
+        # Azure downloads stalled; keep the runner's existing Ubuntu archive fallbacks.
+        sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+        node node_modules/playwright-core/cli.js install-deps "$BROWSER"
     - name: Build real applications and install browser
       shell: bash
       env:

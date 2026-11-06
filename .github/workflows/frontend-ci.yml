@@ -56,6 +56,7 @@ jobs:
         timeout-minutes: 5
         working-directory: .
         run: |
+          sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           npm ci --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
       - name: Check overlay layout in Chromium
