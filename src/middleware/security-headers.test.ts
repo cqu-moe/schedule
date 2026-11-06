@@ -25,15 +25,14 @@ describe("addSecurityHeaders", () => {
     expect(await result.text()).toBe('{"ok":true}');
   });
 
-  it("CSP allows required external resources", () => {
+  it("CSP restricts scripts to self while allowing bundled telemetry to connect", () => {
     const result = addSecurityHeaders(new Response(""));
     const csp = result.headers.get("Content-Security-Policy")!;
 
-    // Cloudflare Analytics
-    expect(csp).toContain("https://static.cloudflareinsights.com");
-    expect(csp).toContain("https://cloudflareinsights.com");
-    expect(csp).toContain("script-src 'self' https://static.cloudflareinsights.com https://p.cqu.moe");
-    expect(csp).toContain("connect-src 'self' https://cloudflareinsights.com https://p.cqu.moe");
+    const directives = csp.split("; ");
+    expect(directives.find(value => value.startsWith("script-src "))).toBe("script-src 'self'");
+    expect(directives.find(value => value.startsWith("connect-src "))).toBe("connect-src 'self' https://p.cqu.moe");
+    expect(csp).not.toContain("cloudflareinsights.com");
     expect(csp).not.toContain("posthog.com");
     // font data: URLs (FullCalendar fcicons)
     expect(csp).toContain("font-src 'self' data:");
