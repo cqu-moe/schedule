@@ -23,10 +23,12 @@ assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: auth, encoding: '
   'Existing Auth dependency must match the pin; preserve other checkouts instead of resetting them');
 assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: auth, encoding: 'utf8' }).trim(), '');
 command('npm', ['ci'], auth);
-command('npx', ['--yes', 'pnpm@11.19.0', 'install', '--frozen-lockfile'], join(auth, 'frontend'));
+command('pnpm', ['install', '--frozen-lockfile'], join(auth, 'frontend'));
 command('npm', ['run', 'build'], join(auth, 'frontend'));
 command(process.execPath, ['e2e/school/build.mjs'], auth);
-command('npx', ['--yes', 'pnpm@11.19.0', 'install', '--frozen-lockfile'], join(root, 'frontend'));
-command('npx', ['--yes', 'pnpm@11.19.0', 'run', 'build'], join(root, 'frontend'));
-command(process.execPath, ['node_modules/playwright-core/cli.js', 'install', 'chromium']);
+command('pnpm', ['install', '--frozen-lockfile'], join(root, 'frontend'));
+command('pnpm', ['run', 'build'], join(root, 'frontend'));
+const browser = process.env.SCHEDULE_E2E_BROWSER || 'chromium';
+assert.ok(['chromium', 'firefox', 'webkit'].includes(browser), 'Unknown E2E browser');
+command(process.execPath, ['node_modules/playwright-core/cli.js', 'install', browser]);
 console.log(`Built real Schedule and Auth ${pin.commit}; no service has been deployed.`);

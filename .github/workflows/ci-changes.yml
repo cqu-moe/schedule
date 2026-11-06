@@ -1,0 +1,26 @@
+name: CI path filter
+
+on:
+  workflow_call:
+    outputs:
+      code:
+        value: ${{ jobs.changes.outputs.code }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.code == 'true' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        if: github.event_name != 'workflow_dispatch'
+        id: paths
+        with:
+          base: ${{ github.ref }}
+          predicate-quantifier: every
+          filters: .github/ci-paths.yml

@@ -15,7 +15,7 @@ npm run test:e2e:harness
 
 Linux 还需 `node node_modules/playwright-core/cli.js install-deps chromium`。准备命令从 [固定提交](auth-dependency.json) 安装、构建 Auth，构建学校浏览器基础镜像与 Schedule 前端，下载 Chromium；不会部署。已有依赖 checkout 必须干净且精确匹配 pin，脚本不会重置别人的修改。
 
-开发定位可用 `SCHEDULE_E2E_MOBILE=1 npm run test:e2e -- --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
+开发定位可用 `SCHEDULE_E2E_MOBILE=1 npm run test:e2e -- --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert` / `--shard index/total` / `--ci-shard 1..4`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
 
 ## 个人课表验收旅程
 
@@ -108,8 +108,12 @@ Firefox沿用HTTP；WebKit通过原临时loopback证书代理保留产品Secure 
 
 旧a21首轮或旧CI失败仍按原指纹保留，不计入组合源码验收。两个fresh完整轮次须在相同冻结组合源码执行；经独立复审的隔离分支、明确不部署的Linux CI可以承担这两轮，不能把入口接线、局部回归或smoke称为完整release通过。
 
-`.github/workflows/e2e.yml` 的premerge完整浏览器入口是PR opt-in标签 `e2e-release-browsers`：父给PR添加该标签时执行FF/WK；保留标签后的synchronize/reopened也验证新候选。普通无标签PR仍只跑原Chromium round1/2×desktop/mobile矩阵；无关标签不额外启动浏览器组。labeled事件使用独立concurrency key，跳过的路由job也使用独立check名称，不取消或覆盖必需Chromium检查。默认PR的首轮desktop额外运行一次 `node --experimental-strip-types --test e2e/lifecycle-wait.test.mjs` 观察顺序contract，其他原步骤/矩阵/40分钟预算不变。
+`.github/workflows/e2e.yml` 保留 Chromium × desktop/mobile × round1/2，每个组合通过 `--ci-shard 1..4` 分给四台 Ubuntu runner：实测约五分钟的 personal failures 旅程独占第四片，其余旅程使用框架原生三分片。各片仍逐条创建和清理真实 runtime，零选择、漏执行、重试或清理失败均非零；矩阵结束后用每片真实的发现、选择、执行与源码指纹证据确认全部浏览器/视口/轮次不重不漏。后端类型检查、单测、观察顺序 contract 以及 Chromium harness 负控各执行一次，不随矩阵重复。
 
-默认分支存在该workflow及dispatch入口后，也可手动 `workflow_dispatch` 设置布尔 `release_web=true`（false运行原Chromium矩阵）；手动run独立concurrency key。release矩阵为Firefox/WebKit × desktop/mobile × round1/2，共8个fresh job、每job原31条、每轮124个原始attempt，每job仍40分钟、安装所选引擎及系统依赖。仅首轮Firefox desktop运行一次观察顺序contract，额外安装WebKit，并执行 `node e2e/release-web.mjs --self-check` 实际六负控。PR标签入口不依赖workflow先合入默认分支，不能把缺少默认入口时的手动命令当成premerge路径。
+PR 标签 `e2e-release-browsers` 追加 Firefox/WebKit × desktop/mobile × round1/2，同样分四片；首轮 Firefox desktop 第一片保留真实六负控。添加此标签重新执行当前 PR 的完整矩阵；无关标签不取消正在执行的门禁。手动 `workflow_dispatch` 的 `release_web=true` 只选择 Firefox/WebKit，false 选择 Chromium。
 
-release的原始runner/control及观察contract输出只写私有0700目录内的0600日志，console只输出固定exit状态。上传allowlist仅包含该cell的独占 `run-release-*` 和六负控的独占 `release-controls-ci-*` 中的已验证JSON/trace/readback图片/runner.log；不匹配 `private-*`、profile、证书或原始外层日志。接线不表示已执行：父复审、最终组合源码hash（含workflow及父的三个observer文件）及8份实际artifact验收仍必要；不触发部署或tag。本票不添加标签、dispatch、提交或推送。
+同一 PR 新提交取消旧运行；main 和手动运行各有独立 concurrency group，不取消旧提交或挤掉待运行提交。只有 Markdown/docs 改动时跳过重任务；前端必需检查 `Build, design rules, and tests` 始终给出结果，并在路径判定或任一前端步骤失败时拒绝通过；路径判定直接在这个 job 内执行，避免额外汇总 job 再次排队。没有用 workflow 级 paths-ignore 留下永久 Pending 的必需检查。
+
+依赖使用 setup-node 的 npm/pnpm 包存储缓存，不缓存浏览器、node_modules、运行时状态或测试证据。每次准备只安装所选浏览器，固定 Auth pin、真实前端构建与 Docker 基础镜像构建仍执行。
+
+release 的原始 runner/control 与观察 contract 输出仍写私有目录；上传仅包含各片独占 `run-release-*` 和六负控 `release-controls-ci-*` 中的已验证产物，不匹配 `private-*`、profile、证书或原始外层日志。入口接线不等于完整矩阵验收；发布前仍需检查全部分片和两轮证据。

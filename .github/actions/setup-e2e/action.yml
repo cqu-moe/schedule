@@ -1,0 +1,38 @@
+name: Prepare application E2E
+description: Prepare the pinned real Auth and Schedule applications and the selected browser.
+inputs:
+  browser:
+    default: chromium
+    description: Playwright engine for this job
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          e2e/auth-dependency.json
+    - uses: ./.github/actions/setup-frontend
+      with:
+        # A frontend-only job must not win the immutable cache key before Auth is installed.
+        cache-dependency-path: |
+          frontend/pnpm-lock.yaml
+          e2e/auth-dependency.json
+          e2e/prepare.mjs
+    - run: npm ci
+      shell: bash
+    - name: Install browser system dependencies
+      shell: bash
+      env:
+        BROWSER: ${{ inputs.browser }}
+      run: |
+        # Azure downloads stalled; keep the runner's existing Ubuntu archive fallbacks.
+        sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+        node node_modules/playwright-core/cli.js install-deps "$BROWSER"
+    - name: Build real applications and install browser
+      shell: bash
+      env:
+        SCHEDULE_E2E_BROWSER: ${{ inputs.browser }}
+      run: node e2e/prepare.mjs

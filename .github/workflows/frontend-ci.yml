@@ -7,37 +7,59 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: frontend-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   frontend:
+    # Keep the required check on this job: a separate gate adds another runner queue.
     name: Build, design rules, and tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: changes
+        with:
+          base: ${{ github.ref }}
+          predicate-quantifier: every
+          filters: .github/ci-paths.yml
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: '22'
+          cache: npm
+      - uses: ./.github/actions/setup-frontend
+        if: steps.changes.outputs.code == 'true'
       - name: Install dependencies
-        run: npx --yes pnpm@11.19.0 install --frozen-lockfile
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
       - name: Build
-        run: npx --yes pnpm@11.19.0 build
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm build
       - name: Check design rules
-        run: npx --yes pnpm@11.19.0 check:design
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm check:design
       - name: Test
-        run: npx --yes pnpm@11.19.0 test
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm test
       - name: Install browser test dependencies
+        if: steps.changes.outputs.code == 'true'
+        timeout-minutes: 5
         working-directory: .
         run: |
+          sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           npm ci --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
       - name: Check overlay layout in Chromium
+        if: steps.changes.outputs.code == 'true'
         working-directory: .
         run: npm run test:frontend:layout
