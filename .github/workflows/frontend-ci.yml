@@ -14,13 +14,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  changes:
-    uses: ./.github/workflows/ci-changes.yml
-
   frontend:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    name: Frontend build, design and unit tests
+    # Keep the required check on this job: a separate gate adds another runner queue.
+    name: Build, design rules, and tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -30,59 +26,38 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-frontend
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build
-        run: pnpm build
-      - name: Check design rules
-        run: pnpm check:design
-      - name: Test
-        run: pnpm test
-
-  layout:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    name: Chromium overlay layout
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: changes
         with:
-          persist-credentials: false
+          base: ${{ github.ref }}
+          predicate-quantifier: every
+          filters: .github/ci-paths.yml
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.changes.outputs.code == 'true'
         with:
           node-version: '22'
           cache: npm
       - uses: ./.github/actions/setup-frontend
+        if: steps.changes.outputs.code == 'true'
       - name: Install dependencies
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm build
+      - name: Check design rules
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm check:design
+      - name: Test
+        if: steps.changes.outputs.code == 'true'
+        run: pnpm test
+      - name: Install browser test dependencies
+        if: steps.changes.outputs.code == 'true'
+        working-directory: .
         run: |
-          pnpm --dir frontend install --frozen-lockfile
           npm ci --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
       - name: Check overlay layout in Chromium
+        if: steps.changes.outputs.code == 'true'
+        working-directory: .
         run: npm run test:frontend:layout
-
-  required:
-    # Keep the existing required check present on docs-only PRs, and fail closed.
-    name: Build, design rules, and tests
-    if: ${{ !cancelled() }}
-    needs: [changes, frontend, layout]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require every applicable check
-        env:
-          CHANGES: ${{ needs.changes.result }}
-          CODE: ${{ needs.changes.outputs.code }}
-          FRONTEND: ${{ needs.frontend.result }}
-          LAYOUT: ${{ needs.layout.result }}
-        run: |
-          test "$CHANGES" = success
-          if [ "$CODE" = true ]; then
-            test "$FRONTEND" = success
-            test "$LAYOUT" = success
-          else
-            test "$CODE" = false
-            test "$FRONTEND" = skipped
-            test "$LAYOUT" = skipped
-          fi

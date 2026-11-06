@@ -112,7 +112,7 @@ Firefox沿用HTTP；WebKit通过原临时loopback证书代理保留产品Secure 
 
 PR 标签 `e2e-release-browsers` 追加 Firefox/WebKit × desktop/mobile × round1/2，同样分四片；首轮 Firefox desktop 第一片保留真实六负控。添加此标签重新执行当前 PR 的完整矩阵；无关标签不取消正在执行的门禁。手动 `workflow_dispatch` 的 `release_web=true` 只选择 Firefox/WebKit，false 选择 Chromium。
 
-同一 PR 新提交取消旧运行；main 和手动运行各有独立 concurrency group，不取消旧提交或挤掉待运行提交。只有 Markdown/docs 改动时跳过重任务；前端必需检查 `Build, design rules, and tests` 始终给出结果，并在路径判定或任何适用前端 job 失败时拒绝通过。没有用 workflow 级 paths-ignore 留下永久 Pending 的必需检查。
+同一 PR 新提交取消旧运行；main 和手动运行各有独立 concurrency group，不取消旧提交或挤掉待运行提交。只有 Markdown/docs 改动时跳过重任务；前端必需检查 `Build, design rules, and tests` 始终给出结果，并在路径判定或任一前端步骤失败时拒绝通过；路径判定直接在这个 job 内执行，避免额外汇总 job 再次排队。没有用 workflow 级 paths-ignore 留下永久 Pending 的必需检查。
 
 依赖使用 setup-node 的 npm/pnpm 包存储缓存，不缓存浏览器、node_modules、运行时状态或测试证据。每次准备只安装所选浏览器，固定 Auth pin、真实前端构建与 Docker 基础镜像构建仍执行。
 
