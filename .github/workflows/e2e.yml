@@ -211,7 +211,7 @@ jobs:
   coverage:
     name: Complete E2E matrix coverage
     needs: [changes, application, release-web, harness]
-    if: always() && needs.changes.outputs.code == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers')
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'e2e-release-browsers') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
