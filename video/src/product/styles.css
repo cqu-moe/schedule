@@ -1,0 +1,28 @@
+@import "../../../frontend/node_modules/tailwindcss/preflight.css" layer(base);
+@import "../../../frontend/node_modules/@cqu-moe/theme/dist/styles.css";
+@import "../../../frontend/node_modules/@cqu-moe/ui/dist/styles.css";
+@import "../../../frontend/src/layout.css";
+@import "../../../frontend/src/views/dashboard.css";
+@import "../../../frontend/src/views/calendar.css";
+@import "../../../frontend/src/assets/fullcalendar-theme.css";
+@import "../../../frontend/src/views/home.css";
+
+.product-ui {
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: left;
+}
+/* Remotion owns the clock; product CSS transitions must not depend on render speed. */
+.product-ui *,
+.product-ui *::before,
+.product-ui *::after {
+  animation: none !important;
+  transition: none !important;
+  caret-color: transparent;
+}
+
+.calendar-picked [data-event-type="exam"] {
+  visibility: hidden;
+}

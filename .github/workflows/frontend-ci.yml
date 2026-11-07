@@ -63,3 +63,12 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         working-directory: .
         run: npm run test:frontend:layout
+      - name: Validate product introduction video
+        if: steps.changes.outputs.code == 'true'
+        working-directory: video
+        run: |
+          npm ci --ignore-scripts
+          npm run prepare:ui
+          git diff --exit-code -- src/product/DayAgenda.tsx src/product/email.json public/email.html
+          npm run lint
+          CHROME_PATH="$(node -e "process.stdout.write(require('../node_modules/playwright-core').chromium.executablePath())")" npm run check
