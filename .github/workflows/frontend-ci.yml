@@ -63,3 +63,15 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         working-directory: .
         run: npm run test:frontend:layout
+      - name: Validate product introduction video
+        if: steps.changes.outputs.code == 'true'
+        working-directory: video
+        run: |
+          sudo apt-get install --yes ffmpeg
+          npm ci --ignore-scripts
+          npm run prepare:ui
+          git diff --exit-code -- src/product/DayAgenda.tsx src/product/email.json public/email.html
+          npm run lint
+          npm run check
+          npx remotion render src/index.ts ScheduleIntro out/ci-calendar.mp4 --frames=135-383 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2
+          npm run check:video -- out/ci-calendar.mp4 249
