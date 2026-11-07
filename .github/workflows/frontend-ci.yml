@@ -72,7 +72,6 @@ jobs:
           npm run prepare:ui
           git diff --exit-code -- src/product/DayAgenda.tsx src/product/email.json public/email.html
           npm run lint
-          export CHROME_PATH="$(node -e "process.stdout.write(require('../node_modules/playwright-core').chromium.executablePath())")"
           npm run check
-          npx remotion render src/index.ts ScheduleIntro out/ci-calendar.mp4 --frames=135-383 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2 --browser-executable="$CHROME_PATH"
+          npx remotion render src/index.ts ScheduleIntro out/ci-calendar.mp4 --frames=135-383 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2
           npm run check:video -- out/ci-calendar.mp4 249

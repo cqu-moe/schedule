@@ -10,8 +10,6 @@ import { productUiConfig } from "./bundler-override.mjs";
 
 Config.setRspack(true);
 Config.setVideoImageFormat("png");
-// Shared-memory capture produced tiled frames in the calendar scene on Chrome/macOS.
-Config.setDisableSharedMemoryCapture(true);
 Config.overrideRspackConfig(productUiConfig);
 Config.setOverwriteOutput(true);
 Config.setDefaultPremountInSeconds(2);

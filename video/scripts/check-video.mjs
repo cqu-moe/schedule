@@ -23,7 +23,7 @@ assert.equal(video.height, 1080);
 assert.equal(video.r_frame_rate, "30/1");
 assert.equal(Number(video.nb_frames), expectedFrames);
 
-// The logo and tagline stay fixed across every scene; allow crossfade/compression noise.
+// Compare header ink, so moving shadows and crossfade brightness cannot mimic displaced text.
 const pixelsPerFrame = 480 * 32;
 const pixels = execFileSync(
   "ffmpeg",
@@ -47,26 +47,23 @@ const pixels = execFileSync(
 assert.equal(pixels.length, pixelsPerFrame * expectedFrames);
 const reference = pixels.subarray(60 * pixelsPerFrame, 61 * pixelsPerFrame);
 const corruptedFrames = [];
-let maxHeaderError = 0;
+let maxHeaderMismatch = 0;
 for (let frame = 0; frame < expectedFrames; frame++) {
-  let difference = 0;
-  const brightnessShift = pixels[frame * pixelsPerFrame] - reference[0];
+  let changedPixels = 0;
   for (let pixel = 0; pixel < pixelsPerFrame; pixel++) {
-    difference += Math.abs(
-      pixels[frame * pixelsPerFrame + pixel] -
-        reference[pixel] -
-        brightnessShift,
-    );
+    if ((pixels[frame * pixelsPerFrame + pixel] < 180) !== (reference[pixel] < 180))
+      changedPixels++;
   }
-  const error = difference / pixelsPerFrame;
-  maxHeaderError = Math.max(maxHeaderError, error);
-  if (error > 0.75 || Math.abs(brightnessShift) > 4)
-    corruptedFrames.push({ frame, seconds: frame / 30, error });
+  const mismatch = changedPixels / pixelsPerFrame;
+  maxHeaderMismatch = Math.max(maxHeaderMismatch, mismatch);
+  // Allow antialiasing on at most 0.5% of pixels; observed tiled frames change over 2.6%.
+  if (mismatch > 0.005)
+    corruptedFrames.push({ frame, seconds: frame / 30, mismatch });
 }
 const result = {
   file,
   checkedFrames: expectedFrames,
-  maxHeaderError,
+  maxHeaderMismatch,
   corruptedFrames,
 };
 await writeFile(`${file}.check.json`, JSON.stringify(result, null, 2));
@@ -76,5 +73,5 @@ assert.deepEqual(
   "Exported frames must preserve the stationary header without tiling or sudden shifts",
 );
 console.log(
-  `PASS: decoded ${expectedFrames} frames; no header corruption (max error ${maxHeaderError.toFixed(3)}).`,
+  `PASS: decoded ${expectedFrames} frames; no header corruption (max mismatch ${(maxHeaderMismatch * 100).toFixed(3)}%).`,
 );

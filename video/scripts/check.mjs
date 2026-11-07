@@ -2,7 +2,6 @@ import { productUiConfig } from "../bundler-override.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import process from "node:process";
 import console from "node:console";
 import { bundle } from "@remotion/bundler";
 import { getCompositions, openBrowser, renderStill } from "@remotion/renderer";
@@ -20,11 +19,7 @@ const serveUrl = await bundle({
   rspack: true,
   rspackOverride: productUiConfig,
 });
-const browser = await openBrowser("chrome", {
-  browserExecutable:
-    process.env.CHROME_PATH ||
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-});
+const browser = await openBrowser("chrome");
 try {
   const compositions = await getCompositions(serveUrl, {
     puppeteerInstance: browser,

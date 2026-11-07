@@ -17,13 +17,11 @@ npm run dev -- --no-open --port=3018
 
 ```sh
 npm run render
-# 使用本机 Chrome：
-npm run render -- --browser-executable="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ```
 
 输出 `out/cqu-schedule-intro.mp4`：H.264 / yuv420p，1080p、30 fps、30 秒，含背景音乐。整个 `out/` 已从 Git 忽略。
 
-导出禁用共享内存帧捕获，使用浏览器逐帧 PNG 输出；这是对实际出现的重复平铺坏帧的规避，不改变组件、动画或画面清晰度。
+渲染与检查统一使用 Remotion 自动下载并锁定版本的 Chrome Headless Shell。不要用系统 Chrome 或 Playwright Chromium 覆盖浏览器路径：这些完整浏览器与默认的 Headless Shell 启动模式不匹配，曾在并行抓帧时出现间歇性重复平铺画面。首次运行需要联网下载浏览器。
 
 封面使用片尾最后一帧。`npm run render` 完成后自动保存 `out/cqu-schedule-intro-cover.png` 并写入 MP4 的封面轨；也可单独运行 `npm run cover`。此步骤需要 PATH 中的 `ffmpeg` 和 `ffprobe`（macOS 可用 `brew install ffmpeg`）。封面写入前会核对画面尺寸及音视频流校验值，保持原成片不重编码。播放器若不读取内嵌封面，可直接使用独立 PNG。
 
@@ -65,10 +63,10 @@ npm run check
 npm run check:video
 ```
 
-`check` 拒绝 public 中的栅格截图，验证编译后的 30 秒及 16:9，渲染十七个关键帧并保存 `out/check/result.json`。默认使用本机 Chrome，其他路径可用 `CHROME_PATH` 指定。人工检查文字、完整日历列、邮件对照、按钮与片尾；导出后再检查 MP4 流信息并完整解码。
+`check` 拒绝 public 中的栅格截图，验证编译后的 30 秒及 16:9，渲染十七个关键帧并保存 `out/check/result.json`。与导出使用相同的锁定浏览器。人工检查文字、完整日历列、邮件对照、按钮与片尾；导出后再检查 MP4 流信息并完整解码。
 
 `check:video` 完整解码成片，核对尺寸、帧率和帧数，并逐帧检查固定页眉的位置与像素稳定性，允许转场叠化和压缩噪声；可发现原成片中关键帧抽样漏掉的重复平铺坏帧。导出后自动执行。
 
-仓库 Frontend CI 复用现有 Chromium，检查生成文件与原工程一致、运行 lint / TypeScript，并渲染关键帧；另导出日历段 249 帧并执行连续帧检查。CI 不上传 MP4 或渲染图片。
+仓库 Frontend CI 使用同一锁定浏览器，检查生成文件与原工程一致、运行 lint / TypeScript，并渲染关键帧；另导出日历段 249 帧并执行连续帧检查。CI 不上传 MP4 或渲染图片。
 
 本目录独立于线上构建，交付为可编辑工程和本地 MP4。
