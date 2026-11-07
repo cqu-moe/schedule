@@ -27,8 +27,9 @@
   "scripts": {
     "dev": "remotion studio",
     "render": "remotion render src/index.ts ScheduleIntro out/cqu-schedule-intro.mp4 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2",
-    "postrender": "npm run cover",
+    "postrender": "npm run cover && npm run check:video",
     "cover": "node scripts/cover.mjs",
+    "check:video": "node scripts/check-video.mjs",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
     "lint": "eslint src scripts && tsc",
