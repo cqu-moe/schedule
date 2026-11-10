@@ -22,6 +22,7 @@ import {
 } from '@cqu-moe/ui'
 import {
   CalendarDays,
+  Copy,
   BookOpen,
   Plus,
   Download,
@@ -1076,6 +1077,30 @@ export default function Dashboard() {
                   {sub.source_version === 1 && firstSyncLinkUnavailable(sub) && <p id={`external-links-${sub.id}`} className="dash-external-link-notice">
                     {sub.external_state === 'expired' ? '教学班已过期，请重新选择教学班。' : '课表暂不可用，请等待同步成功。'}全部公共链接暂时停用。
                   </p>}
+                  <div className="dash-sync-controls">
+                    {sub.user_id === session.user?.id && sub.source_version === 1 && sub.source_type === 'course'
+                      && !sub.is_personal && sub.sync_status !== 'queued' && sub.sync_status !== 'running'
+                      && !isSubSyncing(sub) && session.can('external') && session.cquBindStatus === 'active'
+                      && session.externalAvailability.create_types.includes('course')
+                      && (sub.external_state === 'expired' || (sub.external_state === 'reselecting' && sub.sync_status === 'error')) && (
+                        <Button asChild variant="outline">
+                          <Link to={`/add?reselect=${encodeURIComponent(sub.id)}`} aria-label={`重新选择教学班：${sub.source_name}`}>
+                            重新选择教学班
+                          </Link>
+                        </Button>
+                      )}
+                    <SyncActionButton
+                      state={refreshButtonState(sub)}
+                      labels={{
+                        idle: refreshIdleLabel(sub),
+                        loading: '同步中',
+                        success: '已刷新',
+                        error: isFirstSyncCard(sub) ? '重试同步' : '失败',
+                      }}
+                      disabled={!canRefreshSub(sub) || isRefreshCoolingDown(sub)}
+                      onClick={() => void handleRefreshSub(sub.id)}
+                    />
+                  </div>
                   {link && (
                     <div className="dash-main-actions" aria-describedby={sub.source_version === 1 && firstSyncLinkUnavailable(sub) ? `external-links-${sub.id}` : undefined}>
                       {!firstSyncLinkUnavailable(sub) ? (
@@ -1105,6 +1130,7 @@ export default function Dashboard() {
                       )}
                       <ActionButton
                         variant="outline"
+                        idleIcon={Copy}
                         state={copyFeedback.stateOf(sub.id)}
                         labels={{
                           idle: '复制链接',
@@ -1119,28 +1145,6 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="dash-secondary-actions">
-                    {sub.user_id === session.user?.id && sub.source_version === 1 && sub.source_type === 'course'
-                      && !sub.is_personal && sub.sync_status !== 'queued' && sub.sync_status !== 'running'
-                      && !isSubSyncing(sub) && session.can('external') && session.cquBindStatus === 'active'
-                      && session.externalAvailability.create_types.includes('course')
-                      && (sub.external_state === 'expired' || (sub.external_state === 'reselecting' && sub.sync_status === 'error')) && (
-                        <Button asChild variant="outline">
-                          <Link to={`/add?reselect=${encodeURIComponent(sub.id)}`} aria-label={`重新选择教学班：${sub.source_name}`}>
-                            重新选择教学班
-                          </Link>
-                        </Button>
-                      )}
-                    <SyncActionButton
-                      state={refreshButtonState(sub)}
-                      labels={{
-                        idle: refreshIdleLabel(sub),
-                        loading: '同步中',
-                        success: '已刷新',
-                        error: isFirstSyncCard(sub) ? '重试同步' : '失败',
-                      }}
-                      disabled={!canRefreshSub(sub) || isRefreshCoolingDown(sub)}
-                      onClick={() => void handleRefreshSub(sub.id)}
-                    />
                     {link && (
                       <Button
                         variant="outline"

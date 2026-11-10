@@ -37,6 +37,16 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
       const url = new URL(route.request().url())
       if (url.origin !== new URL(origin).origin) return route.abort()
       if (!url.pathname.startsWith('/api/')) return route.continue()
+      if (route.request().method() === 'POST' && url.pathname === '/api/v2/subscriptions/personal/syncs') {
+        const syncedAt = new Date().toISOString()
+        responses['/api/v2/subscriptions'].subscriptions = subscriptions.map((sub, i) => i === 0
+          ? { ...sub, sync_run_id: 'layout-sync', last_synced_at: syncedAt, manual_refresh_at: syncedAt }
+          : sub)
+        return route.fulfill({ status: 202, json: {
+          status: 'queued', run_id: 'layout-sync', affected_subscription_ids: ['sub-0'],
+          cooldown_until: new Date(Date.now() + 300_000).toISOString(),
+        } })
+      }
       if (route.request().method() !== 'GET' || !(url.pathname in responses)) {
         unexpected.push(`${route.request().method()} ${url.pathname}`)
         return route.abort()
@@ -48,6 +58,11 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
     const more = page.getByRole('button', { name: '我的全部课表的更多操作', exact: true })
     await qr.waitFor()
     await page.evaluate(() => document.fonts.ready)
+    const actionWidths = await page.locator('.dash-main-actions').evaluateAll(groups =>
+      groups.map(group => [...group.querySelectorAll('a, button')].map(button => button.getBoundingClientRect().width)))
+    for (const [viewWidth, copyWidth] of actionWidths) {
+      assert.ok(Math.abs(viewWidth - copyWidth) <= 1, `${label}: view and copy buttons must have equal widths (${viewWidth}, ${copyWidth})`)
+    }
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme)
     if (!hiddenScrollbars) {
       assert.ok(await page.evaluate(() => innerWidth > document.documentElement.clientWidth),
@@ -56,7 +71,7 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
     await page.evaluate(() => {
       // Sample every animation frame, including menu -> dialog handoff and exits.
       window.overlayLayoutSamples = []
-      const selectors = ['.page-body', '.page-body h1', '.site-brand', '.dash-list > li']
+      const selectors = ['.page-body', '.page-body h1', '.site-brand', '.dash-list > li', '.dash-main-actions a', '.dash-main-actions button']
       function sample() {
         window.overlayLayoutSamples.push(selectors.map(selector => {
           const rect = document.querySelector(selector).getBoundingClientRect()
@@ -70,6 +85,7 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
     const settle = () => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)))
     const shot = name => page.screenshot({ path: `${output}/${label}-${name}.png` })
     await settle()
+    await shot('dashboard')
     await qr.click()
     await page.getByRole('dialog', { name: '扫码订阅' }).waitFor()
     await settle()
@@ -96,18 +112,26 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
     await settle()
     assert.equal(await more.evaluate(element => element === document.activeElement), true, `${label}: share focus restored`)
     assert.equal(await page.evaluate(() => document.body.hasAttribute('data-scroll-locked')), false, `${label}: scroll unlocked`)
+    const overlaySampleCount = await page.evaluate(() => window.overlayLayoutSamples.length)
+    const sync = page.locator('.dash-list > li').first().getByRole('button', { name: '同步', exact: true })
+    await sync.click()
+    await page.locator('.dash-list > li').first().getByRole('button', { name: '5 分钟后可同步', exact: true }).waitFor()
+    await settle()
+    await shot('cooldown')
     const samples = await page.evaluate(() => {
       cancelAnimationFrame(window.overlayLayoutFrame)
       return window.overlayLayoutSamples
     })
     const shift = Math.max(...samples[0].map((_, i) => {
-      const values = samples.map(sample => sample[i])
+      // The page header can resize with its own sync label; card actions must stay fixed.
+      const phaseSamples = i >= samples[0].length - 4 ? samples : samples.slice(0, overlaySampleCount)
+      const values = phaseSamples.map(sample => sample[i])
       return Math.max(...values) - Math.min(...values)
     }))
     assert.deepEqual(unexpected, [], `${label}: unexpected API calls`)
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: page overflow`)
     console.log(`${label}: maximum horizontal layout change ${shift}px`)
-    assert.ok(shift <= 1, `${label}: opening schedule options shifts page geometry by ${shift}px`)
+    assert.ok(shift <= 1, `${label}: sync or overlays shift the page or fixed action buttons by ${shift}px`)
   } finally {
     await context.close()
   }

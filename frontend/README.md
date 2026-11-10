@@ -14,8 +14,9 @@ pnpm run check:design  # 设计系统规则检查
 
 弹窗布局回归：在仓库根目录安装 `npm ci`，运行 `node node_modules/playwright-core/cli.js install chromium`
 （Linux 增加 `--with-deps`），然后运行 `npm run test:frontend:layout`；快速复现用
-`npm run test:frontend:layout -- --quick`。使用真实页面和合成只读 API 数据，逐帧检查扫码弹窗、
+`npm run test:frontend:layout -- --quick`。使用真实页面和合成 API 响应（包括模拟同步），不写入真实后端。逐帧检查扫码弹窗、
 课表菜单及菜单转共享链接弹窗期间的水平位置和宽度，并检查关闭后的焦点与滚动锁恢复。
+同时检查查看/复制按钮等宽，以及同步进入冷却提示期间这两个按钮的位置和宽度保持稳定。
 覆盖 320/390/768/1440、双主题、减少动态效果及显示/隐藏滚动条；截图保存在 `.e2e/overlay-layout/`。
 这项检查不验证后端业务或真实学校服务。
 
