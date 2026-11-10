@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Button, PageHeader, Skeleton } from '@cqu-moe/ui'
-import { ArrowRight, BookOpen, CalendarDays, Plus } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarDays, Copy, ExternalLink, Plus, RefreshCw } from 'lucide-react'
 import './loading.css'
 import '@/views/dashboard.css'
 import '@/views/add.css'
@@ -50,12 +50,14 @@ export function SubscriptionListSkeleton() {
           <div className="dash-card-sub loading-card-meta"><Skeleton className="loading-line" style={{ width: '15rem' }} /></div>
         </div>
         <div className="dash-card-actions">
+          <div className="dash-sync-controls">
+            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><RefreshCw />同步</span></Button>
+          </div>
           <div className="dash-main-actions">
-            <Button disabled><ArrowRight className="invisible" /><span className="invisible">查看课表</span></Button>
-            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><ArrowRight />复制链接</span></Button>
+            <Button disabled><ExternalLink className="invisible" /><span className="invisible">查看课表</span></Button>
+            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><Copy />复制链接</span></Button>
           </div>
           <div className="dash-secondary-actions">
-            <Button variant="outline" disabled><span className="invisible inline-flex items-center gap-2"><ArrowRight />同步</span></Button>
             <Button variant="outline" size="icon" disabled><span className="invisible size-4" /></Button>
             <Button variant="outline" size="icon" disabled><span className="invisible size-4" /></Button>
           </div>
@@ -69,7 +71,7 @@ export function DashboardRouteSkeleton() {
   return <>
     <PageHeader title="我的订阅" description="管理课程与考试订阅，让日历跟上你的安排。" actions={
       <div className="dash-header-actions" aria-hidden="true">
-        <Button variant="outline" disabled><ArrowRight />同步个人课表</Button>
+        <Button variant="outline" disabled><RefreshCw />同步个人课表</Button>
         <Button disabled><Plus />添加订阅</Button>
       </div>
     } />

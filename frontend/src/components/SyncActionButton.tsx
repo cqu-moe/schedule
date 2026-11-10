@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps } from 'react'
 import { ActionButton, Button } from '@cqu-moe/ui'
-import { ArrowRight } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 
 type SyncActionButtonProps = Pick<
   ComponentProps<typeof ActionButton>,
@@ -29,12 +29,12 @@ export default function SyncActionButton(props: SyncActionButtonProps) {
       <Button asChild variant="outline" className="dash-sync-measure">
         <span ref={measureRef} aria-hidden="true" inert>
           <span className="dash-sync-measure-content">
-            <ArrowRight />
+            <RefreshCw />
             {label}
           </span>
         </span>
       </Button>
-      <ActionButton {...props} variant="outline" className="dash-sync-button" />
+      <ActionButton {...props} idleIcon={RefreshCw} variant="outline" className="dash-sync-button" />
     </span>
   )
 }
