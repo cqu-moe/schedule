@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useId, useRef, useState, type MouseEvent } from 'react'
 import {
   Check,
   Copy,
@@ -92,6 +92,7 @@ export default function ShareLinksDialog({
   onCloseAutoFocus?: (event: Event) => void
 }) {
   const session = useSession()
+  const formId = useId()
   const [localLinks, setLocalLinks] = useState<CalendarLink[]>(() => [...subscription.links])
   const [rotateConfirm, setRotateConfirm] = useState<{ open: boolean; linkId: string | null }>({
     open: false,
@@ -229,6 +230,7 @@ export default function ShareLinksDialog({
   }
 
   async function handleSubmitLinkForm() {
+    if (linkForm.submitting) return
     if (linkForm.formats.length === 0) {
       setLinkFormError('至少选择一种格式')
       return
@@ -500,11 +502,17 @@ export default function ShareLinksDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="share-form">
+          <form id={formId} className="share-form" method="post"
+            aria-label={linkForm.editingId ? '编辑共享链接' : '新建共享链接'}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleSubmitLinkForm()
+            }}>
             <div className="share-form-fields">
-              <Label htmlFor="share-link-label">标签（可选，最多 100 字符）</Label>
+              <Label htmlFor={`${formId}-label`}>标签（可选，最多 100 字符）</Label>
               <Input
-                id="share-link-label"
+                id={`${formId}-label`}
+                name="label"
                 placeholder="例：分享给同学"
                 maxLength={100}
                 value={linkForm.label}
@@ -514,8 +522,8 @@ export default function ShareLinksDialog({
               />
             </div>
 
-            <div className="share-form-fields">
-              <Label>允许的格式（至少选择一项）</Label>
+            <fieldset className="share-form-fields">
+              <Label asChild><legend>允许的格式（至少选择一项）</legend></Label>
               <div className="format-grid">
                 {ALL_FORMATS.map((fmt) => (
                   <Button
@@ -535,17 +543,20 @@ export default function ShareLinksDialog({
                   {linkFormError}
                 </p>
               )}
-            </div>
-          </div>
+            </fieldset>
+          </form>
 
           <DialogFooter>
             <Button
+              type="button"
               variant="outline"
               onClick={() => setLinkForm((current) => ({ ...current, open: false }))}
             >
               取消
             </Button>
             <ActionButton
+              type="submit"
+              form={formId}
               state={linkForm.submitting ? 'loading' : linkFormError ? 'error' : 'idle'}
               labels={{
                 idle: linkForm.editingId ? '保存' : '创建',
@@ -554,7 +565,6 @@ export default function ShareLinksDialog({
                 error: '重试',
               }}
               disabled={linkForm.formats.length === 0}
-              onClick={() => void handleSubmitLinkForm()}
             />
           </DialogFooter>
         </DialogContent>

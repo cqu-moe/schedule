@@ -1,5 +1,10 @@
 # Project Notes
 
+## Agent skills
+
+- 前端 HTML、CSS 与客户端交互遵守 `frontend/AGENTS.md` 的 Modern Web Guidance 流程。
+- 使用 Matt 工程流程时，复用 `docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` 和 `docs/agents/domain.md`；领域词汇入口为 `GLOSSARY.md`。
+
 ## Deployment
 
 - This repository is connected to Cloudflare Git Connector for `cqu-moe/schedule-cloudflare`; pushing to GitHub can trigger Cloudflare build/deploy automation.

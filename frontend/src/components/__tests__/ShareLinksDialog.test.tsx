@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithApp, mockSubscription } from '@/test-utils'
 import type { CalendarLink, Subscription } from '@/types/api'
@@ -98,7 +98,7 @@ describe('ShareLinksDialog', () => {
     await waitFor(() => expect(opener).toHaveFocus())
   })
 
-  it('creates a share link with label and selected formats', async () => {
+  it.each(['click', 'Enter'])('creates a share link with label and selected formats via %s', async (submit) => {
     const { onChanged } = mountDialog()
     mockApi.createLink.mockResolvedValue({
       id: 'link-new',
@@ -115,7 +115,11 @@ describe('ShareLinksDialog', () => {
       '同学链接',
     )
     await userEvent.click(within(form).getByRole('button', { name: '日历网页查看' }))
-    await userEvent.click(within(form).getByRole('button', { name: '创建' }))
+    if (submit === 'click') await userEvent.click(within(form).getByRole('button', { name: '创建' }))
+    else {
+      await userEvent.click(within(form).getByLabelText('标签（可选，最多 100 字符）'))
+      await userEvent.keyboard('{Enter}')
+    }
 
     await waitFor(() => {
       expect(mockApi.createLink).toHaveBeenCalledWith('sub-1', {
@@ -124,6 +128,7 @@ describe('ShareLinksDialog', () => {
       })
       expect(mockToast.success).toHaveBeenCalledWith('共享链接已创建')
     })
+    expect(mockApi.createLink).toHaveBeenCalledOnce()
     expect(onChanged).toHaveBeenCalled()
     expect(await screen.findByText('同学链接')).toBeInTheDocument()
   })
@@ -143,6 +148,42 @@ describe('ShareLinksDialog', () => {
       expect(mockToast.success).toHaveBeenCalledWith('已轮换')
     })
     expect(onChanged).toHaveBeenCalled()
+  })
+
+  it('keeps one submission in flight and lets Enter retry after failure', async () => {
+    let rejectRequest!: (error: Error) => void
+    mockApi.createLink.mockImplementationOnce(() => new Promise((_, reject) => { rejectRequest = reject }))
+    mountDialog()
+    await userEvent.click(await screen.findByRole('button', { name: '新建共享链接' }))
+    const dialog = await screen.findByRole('dialog', { name: '新建共享链接' })
+    const input = within(dialog).getByLabelText('标签（可选，最多 100 字符）')
+    await userEvent.type(input, '同学{Enter}')
+    expect(mockApi.createLink).toHaveBeenCalledOnce()
+    await userEvent.keyboard('{Enter}')
+    fireEvent.submit(within(dialog).getByRole('form', { name: '新建共享链接' }))
+    expect(mockApi.createLink).toHaveBeenCalledOnce()
+    await act(async () => rejectRequest(new Error('offline')))
+    expect(await within(dialog).findByRole('alert')).toBeInTheDocument()
+    expect(input).toHaveValue('同学')
+    mockApi.createLink.mockResolvedValueOnce(makeShareLink({ label: '同学' }))
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(mockApi.createLink).toHaveBeenCalledTimes(2)
+  })
+
+  it('saves an edited share link with Enter', async () => {
+    mockApi.patchLink.mockResolvedValueOnce(makeShareLink({ label: '新标签' }))
+    mountDialog([makeDefaultLink(), makeShareLink()])
+    const row = (await screen.findByText('同学链接')).closest('tr')!
+    await userEvent.click(within(row).getByRole('button', { name: '修改' }))
+    const dialog = await screen.findByRole('dialog', { name: '编辑共享链接' })
+    const input = within(dialog).getByLabelText('标签（可选，最多 100 字符）')
+    await userEvent.clear(input)
+    await userEvent.type(input, '新标签{Enter}')
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(mockApi.patchLink).toHaveBeenCalledExactlyOnceWith('sub-1', 'link-share', {
+      label: '新标签', formats: ['ics', 'web'],
+    })
   })
 
   it('maps QUOTA_EXCEEDED to an inline form error', async () => {

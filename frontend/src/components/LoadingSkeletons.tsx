@@ -2,9 +2,6 @@ import type { ReactNode } from 'react'
 import { Button, PageHeader, Skeleton } from '@cqu-moe/ui'
 import { ArrowRight, BookOpen, CalendarDays, Copy, ExternalLink, Plus, RefreshCw } from 'lucide-react'
 import './loading.css'
-import '@/views/dashboard.css'
-import '@/views/add.css'
-import '@/views/calendar.css'
 
 /** Keep the content's geometry; only unknown values are masked. */
 export function LoadingRegion({ label, children, className, id }: {

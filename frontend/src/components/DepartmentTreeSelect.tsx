@@ -96,7 +96,7 @@ function DepartmentNodeRow({ node, level, value, filtering, disabled, onSelect }
   const rootGroup = level === 0 && hasChildren
 
   return (
-    <li role="none">
+    <li>
       {rootGroup ? (
         <Button
           disabled={disabled}
@@ -141,8 +141,7 @@ function DepartmentNodeRow({ node, level, value, filtering, disabled, onSelect }
             variant="ghost"
             type="button"
             style={selectStyle()}
-            role="treeitem"
-            aria-selected={selected}
+            aria-pressed={selected}
             onClick={() => onSelect(node)}
           >
             <Check style={iconStyle} aria-hidden className={selected ? undefined : 'invisible'} />
@@ -151,7 +150,7 @@ function DepartmentNodeRow({ node, level, value, filtering, disabled, onSelect }
         </div>
       )}
       {hasChildren && expanded && (
-        <ul role="group" className="m-0 list-none p-0">
+        <ul role="list" className="m-0 list-none p-0">
           {children.map((child) => (
             <DepartmentNodeRow
               key={child.id}
@@ -206,7 +205,6 @@ export default function DepartmentTreeSelect({
           id={id}
           type="button"
           variant="outline"
-          role="combobox"
           aria-expanded={open}
           aria-busy={loading}
           disabled={disabled}
@@ -248,7 +246,7 @@ export default function DepartmentTreeSelect({
             未找到匹配的学院
           </p>
         ) : (
-          <ul role="tree" aria-label="学院列表" aria-busy={loading} className="m-0 max-h-72 list-none overflow-y-auto p-0">
+          <ul role="list" aria-label="学院列表" aria-busy={loading} className="m-0 max-h-72 list-none overflow-y-auto p-2">
             {visible.map((node) => (
               <DepartmentNodeRow
                 key={node.id}

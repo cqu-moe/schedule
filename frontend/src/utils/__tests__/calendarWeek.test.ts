@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest'
+// @vitest-environment node
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { getSemesterWeek } from '@/utils/calendarWeek'
 
-describe('getSemesterWeek', () => {
+describe.each(['UTC', 'Asia/Shanghai', 'America/Los_Angeles'])('getSemesterWeek in %s', (timeZone) => {
+  beforeEach(() => vi.stubEnv('TZ', timeZone))
+  afterEach(() => vi.unstubAllEnvs())
   const semesterStart = '2025-09-01' // Monday
 
   it('returns 1 for the first day of semester', () => {
@@ -43,5 +46,10 @@ describe('getSemesterWeek', () => {
     expect(getSemesterWeek(new Date('2025-09-01'), wedStart)).toBe(1)
     expect(getSemesterWeek(new Date('2025-09-07'), wedStart)).toBe(1)
     expect(getSemesterWeek(new Date('2025-09-08'), wedStart)).toBe(2)
+  })
+
+  it('keeps Monday boundaries across daylight saving changes', () => {
+    expect(getSemesterWeek(new Date('2025-03-09T23:59:59Z'), '2025-03-03')).toBe(1)
+    expect(getSemesterWeek(new Date('2025-03-10T00:00:00Z'), '2025-03-03')).toBe(2)
   })
 })

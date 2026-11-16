@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { createServer } from '../frontend/node_modules/vite/dist/node/index.js'
+import { createServer, preview } from '../frontend/node_modules/vite/dist/node/index.js'
 
 const root = fileURLToPath(new URL('../frontend/', import.meta.url))
-const output = fileURLToPath(new URL('../.e2e/overlay-layout/', import.meta.url))
+const production = process.argv.includes('--production')
+const output = fileURLToPath(new URL(`../.e2e/overlay-layout${production ? '-production' : ''}/`, import.meta.url))
 const quick = process.argv.includes('--quick')
 const links = [{ id: 'default', token: 'synthetic-token', label: null, formats: ['ics', 'web'], is_default: true }]
 const subscriptions = ['我的全部课表', '我的课程', '我的考试', '测试班级'].map((source_name, i) => ({
@@ -27,16 +28,33 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
   try {
     const page = await context.newPage()
     const unexpected = []
+    const pageErrors = []
+    page.on('pageerror', error => pageErrors.push(error.message))
+    let createdLinks = 0
     const responses = {
       '/api/v2/config': { public_url: origin },
       '/api/v2/me': { user: { id: 'fixture-user', name: '测试用户', email: 'fixture@example.invalid', role: 'student' }, cquBindStatus: 'active', caps: { calendar: { sync: true, external: true, share: true, change_notification: true, sub_limit: 5, share_limit: 10, sync_interval: 300, manual_refresh: 5, external_sync_interval: 300, external_manual_refresh: 5 } } },
       '/api/v2/subscriptions': { subscriptions, count: subscriptions.length, personal_setup: null, manual_remaining: 5 },
       '/api/v2/notification-settings': { eligible: true, enabled: false },
+      '/api/v2/external/departments': { session: { id: '2026-fall', name: '2026秋' }, departments: [
+        { id: 'root', name: '全校学院', children: [{ id: 'cs', name: '计算机学院' }, { id: 'math', name: '数学学院' }] },
+      ] },
+      '/api/v2/external/search': { session: { id: '2026-fall', name: '2026秋' }, results: [], truncated: false },
     }
+    responses['/api/v2/me'].external = { search_types: ['admin_class'], create_types: ['admin_class'] }
     await page.route('**/*', async route => {
       const url = new URL(route.request().url())
       if (url.origin !== new URL(origin).origin) return route.abort()
       if (!url.pathname.startsWith('/api/')) return route.continue()
+      if (route.request().method() === 'POST' && url.pathname === '/api/v2/subscriptions/sub-0/links') {
+        createdLinks++
+        const body = route.request().postDataJSON()
+        assert.deepEqual(body, { label: '键盘共享链接', formats: ['ics', 'web'] })
+        const link = { ...body, id: 'keyboard-share', token: 'synthetic-share-token', is_default: false }
+        responses['/api/v2/subscriptions'].subscriptions = responses['/api/v2/subscriptions'].subscriptions.map(sub =>
+          sub.id === 'sub-0' ? { ...sub, links: [...sub.links, link] } : sub)
+        return route.fulfill({ status: 201, json: link })
+      }
       if (route.request().method() === 'POST' && url.pathname === '/api/v2/subscriptions/personal/syncs') {
         const syncedAt = new Date().toISOString()
         responses['/api/v2/subscriptions'].subscriptions = subscriptions.map((sub, i) => i === 0
@@ -130,17 +148,71 @@ async function checkLayout(browser, origin, { width, theme, reducedMotion, hidde
     }))
     assert.deepEqual(unexpected, [], `${label}: unexpected API calls`)
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: page overflow`)
-    console.log(`${label}: maximum horizontal layout change ${shift}px`)
     assert.ok(shift <= 1, `${label}: sync or overlays shift the page or fixed action buttons by ${shift}px`)
+
+    // Exercise native form submission and dialog focus, which jsdom cannot fully model.
+    await more.press('Enter')
+    await page.getByRole('menuitem', { name: '管理共享链接' }).click()
+    const create = page.getByRole('button', { name: '新建共享链接', exact: true })
+    await create.click()
+    const form = page.getByRole('dialog', { name: '新建共享链接' })
+    const shareLabel = form.getByLabel('标签（可选，最多 100 字符）')
+    await shareLabel.fill('键盘共享链接')
+    await settle()
+    await shot('share-form')
+    await shareLabel.press('Enter')
+    await form.waitFor({ state: 'hidden' })
+    assert.equal(createdLinks, 1, `${label}: Enter creates exactly one share link`)
+    await settle()
+    assert.equal(await create.evaluate(element => element === document.activeElement), true, `${label}: form focus restored`)
+    await page.keyboard.press('Escape')
+    await page.getByRole('dialog', { name: '管理共享链接' }).waitFor({ state: 'hidden' })
+
+    await page.goto(`${origin}add`)
+    const departments = page.getByRole('button', { name: '选择学院', exact: true })
+    await departments.waitFor()
+    await departments.focus()
+    await departments.press('Enter')
+    const picker = page.getByRole('dialog', { name: '选择学院', exact: true })
+    const search = picker.getByRole('searchbox', { name: '搜索学院' })
+    await search.waitFor()
+    await page.keyboard.press('Tab')
+    const group = picker.getByRole('button', { name: '全校学院', exact: true })
+    assert.equal(await group.evaluate(element => element === document.activeElement), true, `${label}: Tab reaches department group`)
+    await page.keyboard.press('Space')
+    await picker.getByRole('button', { name: '计算机学院', exact: true }).waitFor()
+    await settle()
+    assert.equal(await group.evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      const clip = element.closest('[role="list"]').getBoundingClientRect()
+      const style = getComputedStyle(element)
+      const outline = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)
+      return bounds.left - outline >= clip.left && bounds.right + outline <= clip.right &&
+        bounds.top - outline >= clip.top && bounds.bottom + outline <= clip.bottom
+    }), true, `${label}: department focus outline stays inside the scroll container`)
+    await shot('departments')
+    assert.equal(await picker.getByRole('tree').count(), 0, `${label}: disclosure list does not claim tree keyboard semantics`)
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Enter')
+    await picker.waitFor({ state: 'hidden' })
+    await settle()
+    assert.equal(await departments.textContent(), '计算机学院', `${label}: keyboard selection applied`)
+    assert.equal(await departments.evaluate(element => element === document.activeElement), true, `${label}: picker focus restored`)
+    assert.deepEqual(unexpected, [], `${label}: unexpected API calls after keyboard flows`)
+    assert.deepEqual(pageErrors, [], `${label}: browser errors`)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: add page overflow`)
+    console.log(`${label}: maximum horizontal layout change ${shift}px; keyboard flows passed`)
   } finally {
     await context.close()
   }
 }
 
 await mkdir(output, { recursive: true })
-const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 } })
+const server = production
+  ? await preview({ root, preview: { host: '127.0.0.1', port: 0 } })
+  : await createServer({ root, server: { host: '127.0.0.1', port: 0 } })
 try {
-  await server.listen()
+  if (!production) await server.listen()
   const origin = server.resolvedUrls.local[0]
   for (const hiddenScrollbars of quick ? [false] : [false, true]) {
     // Playwright hides scrollbars by default, which masks #162 entirely.
@@ -161,5 +233,10 @@ try {
     }
   }
 } finally {
-  await server.close()
+  if (production) {
+    await new Promise((resolve, reject) => {
+      server.httpServer.close(error => error ? reject(error) : resolve())
+      server.httpServer.closeAllConnections()
+    })
+  } else await server.close()
 }

@@ -3,11 +3,11 @@ export function getSemesterWeek(date: Date, semesterStart: string): number | nul
   const termStart = new Date(semesterStart + 'T00:00:00Z')
   if (isNaN(termStart.getTime())) return null
 
-  // Align to Monday of the semester start week
-  const day = termStart.getDay()
+  // FullCalendar's named-zone dates use UTC-coerced wall time.
+  const day = termStart.getUTCDay()
   const mondayOffset = day === 0 ? -6 : 1 - day
   const monday = new Date(termStart)
-  monday.setDate(monday.getDate() + mondayOffset)
+  monday.setUTCDate(monday.getUTCDate() + mondayOffset)
 
   const diffMs = date.getTime() - monday.getTime()
   if (diffMs < 0) return null
