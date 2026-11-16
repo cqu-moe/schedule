@@ -761,7 +761,7 @@ describe('Add view (React)', () => {
     expect(departmentTrigger).not.toBeNull()
     await user.click(departmentTrigger!)
     await user.click(screen.getByRole('button', { name: '全校学院' }))
-    await user.click(screen.getByRole('treeitem', { name: '计算机学院' }))
+    await user.click(screen.getByRole('button', { name: '计算机学院' }))
     await waitFor(() => {
       const lastCall = mockApi.searchExternal.mock.calls.at(-1)?.[0]
       expect(lastCall).toEqual(

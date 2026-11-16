@@ -59,10 +59,10 @@ jobs:
           sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           npm ci --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
-      - name: Check overlay layout in Chromium
+      - name: Check production overlay layout in Chromium
         if: steps.changes.outputs.code == 'true'
         working-directory: .
-        run: npm run test:frontend:layout
+        run: npm run test:frontend:layout -- --production
       - name: Validate product introduction video
         if: steps.changes.outputs.code == 'true'
         working-directory: video
