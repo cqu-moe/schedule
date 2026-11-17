@@ -13,12 +13,12 @@ GitHub Actions 以各依赖目录的 pnpm 锁文件确定 store 缓存。E2E 的
 
 ## Cloudflare Workers Builds
 
-Cloudflare 构建变量固定 `PNPM_VERSION=11.19.0`、`NODE_VERSION=22.22.3`，并设置 `SKIP_DEPENDENCY_INSTALL=1`，由以下命令明确选择冻结安装。按根锁文件分支，保留迁移前提交的 npm 重建能力：
+Cloudflare 构建变量固定 `PNPM_VERSION=11.19.0`、`NODE_VERSION=22.22.3`，并设置 `SKIP_DEPENDENCY_INSTALL=1`，由以下 pnpm 命令冻结安装和部署：
 
 - 根目录：`/`；Node 22.22.3；pnpm 与根 `packageManager` 一致。
-- Build command：`if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else npm ci; fi`。
-- Deploy command：`if [ -f pnpm-lock.yaml ]; then pnpm run deploy; else npm run deploy; fi`。
-- Non-production version command：`if [ -f pnpm-lock.yaml ]; then pnpm run build:frontend && pnpm exec wrangler versions upload; else npm run build:frontend && npx wrangler versions upload; fi`。
+- Build command：`pnpm install --frozen-lockfile`。
+- Deploy command：`pnpm run deploy`。
+- Non-production version command：`pnpm run build:frontend && pnpm exec wrangler versions upload`。
 
 `build:frontend` 冻结安装并构建前端，保留 telemetry host 与 release 标识。`deploy` 继续在部署前运行远程 D1 迁移；版本上传不执行生产迁移，也不切换生产流量。保留现有 PostHog 构建变量、secrets、分支触发器及 Git Connector 发布方式。
 
