@@ -20,9 +20,9 @@ pnpm run check:web     # Modern Web Guidance 辅助扫描（需联网获取 CLI�
 后续三项修复、验证与包体积分析见 [修复记录](../docs/frontend/2026-11-16-modern-web-fixes.md)。
 已实施的分包和 CSS 优化、前后体积及验证边界见 [优化记录](../docs/frontend/2026-11-16-bundle-optimization.md)。
 
-弹窗布局回归：在仓库根目录安装 `npm ci`，运行 `node node_modules/playwright-core/cli.js install chromium`
-（Linux 增加 `--with-deps`），然后运行 `npm run test:frontend:layout`；快速复现用
-`npm run test:frontend:layout -- --quick`。使用真实页面和合成 API 响应（包括模拟同步），不写入真实后端。逐帧检查扫码弹窗、
+弹窗布局回归：在仓库根目录安装 `pnpm install --frozen-lockfile`，运行 `node node_modules/playwright-core/cli.js install chromium`
+（Linux 增加 `--with-deps`），然后运行 `pnpm run test:frontend:layout`；快速复现用
+`pnpm run test:frontend:layout --quick`。使用真实页面和合成 API 响应（包括模拟同步），不写入真实后端。逐帧检查扫码弹窗、
 课表菜单及菜单转共享链接弹窗期间的水平位置和宽度，并检查关闭后的焦点与滚动锁恢复。
 同时检查查看/复制按钮等宽，以及同步进入冷却提示期间这两个按钮的位置和宽度保持稳定。
 共享链接表单检查 Enter 只提交一次和焦点返回；学院选择器检查 Tab / Enter / Space 展开与选择、焦点返回及焦点框不被滚动容器裁切。
@@ -30,7 +30,7 @@ pnpm run check:web     # Modern Web Guidance 辅助扫描（需联网获取 CLI�
 这项检查不验证后端业务或真实学校服务。
 
 修改分包或升级共享 UI 包后，先在 `frontend/` 运行 `pnpm build`，再在根目录运行
-`npm run test:frontend:layout -- --production`，验证实际生成的 JS/CSS；截图保存在 `.e2e/overlay-layout-production/`。
+`pnpm run test:frontend:layout --production`，验证实际生成的 JS/CSS；截图保存在 `.e2e/overlay-layout-production/`。
 
 提交 .design/*.tgz、pnpm-workspace.yaml 和 pnpm-lock.yaml，其他机器才能离线安装。包未发布到公共 registry，不要改成 registry 依赖。
 

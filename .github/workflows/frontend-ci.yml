@@ -32,13 +32,13 @@ jobs:
           base: ${{ github.ref }}
           predicate-quantifier: every
           filters: .github/ci-paths.yml
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        if: steps.changes.outputs.code == 'true'
-        with:
-          node-version: '22'
-          cache: npm
       - uses: ./.github/actions/setup-frontend
         if: steps.changes.outputs.code == 'true'
+        with:
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+            video/pnpm-lock.yaml
       - name: Install dependencies
         if: steps.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
@@ -57,21 +57,21 @@ jobs:
         working-directory: .
         run: |
           sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
-          npm ci --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts
           node node_modules/playwright-core/cli.js install --with-deps chromium
       - name: Check production overlay layout in Chromium
         if: steps.changes.outputs.code == 'true'
         working-directory: .
-        run: npm run test:frontend:layout -- --production
+        run: pnpm run test:frontend:layout --production
       - name: Validate product introduction video
         if: steps.changes.outputs.code == 'true'
         working-directory: video
         run: |
           sudo apt-get install --yes ffmpeg
-          npm ci --ignore-scripts
-          npm run prepare:ui
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run prepare:ui
           git diff --exit-code -- src/product/DayAgenda.tsx src/product/email.json public/email.html
-          npm run lint
-          npm run check
-          npx remotion render src/index.ts ScheduleIntro out/ci-calendar.mp4 --frames=135-383 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2
-          npm run check:video -- out/ci-calendar.mp4 249
+          pnpm run lint
+          pnpm run check
+          pnpm exec remotion render src/index.ts ScheduleIntro out/ci-calendar.mp4 --frames=135-383 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2
+          pnpm run check:video out/ci-calendar.mp4 249

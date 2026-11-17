@@ -22,9 +22,10 @@ catch {
 assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: auth, encoding: 'utf8' }).trim(), pin.commit,
   'Existing Auth dependency must match the pin; preserve other checkouts instead of resetting them');
 assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: auth, encoding: 'utf8' }).trim(), '');
+// This immutable Auth revision predates its pnpm migration.
 command('npm', ['ci'], auth);
 command('pnpm', ['install', '--frozen-lockfile'], join(auth, 'frontend'));
-command('npm', ['run', 'build'], join(auth, 'frontend'));
+command('pnpm', ['run', 'build'], join(auth, 'frontend'));
 command(process.execPath, ['e2e/school/build.mjs'], auth);
 command('pnpm', ['install', '--frozen-lockfile'], join(root, 'frontend'));
 command('pnpm', ['run', 'build'], join(root, 'frontend'));

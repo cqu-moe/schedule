@@ -1,21 +1,21 @@
 # 真实应用 E2E
 
-`npm run test:e2e` 在生产构建页面上验证实际 Auth 登录、Schedule Worker、迁移后的独占 D1/KV、原生 Queue 消费、AuthService RPC、学校浏览器容器和最终日历。学校与邮箱是外部替身；应用响应、会话、订阅、队列结果和数据库写入均由生产代码生成。
+`pnpm run test:e2e` 在生产构建页面上验证实际 Auth 登录、Schedule Worker、迁移后的独占 D1/KV、原生 Queue 消费、AuthService RPC、学校浏览器容器和最终日历。学校与邮箱是外部替身；应用响应、会话、订阅、队列结果和数据库写入均由生产代码生成。
 
 ## 运行
 
-需要 Node 22、Git、Docker、npm，以及可安装固定依赖的网络。测试浏览器始终在后台无窗口运行，每次使用独立状态；不读用户登录信息、不配置系统钥匙串。
+需要 Node 22、Git、Docker、pnpm，以及用于固定历史 Auth 提交的 npm，以及可安装固定依赖的网络。测试浏览器始终在后台无窗口运行，每次使用独立状态；不读用户登录信息、不配置系统钥匙串。
 
 ```sh
-npm ci
-npm run e2e:prepare
-npm run test:e2e
-npm run test:e2e:harness
+pnpm install --frozen-lockfile
+pnpm run e2e:prepare
+pnpm run test:e2e
+pnpm run test:e2e:harness
 ```
 
 Linux 还需 `node node_modules/playwright-core/cli.js install-deps chromium`。准备命令从 [固定提交](auth-dependency.json) 安装、构建 Auth，构建学校浏览器基础镜像与 Schedule 前端，下载 Chromium；不会部署。已有依赖 checkout 必须干净且精确匹配 pin，脚本不会重置别人的修改。
 
-开发定位可用 `SCHEDULE_E2E_MOBILE=1 npm run test:e2e -- --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert` / `--shard index/total` / `--ci-shard 1..4`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
+开发定位可用 `SCHEDULE_E2E_MOBILE=1 pnpm run test:e2e --grep '^unbound:'`。必过入口只接受 `--grep` / `--grep-invert` / `--shard index/total` / `--ci-shard 1..4`；禁止 headed、重试或空用例放行覆盖。使用自定义输出时，`SCHEDULE_E2E_OUTPUT` 必须位于当前工作树的 `.e2e/` 下。
 
 ## 个人课表验收旅程
 
@@ -65,7 +65,7 @@ CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅�
 
 所有selected attempt还须无cleanup=failed/cleanup-phase secondaryErrors：固定e2e0.21有时不将它计入passed/exit0的主结论。运行入口独立拒绝该情况。
 
-按视口定位可用 `SCHEDULE_E2E_VIEWPORT=desktop npm run test:e2e`，接受desktop/mobile/all，默认all；非法值非零。此参数只改变视口，不跳过该视口应执行的用例。新Web旅程保留tester-army/e2e；现有新窗口适配范围不变。
+按视口定位可用 `SCHEDULE_E2E_VIEWPORT=desktop pnpm run test:e2e`，接受desktop/mobile/all，默认all；非法值非零。此参数只改变视口，不跳过该视口应执行的用例。新Web旅程保留tester-army/e2e；现有新窗口适配范围不变。
 
 ## 订阅生命周期（SCHEDULE-03）
 
@@ -77,7 +77,7 @@ CI 保留前端门禁；后端类型与现有测试、生产构建和全部旅�
 
 每条finally除了平台按本轮原生DO名称检查，还按其返回的实际业务/proxy ID定向查询确认不存在。必须有`proxyObjectsRemoved=true`及`removedProxyIds`数组；已绑定生命周期至少有一个实际proxy ID。缺失或残留即非零并停止后续旅程。框架selected attempt的cleanup失败/cleanup secondaryErrors同样独立拒绝。聚合报告复用已脱敏的单条产物，避免重新写入内存中的链接token。
 
-定位本票：`npm run test:e2e -- --grep '^lifecycle'`。`SCHEDULE_E2E_BROWSER=firefox`或`webkit`选择补充浏览器，默认chromium；需要相应Playwright二进制（`node node_modules/playwright-core/cli.js install firefox webkit`）。浏览器仍为后台独立临时profile。`PLAYWRIGHT_BROWSERS_PATH`仅指定已安装二进制目录，不传用户profile。`SCHEDULE_E2E_BREAK_ASSERTION=1`也会故意破坏本票的实际CSV读回断言，用于独立非零控制。
+定位本票：`pnpm run test:e2e --grep '^lifecycle'`。`SCHEDULE_E2E_BROWSER=firefox`或`webkit`选择补充浏览器，默认chromium；需要相应Playwright二进制（`node node_modules/playwright-core/cli.js install firefox webkit`）。浏览器仍为后台独立临时profile。`PLAYWRIGHT_BROWSERS_PATH`仅指定已安装二进制目录，不传用户profile。`SCHEDULE_E2E_BREAK_ASSERTION=1`也会故意破坏本票的实际CSV读回断言，用于独立非零控制。
 
 WebKit 会拒绝 HTTP localhost 上的 Secure 登录 Cookie；Web SPI 0.15.0 又没有接受隔离测试证书的配置，因此直接切换 `SCHEDULE_E2E_BROWSER=webkit` 不代表完整套件可运行。完成上述 `e2e:prepare` 后，可使用窄范围 HTTPS 补验，保持产品 Cookie 和系统信任不变：
 

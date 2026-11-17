@@ -85,15 +85,15 @@ CALENDAR_CLIENT_ID=<fixture-client>
 CALENDAR_CLIENT_SECRET=<fixture-secret>
 ```
 
-Run `npm ci`, install frontend dependencies with its pinned pnpm, build frontend,
-apply `npm run db:migrate:local`, then `npx wrangler dev --port 8790`.
+Run `pnpm install --frozen-lockfile`, install frontend dependencies with its pinned pnpm, build frontend,
+apply `pnpm run db:migrate:local`, then `pnpm exec wrangler dev --port 8790`.
 OAuth HTTP transport is allowed only for localhost/.localhost in development;
 production OAuth requires HTTPS. Secure __Host cookies are retained locally;
 use local HTTPS if the test browser does not grant localhost secure-cookie handling.
 Use the normal AuthService binding for background RPC. DEV_AUTH_MOCK no longer
 creates a browser identity; OAuth must complete even in a local fixture.
 
-Primary protocol tests: `npm test -- src/routes/application-auth.test.ts`.
+Primary protocol tests: `pnpm test -- src/routes/application-auth.test.ts`.
 They use real Hono/D1, signed ID tokens, one-time code exchange, PKCE and rotating
 refresh credentials. External Auth HTTP is a protocol fixture, not live production.
 Existing business tests supply identity context and continue testing ownership,

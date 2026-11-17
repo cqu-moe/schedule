@@ -1,7 +1,7 @@
 {
   "name": "video",
   "version": "1.0.0",
-  "description": "CQU Schedule \u2014 30-second product introduction using the real project UI",
+  "description": "CQU Schedule — 30-second product introduction using the real project UI",
   "repository": {},
   "license": "UNLICENSED",
   "engines": {
@@ -22,12 +22,14 @@
     "@types/web": "0.0.166",
     "eslint": "10.12.0",
     "prettier": "3.8.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@remotion/bundler": "4.0.541",
+    "@remotion/renderer": "4.0.541"
   },
   "scripts": {
     "dev": "remotion studio",
     "render": "remotion render src/index.ts ScheduleIntro out/cqu-schedule-intro.mp4 --codec=h264 --crf=18 --pixel-format=yuv420p --image-format=png --concurrency=2",
-    "postrender": "npm run cover && npm run check:video",
+    "postrender": "pnpm run cover && pnpm run check:video",
     "cover": "node scripts/cover.mjs",
     "check:video": "node scripts/check-video.mjs",
     "build": "remotion bundle",
@@ -37,7 +39,5 @@
     "source": "node --experimental-strip-types scripts/source-server.mjs",
     "prepare:ui": "node --experimental-strip-types scripts/prepare-ui.mjs"
   },
-  "allowScripts": {
-    "esbuild": false
-  }
+  "packageManager": "pnpm@11.19.0"
 }

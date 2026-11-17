@@ -8,22 +8,22 @@
 
 ```sh
 cd video
-npm ci
-npm run prepare:ui
-npm run dev -- --no-open --port=3018
+pnpm install --frozen-lockfile
+pnpm run prepare:ui
+pnpm run dev --no-open --port=3018
 ```
 
 预览：http://localhost:3018/ScheduleIntro。主时间轴及五个场景均可编辑。
 
 ```sh
-npm run render
+pnpm run render
 ```
 
 输出 `out/cqu-schedule-intro.mp4`：H.264 / yuv420p，1080p、30 fps、30 秒，含背景音乐。整个 `out/` 已从 Git 忽略。
 
 渲染与检查统一使用 Remotion 自动下载并锁定版本的 Chrome Headless Shell。不要用系统 Chrome 或 Playwright Chromium 覆盖浏览器路径：这些完整浏览器与默认的 Headless Shell 启动模式不匹配，曾在并行抓帧时出现间歇性重复平铺画面。首次运行需要联网下载浏览器。
 
-封面使用片尾最后一帧。`npm run render` 完成后自动保存 `out/cqu-schedule-intro-cover.png` 并写入 MP4 的封面轨；也可单独运行 `npm run cover`。此步骤需要 PATH 中的 `ffmpeg` 和 `ffprobe`（macOS 可用 `brew install ffmpeg`）。封面写入前会核对画面尺寸及音视频流校验值，保持原成片不重编码。播放器若不读取内嵌封面，可直接使用独立 PNG。
+封面使用片尾最后一帧。`pnpm run render` 完成后自动保存 `out/cqu-schedule-intro-cover.png` 并写入 MP4 的封面轨；也可单独运行 `pnpm run cover`。此步骤需要 PATH 中的 `ffmpeg` 和 `ffprobe`（macOS 可用 `brew install ffmpeg`）。封面写入前会核对画面尺寸及音视频流校验值，保持原成片不重编码。播放器若不读取内嵌封面，可直接使用独立 PNG。
 
 ## 真实界面来源
 
@@ -37,7 +37,7 @@ npm run render
 - `styles.css` 引入实际主题、设计组件 CSS、Tailwind 基础样式及相关页面 CSS。视频固定浅色；禁用产品 CSS 过渡，由 Remotion 帧控制镜头。
 - `bundler-override.mjs` 让前端组件和视频共用同一 React 实例。CLI 与关键帧检查使用相同配置。
 
-`npm run prepare:ui` 可在原首页或邮件模板变化后刷新生成文件。提取脚本检查组件边界、前后教室文字及无栅格邮件图标。
+`pnpm run prepare:ui` 可在原首页或邮件模板变化后刷新生成文件。提取脚本检查组件边界、前后教室文字及无栅格邮件图标。
 
 ## 镜头与节奏
 
@@ -58,9 +58,9 @@ npm run render
 ## 验收
 
 ```sh
-npm run lint
-npm run check
-npm run check:video
+pnpm run lint
+pnpm run check
+pnpm run check:video
 ```
 
 `check` 拒绝 public 中的栅格截图，验证编译后的 30 秒及 16:9，渲染十七个关键帧并保存 `out/check/result.json`。与导出使用相同的锁定浏览器。人工检查文字、完整日历列、邮件对照、按钮与片尾；导出后再检查 MP4 流信息并完整解码。
@@ -70,3 +70,5 @@ npm run check:video
 仓库 Frontend CI 使用同一锁定浏览器，检查生成文件与原工程一致、运行 lint / TypeScript，并渲染关键帧；另导出日历段 249 帧并执行连续帧检查。CI 不上传 MP4 或渲染图片。
 
 本目录独立于线上构建，交付为可编辑工程和本地 MP4。
+
+迁移 pnpm 时未升级视频依赖：`@remotion/bundler` 继续使用原锁中精确要求的 `webpack@5.105.0`，`mime-types` 继续使用 `mime-db@1.52.0`。npm 根层自动安装的另一组 peer 分支（`webpack@5.112.2`、`minimizer-webpack-plugin@5.14.0`、`mime-db@1.54.0`）不再单独保留；这是 peer 依赖合并，不保证 node_modules 布局相同。已验证 17 个关键帧、完整 900 帧渲染、自动封面和全片解码。

@@ -7,21 +7,22 @@ inputs:
 runs:
   using: composite
   steps:
+    # The pinned historical Auth checkout still uses npm.
     - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '22'
         cache: npm
         cache-dependency-path: |
-          package-lock.json
           e2e/auth-dependency.json
     - uses: ./.github/actions/setup-frontend
       with:
         # A frontend-only job must not win the immutable cache key before Auth is installed.
         cache-dependency-path: |
+          pnpm-lock.yaml
           frontend/pnpm-lock.yaml
           e2e/auth-dependency.json
           e2e/prepare.mjs
-    - run: npm ci
+    - run: pnpm install --frozen-lockfile
       shell: bash
     - name: Install browser system dependencies
       shell: bash

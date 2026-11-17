@@ -50,7 +50,7 @@ jobs:
         timeout-minutes: 5
       - name: Check types, backend tests and shard coverage once
         if: matrix.round == 1 && matrix.viewport == 'desktop' && matrix.shard == 1
-        run: npm run typecheck && npm run typecheck:e2e && npm test && node --test e2e/verify-shards.test.mjs
+        run: pnpm run typecheck && pnpm run typecheck:e2e && pnpm test && node --test e2e/verify-shards.test.mjs
       - name: Run isolated journeys in this shard
         run: node e2e/run.mjs --ci-shard ${{ matrix.shard }}
       - name: Upload sanitized reports and readback images
@@ -122,7 +122,7 @@ jobs:
           exit "$status"
       - name: Check release-only types and shard coverage once
         if: github.event_name == 'workflow_dispatch' && matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop' && matrix.shard == 1
-        run: npm run typecheck:e2e && node --test e2e/verify-shards.test.mjs
+        run: pnpm run typecheck:e2e && node --test e2e/verify-shards.test.mjs
       - name: Install the second engine for the six controls
         if: matrix.round == 1 && matrix.browser == 'firefox' && matrix.viewport == 'desktop' && matrix.shard == 1
         run: node node_modules/playwright-core/cli.js install --with-deps webkit
@@ -197,7 +197,7 @@ jobs:
           set -e
           printf 'Schedule observer contracts exited %d; raw output retained privately.\n' "$status"
           exit "$status"
-      - run: npm run test:e2e:harness
+      - run: pnpm run test:e2e:harness
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always() && !cancelled()
         with:
