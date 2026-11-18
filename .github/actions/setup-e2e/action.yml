@@ -29,8 +29,8 @@ runs:
       env:
         BROWSER: ${{ inputs.browser }}
       run: |
-        # Azure downloads stalled; keep the runner's existing Ubuntu archive fallbacks.
-        sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+        # Cloud mirrors throttle font downloads; use Ubuntu's canonical archive.
+        printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
         node node_modules/playwright-core/cli.js install-deps "$BROWSER"
     - name: Build real applications and install browser
       shell: bash
